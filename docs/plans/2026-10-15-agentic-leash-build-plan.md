@@ -395,9 +395,7 @@ Expected: two lines like `p50 … ms  p95 … ms`. **Pass:** Electron p95 < 150 
 - [ ] **Step 2: Record 60 s while an agent works in T3 Code**
 
 ```bash
-sudo /usr/bin/eslogger fork exec exit open close create rename unlink write > /tmp/es-60s.jsonl &
-sleep 60; sudo pkill -INT eslogger
-wc -l < /tmp/es-60s.jsonl; ls -lh /tmp/es-60s.jsonl
+spikes/record-eslogger.sh
 ```
 
 Expected: line count and file size. Events per second = lines / 60.
@@ -698,7 +696,8 @@ export interface AgentAdapter {
    - On `fork`, a child of a tracked pid joins the tree. On `exit`, it leaves.
    - Tests replay `tests/fixtures/eslogger/*.jsonl`.
 3. **`classify.ts`** turns eslogger events into `HistoryEvent` for tracked pids only:
-   - `open` without write flags → `read`.
+   - Never subscribe to `write`: eslogger logs its own output writes (Task 0.2).
+   - `open` without `FWRITE` (`fflag & 2`) → `read`.
    - `close` with modified → `write`.
    - `create`, `unlink` and `rename` map one-to-one.
    - `exec` → `exec`.

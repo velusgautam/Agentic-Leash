@@ -17,6 +17,34 @@
 
 **Note:** pnpm did not run Electron's postinstall; binary downloaded manually via `node node_modules/electron/install.js`.
 
+## Task 0.2: `eslogger` event volume
+
+Sample: 400,000 events (11.2 s) from one `eslogger` instance while Claude Code and T3 Code ran.
+
+| Stream | Events/s | MB/s | Node parse rate | Headroom |
+|---|---|---|---|---|
+| With `write` | 35,768 | 81.1 | 238,977/s | 6.7× |
+| Without `write` | 3,236 | 7.1 | 223,687/s | 69× |
+
+- 91% of events were `write`. Most came from `eslogger` writing its own output, a feedback loop that made 13 GB in ~8 min. The rest was mostly SentinelOne (`sentineld`).
+- **Verdict:** Pass without `write`. The helper never subscribes to `write`; `close.modified` already marks writes. Keep `eslogger`, no `fs_usage` fallback.
+- `eslogger` ignored `pkill -INT`; only `SIGKILL` stopped it. The helper must stop it with `SIGKILL` or by closing its stdout.
+- Fixtures: `tests/fixtures/eslogger/<type>.jsonl` (20 each; `rename` 10, `unlink` 13). `exec` args after `argv[0]` and `env` are redacted. `eslogger` and `sentineld` events are excluded.
+
+| Field | JSON path |
+|---|---|
+| pid | `process.audit_token.pid` |
+| ppid | `process.ppid` (`original_ppid` survives reparenting) |
+| executable | `process.executable.path` |
+| fork child | `event.fork.child.audit_token.pid`, `event.fork.child.executable.path` |
+| exec target | `event.exec.target.executable.path`, `event.exec.args`, `event.exec.cwd.path` |
+| open | `event.open.file.path`, `event.open.fflag` (kernel flags: `FREAD` 1, `FWRITE` 2) |
+| close | `event.close.target.path`, `event.close.modified` |
+| create | `event.create.destination.existing_file.path` when `destination_type` 0; `new_path.dir.path` + `new_path.filename` when 1 (from Apple's docs; not in sample) |
+| rename | `event.rename.source.path`; destination same shape as `create` |
+| unlink | `event.unlink.target.path` |
+| time | `time` (ISO 8601, ns) |
+
 ## Task 0.3: Real hook payloads (partial)
 
 **Cursor CLI `2026.10.01-e373342`** (`cursor-agent -p --force --trust`), fixtures in `tests/fixtures/hooks/cursor-*.json`:
