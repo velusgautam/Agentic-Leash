@@ -1,0 +1,16 @@
+{
+  "conversation_id": "b0894c61-cb89-4e5d-9a22-6918dd08a502",
+  "generation_id": "b0894c61-cb89-4e5d-9a22-6918dd08a502",
+  "model": "claude-opus-5-5",
+  "command": "ls spikes",
+  "cwd": "/Users/velu.gautam/Projects/agentic-leash",
+  "sandbox": false,
+  "session_id": "b0894c61-cb89-4e5d-9a22-6918dd08a502",
+  "hook_event_name": "beforeShellExecution",
+  "cursor_version": "2026.10.01-e373342",
+  "workspace_roots": [
+    "/Users/velu.gautam/Projects/agentic-leash"
+  ],
+  "user_email": "<redacted>",
+  "transcript_path": "<redacted>"
+}
