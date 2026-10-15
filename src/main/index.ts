@@ -14,7 +14,7 @@ function createWindow(visible: boolean): BrowserWindow {
     titleBarStyle: "hiddenInset",
     trafficLightPosition: { x: 16, y: 19 },
     backgroundColor: nativeTheme.shouldUseDarkColors ? "#0a0a0a" : "#ffffff",
-    webPreferences: { preload: join(__dirname, "../preload/index.js"), sandbox: true },
+    webPreferences: { preload: join(__dirname, "../preload/index.js"), sandbox: true, contextIsolation: true },
   });
   if (visible) window.once("ready-to-show", () => window.show());
   window.webContents.setWindowOpenHandler(({ url }) => {
