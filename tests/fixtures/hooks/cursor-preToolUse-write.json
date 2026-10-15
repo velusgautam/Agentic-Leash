@@ -1,0 +1,19 @@
+{
+  "conversation_id": "b0894c61-cb89-4e5d-9a22-6918dd08a502",
+  "generation_id": "b0894c61-cb89-4e5d-9a22-6918dd08a502",
+  "model": "claude-opus-5-5",
+  "tool_name": "Write",
+  "tool_input": {
+    "file_path": "/tmp/al-edit-test.txt",
+    "content": "<redacted>"
+  },
+  "tool_use_id": "toolu_01B9vXBVAV2kAaLSG41YJC2q",
+  "session_id": "b0894c61-cb89-4e5d-9a22-6918dd08a502",
+  "hook_event_name": "preToolUse",
+  "cursor_version": "2026.10.01-e373342",
+  "workspace_roots": [
+    "/Users/velu.gautam/Projects/agentic-leash"
+  ],
+  "user_email": "<redacted>",
+  "transcript_path": "<redacted>"
+}

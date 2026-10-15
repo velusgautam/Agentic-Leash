@@ -22,6 +22,7 @@
 - Every edit to an agent config file writes `<file>.bak` first.
 - Never restart or kill an agent without an explicit click.
 - Approval popup timeout: 120 s. Hook `timeout`: 150 s.
+- The hook never stores or logs payload `content`, `user_email` or `transcript_path`.
 - Time-limit presets: 15 min, 1 h (default), 8 h, Forever.
 - Retention: hook decision log 30 days, file history 90 days.
 - T3 Code is MIT. Keep its license text in `THIRD_PARTY_LICENSES.md` and on the Settings > Licenses page.
@@ -306,7 +307,7 @@ Reads set `minute_key = agent || '|' || path || '|' || floor(ts/60000)` and inse
 | Agent / event | Input fields used | Output for `deny` | Output for `pass` | Fallback |
 |---|---|---|---|---|
 | Claude `PreToolUse` | `tool_name`, `tool_input.file_path` (Read/Edit/Write/MultiEdit), `tool_input.notebook_path`, `tool_input.path` (Glob/Grep), `tool_input.command` (Bash), `tool_input.url` (WebFetch), `cwd`, `session_id` | stdout `{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"…"}}`, exit 0 | no stdout, exit 0 | `permissionDecision: "ask"` |
-| Cursor `preToolUse` | `tool_name`, `tool_input` (Shell: `command`, `working_directory`; file tools: field names from Task 0.3 fixtures), `cwd` | `{"permission":"deny","user_message":"…","agent_message":"…"}` | `{"permission":"allow"}` | `allow` |
+| Cursor `preToolUse` | `tool_name`, `tool_input` (Shell: `command`, `cwd`; Read/Write: `file_path`), `cwd`, `workspace_roots` | `{"permission":"deny","user_message":"…","agent_message":"…"}` | `{"permission":"allow"}` | `allow` |
 | Cursor `beforeReadFile` | `file_path` | same as above | `{"permission":"allow"}` | `allow` |
 | Cursor `beforeShellExecution` | `command`, `cwd` | same as above | `{"permission":"allow"}` | `allow` |
 | Cursor `beforeMCPExecution` | `mcp_server_name`, `tool_name` | same as above (lockdown only) | `{"permission":"allow"}` | `allow` |
@@ -648,6 +649,7 @@ export interface AgentAdapter {
    - Merge Agentic Leash's entries, identified by the hook command path, into `~/.cursor/hooks.json` (`timeout: 150`, `failClosed: true`) and into the Claude config folder's `settings.json` `hooks.PreToolUse` (`timeout: 150`). Claude's entries are installed in both modes, because they're harmless when blocked and start working the moment hooks are allowed.
    - Uninstall removes only those entries.
    - On launch, check the entries still exist and show a banner if they're missing.
+   - Running Cursor sessions don't reload `hooks.json` (Task 0.3), so after an install, show the restart banner from task 10 with "start new agent sessions".
 7. **`rulesMode.ts`** is the fallback, active only while `claudeHooksBlocked` is true. It writes the Q38 rules into the Claude config folder's `settings.json` (`additionalDirectories` for grants, `deny` for revokes, sensitive paths and lockdown) after a `.bak`. Every rule Agentic Leash writes is also recorded in `grants.db`, so removal is exact. `syncClaudeMode(prev, next)` migrates on a mode change: hook→rules writes rules for live grants, and rules→hook removes all Leash-written rules.
 8. **`sweep.ts` plus the `com.agenticleash.sweep` LaunchAgent** (`StartInterval` 60) expire rules-mode grants and prune `decisions` older than 30 days.
 9. **`grants.ts`** handles revokeAll: delete `source='leash'` grants, set `lockdown=1`, apply lockdown rules in rules mode, and then offer to stop running agents. Register `globalShortcut` `Control+Alt+Command+L`. Add the red button in the sidebar footer and the tray item.
