@@ -82,3 +82,9 @@ Sample: 400,000 events (11.2 s) from one `eslogger` instance while Claude Code a
 **Not captured:** an MCP call (the company policy blocks claude.ai MCP servers) and a personal Claude account (skipped). Both payload shapes are documented, so M1 tests use the documented fields.
 
 **Cleanup:** `~/.cursor/hooks.json` deleted (did not exist before), `~/.claude/settings.json` restored from `.bak`, raw captures in `/tmp` deleted.
+
+## Task 0.4: Stable signing identity
+
+- `security find-identity -p codesigning -v` → `1 valid identities found`: `"Agentic Leash Dev"` (SHA-1 `5850FD2C5848EED2FEBCF78DE030EC68CA2EDA2F`), self-signed root, trusted for code signing.
+- Test signature on a copy of `/usr/bin/true`: `valid on disk`, `satisfies its Designated Requirement`, binary still runs.
+- Packaged builds sign with `CSC_NAME="Agentic Leash Dev"` so Full Disk Access survives rebuilds.
