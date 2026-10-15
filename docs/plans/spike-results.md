@@ -45,7 +45,7 @@ Sample: 400,000 events (11.2 s) from one `eslogger` instance while Claude Code a
 | unlink | `event.unlink.target.path` |
 | time | `time` (ISO 8601, ns) |
 
-## Task 0.3: Real hook payloads (partial)
+## Task 0.3: Real hook payloads
 
 **Cursor CLI `2026.10.01-e373342`** (`cursor-agent -p --force --trust`), fixtures in `tests/fixtures/hooks/cursor-*.json`:
 
@@ -62,6 +62,23 @@ Sample: 400,000 events (11.2 s) from one `eslogger` instance while Claude Code a
 - The hook must never log `content`, `user_email` or `transcript_path`.
 - A running session doesn't pick up a newly created `~/.cursor/hooks.json`. This T3 Code Cursor chat fired no hooks; a fresh `cursor-agent` session fired all of them. Installing hooks therefore needs a "start new agent sessions" banner.
 
-**Claude Code (company account):** inconclusive. `claude -p` failed with `OAuth session expired and could not be refreshed` before any tool call.
+**Cursor IDE 3.24.18**, fixtures `cursor-ide-*.json`: same fields as the CLI. `beforeShellExecution` also carries `tool_use_id`.
 
-**Still to capture:** Cursor IDE, an MCP call, Claude on the company account (after you sign in again), Claude on a personal account.
+- The IDE also runs `~/.claude/settings.json` `PreToolUse` hooks, with a Cursor payload (`cursor_version` present; fixture `cursor-ide-via-claude-settings-preToolUse-read.json`). Every tool call reached the capture hook twice. The CLI doesn't do this.
+- **Rule:** the Claude hook entry exits 0 with no output when the payload has `cursor_version`.
+
+**Claude Code 2.1.299 (company account)**, fixtures `claude-preToolUse-{bash,read,edit}.json`:
+
+| Tool | Fields used |
+|---|---|
+| Bash | `tool_input.command`, `tool_input.description`, `cwd` |
+| Read | `tool_input.file_path`, `cwd` |
+| Edit | `tool_input.file_path`, `old_string`, `new_string`, `replace_all`, `cwd` |
+
+- Every payload has `session_id`, `transcript_path`, `cwd`, `permission_mode`, `effort`, `hook_event_name`, `tool_use_id`, `scratchpad_dir` (and `prompt_id` in interactive sessions). No `user_email`.
+- **User hooks fire on the company account now.** After `/login`, `~/.claude/remote-settings.json` was rewritten with `allowManagedHooksOnly: false`; it was `true` when the plan was written. The company can flip it remotely, so the mode check must follow that file live (already in M1 via `fs.watch`).
+- The hook must never log `old_string`, `new_string` or `transcript_path`.
+
+**Not captured:** an MCP call (the company policy blocks claude.ai MCP servers) and a personal Claude account (skipped). Both payload shapes are documented, so M1 tests use the documented fields.
+
+**Cleanup:** `~/.cursor/hooks.json` deleted (did not exist before), `~/.claude/settings.json` restored from `.bak`, raw captures in `/tmp` deleted.

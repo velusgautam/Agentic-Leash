@@ -1,0 +1,16 @@
+{
+  "session_id": "7db3b7a7-78ce-4bc8-8602-cbe72d169285",
+  "transcript_path": "<redacted>",
+  "cwd": "/Users/velu.gautam/Projects/agentic-leash/spikes",
+  "prompt_id": "563edc1b-7cbc-450f-b075-d9b837816a69",
+  "permission_mode": "default",
+  "effort": {
+    "level": "medium"
+  },
+  "hook_event_name": "PreToolUse",
+  "tool_name": "Read",
+  "tool_input": {
+    "file_path": "/Users/velu.gautam/Projects/agentic-leash/spikes/package.json"
+  },
+  "tool_use_id": "toolu_01EjkEkUNj2ESpcWbqG9rpiH"
+}

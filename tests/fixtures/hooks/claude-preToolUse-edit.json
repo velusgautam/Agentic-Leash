@@ -1,0 +1,20 @@
+{
+  "session_id": "aa36685e-6ae9-4f4e-85f4-2b10c87cce9f",
+  "transcript_path": "<redacted>",
+  "cwd": "/Users/velu.gautam/Projects/example",
+  "scratchpad_dir": "/private/tmp/claude-502/-Users-velu-gautam-Work-studio/aa36685e-6ae9-4f4e-85f4-2b10c87cce9f/scratchpad",
+  "prompt_id": "57fe63fe-4bee-4024-885f-08ea14eb8dc7",
+  "permission_mode": "default",
+  "effort": {
+    "level": "medium"
+  },
+  "hook_event_name": "PreToolUse",
+  "tool_name": "Edit",
+  "tool_input": {
+    "file_path": "/Users/velu.gautam/Projects/example/README.md",
+    "old_string": "<redacted>",
+    "new_string": "<redacted>",
+    "replace_all": false
+  },
+  "tool_use_id": "toolu_01CHuVkTAPFyfRZ6qmL7Y2DU"
+}
