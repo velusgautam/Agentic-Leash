@@ -1,0 +1,17 @@
+{
+  "session_id": "5dd684de-a3d6-4551-a3c1-a5eb8b304e9a",
+  "transcript_path": "<redacted>",
+  "cwd": "/Users/velu.gautam",
+  "scratchpad_dir": "/private/tmp/claude-502/-Users-velu-gautam/5dd684de-a3d6-4551-a3c1-a5eb8b304e9a/scratchpad",
+  "permission_mode": "default",
+  "effort": {
+    "level": "high"
+  },
+  "hook_event_name": "PreToolUse",
+  "tool_name": "Bash",
+  "tool_input": {
+    "command": "ls -la /Users/velu.gautam",
+    "description": "List files in home directory"
+  },
+  "tool_use_id": "toolu_01N2YrLmdfBnJ7e2LfwSBt22"
+}

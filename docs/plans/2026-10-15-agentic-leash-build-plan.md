@@ -22,7 +22,7 @@
 - Every edit to an agent config file writes `<file>.bak` first.
 - Never restart or kill an agent without an explicit click.
 - Approval popup timeout: 120 s. Hook `timeout`: 150 s.
-- The hook never stores or logs payload `content`, `user_email` or `transcript_path`.
+- The hook never stores or logs payload `content`, `old_string`, `new_string`, `user_email` or `transcript_path`.
 - Time-limit presets: 15 min, 1 h (default), 8 h, Forever.
 - Retention: hook decision log 30 days, file history 90 days.
 - T3 Code is MIT. Keep its license text in `THIRD_PARTY_LICENSES.md` and on the Settings > Licenses page.
@@ -62,11 +62,12 @@
 
 ### Facts found while writing this plan (they change two decisions)
 
-1. **Claude Code ignores user hooks on this Mac, but only for the company account.** The company Claude account downloads settings into `~/.claude/remote-settings.json`, and they set `"allowManagedHooksOnly": true`. There is no `/Library/Application Support/ClaudeCode/managed-settings.json` and no Claude Code MDM profile, so a personal Claude account gets hooks even on this Mac. User permission rules are still allowed (`allowManagedPermissionRulesOnly` is absent). Fix: hooks first, with permission rules as an automatic fallback (**Q38**).
+1. **The company can block Claude Code user hooks remotely, and it changes.** The company Claude account downloads settings into `~/.claude/remote-settings.json`, rewritten at login and on a schedule. While writing this plan it had `"allowManagedHooksOnly": true`; after a fresh `/login` in Task 0.3 it had `false` and user hooks fired. There is no `/Library/Application Support/ClaudeCode/managed-settings.json` and no Claude Code MDM profile, so a personal Claude account always gets hooks on this Mac. User permission rules are still allowed (`allowManagedPermissionRulesOnly` is absent). Fix: hooks first, with permission rules as an automatic fallback that follows the file live (**Q38**).
 2. **Cursor's SDK rejects "ask" from hooks.** T3 Code runs Cursor through `@cursor/sdk` with `settingSources: ["project","user","team",...]`, and its source notes that hooks can only deny or ask, and local SDK runs reject "ask". Cursor's `preToolUse` and `beforeReadFile` also accept only allow/deny. So the Cursor fallback when Agentic Leash is down is **allow** everywhere (Q20 said "Cursor's prompt" for shell).
 3. **T3 Code's Claude sessions load user hooks.** T3 Code doesn't set `settingSources` for Claude sessions, and the Agent SDK then loads user, project and local settings.
 4. **A Cursor "My Machines" worker runs on this Mac** (`cursor-agent worker start --worker-dir ~/Work/studio`). User-level hooks don't apply to it. It can be monitored, not blocked.
 5. **No code-signing identity exists** (`security find-identity -p codesigning -v` → 0). macOS Privacy grants such as Full Disk Access are tied to the code signature, so packaged builds need a stable one (Task 0.4).
+6. **The Cursor IDE also runs Claude Code's hooks.** Cursor IDE 3.24.18 runs `~/.claude/settings.json` `PreToolUse` hooks with a Cursor payload, so each tool call reaches Agentic Leash twice. The `cursor-agent` CLI doesn't. Fix: the Claude hook entry gives no opinion when the payload has `cursor_version`.
 
 ### Q38 / Q39 (settled)
 
@@ -313,6 +314,8 @@ Reads set `minute_key = agent || '|' || path || '|' || floor(ts/60000)` and inse
 | Cursor `beforeMCPExecution` | `mcp_server_name`, `tool_name` | same as above (lockdown only) | `{"permission":"allow"}` | `allow` |
 
 Claude matcher: `Read|Edit|Write|MultiEdit|NotebookEdit|Glob|Grep|Bash|WebFetch|WebSearch|mcp__.*`.
+
+A payload with `cursor_version` that arrives through the Claude entry comes from the Cursor IDE: exit 0 with no stdout, and let the Cursor entry decide.
 
 ---
 
@@ -934,6 +937,6 @@ Format: **question**. Options considered. Recommendation. Your answer. **Final.*
 
 ### Round 7: found while writing the plan
 
-- **Q38 Enforcement mode per agent.** Fact: Claude ignores user hooks on this Mac, only because the company account sets `allowManagedHooksOnly: true`. Recommended: `hook` / `rules` / `monitor-only` modes chosen automatically, with Claude on this Mac in `rules` mode. **Your refinement: hooks are the default for Claude, so it works for personal accounts; permission rules are only a fallback when hooks are blocked.** **Final: hook mode by default; rules fallback auto-detected from managed settings; automatic migration on mode change; hook entries always installed.**
+- **Q38 Enforcement mode per agent.** Fact: Claude ignores user hooks on this Mac, only because the company account sets `allowManagedHooksOnly: true`. Recommended: `hook` / `rules` / `monitor-only` modes chosen automatically, with Claude on this Mac in `rules` mode. **Your refinement: hooks are the default for Claude, so it works for personal accounts; permission rules are only a fallback when hooks are blocked.** **Final: hook mode by default; rules fallback auto-detected from managed settings; automatic migration on mode change; hook entries always installed.** Task 0.3 update: the company setting is now `false` and user hooks fire, which confirms the setting must be followed live.
 - **Q39 Leash only restricts.** Fact: Claude's hook answer `allow` skips Claude's own prompt. Recommended: the hook never loosens; it gives no answer for covered paths and only ever says deny or ask. Your answer: yes. **Final: as recommended.**
 - **Execution approach.** Options: a fresh sub-agent per task with review between tasks, or inline in one chat. Your answer: yes. **Final: a sub-agent per task.**

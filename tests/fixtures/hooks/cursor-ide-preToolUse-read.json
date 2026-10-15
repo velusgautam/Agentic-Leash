@@ -1,0 +1,18 @@
+{
+  "conversation_id": "10964f33-a08d-4387-8edb-89350e4d776e",
+  "generation_id": "a15ee583-e5a9-412c-bc45-c7db2e29bc47",
+  "model": "grok-4.7",
+  "tool_name": "Read",
+  "tool_input": {
+    "file_path": "/Users/velu.gautam/Projects/agentic-leash/spikes/package.json"
+  },
+  "tool_use_id": "call-a6e6bbed-ec8f-463b-8ccb-f5a6549cc6de-0\nfc_aca74d20-acf3-99a8-92c6-083208514c24_0",
+  "session_id": "10964f33-a08d-4387-8edb-89350e4d776e",
+  "hook_event_name": "preToolUse",
+  "cursor_version": "3.24.18",
+  "workspace_roots": [
+    "/Users/velu.gautam/Projects/example"
+  ],
+  "user_email": "<redacted>",
+  "transcript_path": "<redacted>"
+}
