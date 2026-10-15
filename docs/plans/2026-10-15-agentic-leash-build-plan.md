@@ -159,6 +159,9 @@ agentic-leash/
       historyDb.ts                       schema, batch insert, 90-day prune
     main/
       index.ts                           lifecycle: window, close→hide, ⌘Q→hide, login item
+      menus.ts                           app and tray menu templates
+      uiState.ts                         ui-state.json in userData
+      loginItem.ts                       login LaunchAgent
       tray.ts                            menu bar icon, badge, menu
       broker.ts                          unix socket server, approval queue
       approvalWindow.ts                  drop-down panel window
@@ -175,18 +178,18 @@ agentic-leash/
       history.ts                         read-only poller over history.db
     preload/index.ts
     renderer/
-      main.tsx, router.tsx, index.css    index.css copied from T3 Code
-      components/ui/*                    copied from T3 Code apps/web/src/components/ui
-      components/AppSidebarLayout.tsx    adapted from T3 Code
-      components/CommandPalette.tsx      adapted from T3 Code
-      components/DiffPanel.tsx           adapted from T3 Code (@pierre/diffs)
-      routes/live.tsx, grants.tsx, history.tsx, agents.$id.tsx, approval.tsx
-      routes/settings.*.tsx              general, agents, monitoring, appearance, keybindings, diagnostics, licenses
+      index.html
+      src/main.tsx, router.tsx, nav.ts, env.ts, index.css   index.css copied from T3 Code
+      src/components/ui/*                copied from T3 Code apps/web/src/components/ui, as needed
+      src/components/AppLayout.tsx       built from T3's ui/sidebar parts
+      src/components/settings.tsx        PageContainer, SettingsSection, SettingsRow (T3 markup)
+      src/components/CommandPalette.tsx  adapted from T3 Code (M5)
+      src/components/DiffPanel.tsx       adapted from T3 Code (@pierre/diffs) (M4)
+      src/routes/live.tsx, grants.tsx, history.tsx, agent.tsx, settings.tsx, approval.tsx (M3)
   tests/
     fixtures/hooks/*.json                captured in Task 0.3
     fixtures/eslogger/*.jsonl            captured in Task 0.2
     *.test.ts
-  spikes/                                Milestone 0 only; deleted at the end of Milestone 1
 ```
 
 ---
@@ -493,6 +496,8 @@ git commit -m "chore: Record milestone 0 spike results"
 ---
 
 ## Milestone 1: App shell (3 days)
+
+**Status:** done. Detailed plan and deviations: [2026-10-15-m1-app-shell.md](2026-10-15-m1-app-shell.md).
 
 **Tasks:**
 1. **Scaffold.** Run `pnpm create @quick-start/electron /tmp/al-scaffold --template react-ts`, move its files into the repo root, pin `electron@44`, and add Tailwind 4, TanStack Router, zustand, lucide-react and Vitest.
