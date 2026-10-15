@@ -1,8 +1,38 @@
+import { useEffect, useState } from "react";
 import { useParams } from "@tanstack/react-router";
 import licenses from "../../../../THIRD_PARTY_LICENSES.md?raw";
+import type { OpenAtLoginState } from "../../../shared/bridge";
 import { Placeholder } from "~/components/Placeholder";
-import { PageContainer, SettingsSection } from "~/components/settings";
+import { PageContainer, SettingsRow, SettingsSection } from "~/components/settings";
+import { Switch } from "~/components/ui/switch";
 import { SETTINGS_SECTIONS } from "~/nav";
+
+function General() {
+  const [login, setLogin] = useState<OpenAtLoginState | null>(null);
+  useEffect(() => {
+    void window.leash.getOpenAtLogin().then(setLogin);
+  }, []);
+  return (
+    <SettingsSection title="Startup">
+      <SettingsRow
+        title="Open at login"
+        description={
+          login?.available === false
+            ? "Available in the installed app."
+            : "Starts hidden in the menu bar when you log in."
+        }
+        control={
+          <Switch
+            aria-label="Open at login"
+            checked={login?.enabled ?? false}
+            disabled={!login?.available}
+            onCheckedChange={(enabled) => void window.leash.setOpenAtLogin(enabled).then(setLogin)}
+          />
+        }
+      />
+    </SettingsSection>
+  );
+}
 
 function Licenses() {
   return (
@@ -18,7 +48,9 @@ export function SettingsPage() {
   return (
     <PageContainer>
       <h1 className="px-3 text-lg font-medium sm:px-4">{entry.label}</h1>
-      {entry.id === "licenses" ? (
+      {entry.id === "general" ? (
+        <General />
+      ) : entry.id === "licenses" ? (
         <Licenses />
       ) : (
         <Placeholder icon={entry.icon} title={entry.label} description="These settings arrive in a later milestone." />
