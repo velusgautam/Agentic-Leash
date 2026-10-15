@@ -1,6 +1,8 @@
-import { join } from "node:path";
-import { app, BrowserWindow, Menu, Notification, nativeTheme, shell, Tray } from "electron";
+import { join, resolve } from "node:path";
+import { app, BrowserWindow, ipcMain, Menu, Notification, nativeTheme, shell, Tray } from "electron";
 import trayIcon from "../../resources/trayTemplate.png?asset";
+import type { OpenAtLoginState } from "../shared/bridge";
+import { isOpenAtLogin, setOpenAtLogin } from "./loginItem";
 import { appMenuTemplate, trayMenuTemplate } from "./menus";
 import { readUiState, writeUiState } from "./uiState";
 
@@ -55,6 +57,27 @@ function hideToMenuBar(): void {
   writeUiState(dir, { ...state, hideNoticeShown: true });
 }
 
+// <bundle>.app/Contents/MacOS/<exe> → <bundle>.app
+const appBundlePath = () => resolve(process.execPath, "../../..");
+
+function loginItemState(): OpenAtLoginState {
+  return { available: app.isPackaged, enabled: app.isPackaged && isOpenAtLogin() };
+}
+
+function registerLoginItem(): void {
+  ipcMain.handle("login-item:get", () => loginItemState());
+  ipcMain.handle("login-item:set", (_event, enabled: boolean) => {
+    if (app.isPackaged) setOpenAtLogin(enabled, appBundlePath());
+    return loginItemState();
+  });
+  const dir = app.getPath("userData");
+  const state = readUiState(dir);
+  if (app.isPackaged && !state.loginItemConfigured) {
+    setOpenAtLogin(true, appBundlePath());
+    writeUiState(dir, { ...state, loginItemConfigured: true });
+  }
+}
+
 if (!app.requestSingleInstanceLock()) {
   app.quit();
 } else {
@@ -66,6 +89,7 @@ if (!app.requestSingleInstanceLock()) {
   });
 
   void app.whenReady().then(() => {
+    registerLoginItem();
     const hidden = process.argv.includes("--hidden");
     win = createWindow(!hidden);
     win.on("close", (event) => {
