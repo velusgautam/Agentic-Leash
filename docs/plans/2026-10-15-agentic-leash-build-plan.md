@@ -8,6 +8,8 @@
 
 **Tech Stack:** Electron 44, electron-vite, electron-builder, React 19, TypeScript, Tailwind 4, Base UI / shadcn `base-mira` components copied from T3 Code, lucide icons, TanStack Router, zustand, built-in `node:sqlite`, Vitest.
 
+**Contents:** Sections 1–7 are the build plan. [Appendix A](#appendix-a-research-findings) has every research finding. [Appendix B](#appendix-b-full-decision-log-q1q39) is the full question-by-question decision log.
+
 ## Global Constraints
 
 - Platform: macOS 26, Apple Silicon only. Personal tool; no App Store, no notarization in v1.
@@ -731,3 +733,181 @@ export interface AgentAdapter {
 2. Codex adapter in `hook` mode (≈ 1 day).
 3. Gemini adapter (≈ 1 day).
 4. Session-scoped grants.
+
+---
+
+## Appendix A: Research findings
+
+All checked on this Mac (macOS 26.6.2, Apple Silicon) or in official docs on 2026-10-15.
+
+### A1. Where each agent stores its permissions
+
+| Agent | Config files | Key settings | How it's enforced | Live reload |
+|---|---|---|---|---|
+| Claude Code (CLI v2.1.299) | `~/.claude/settings.json`, `~/.claude/settings.local.json`, `~/.claude.json` (per-project trust + MCP), `~/.claude/remote-settings.json` (company policy), `<repo>/.claude/settings.json`, `<repo>/.claude/settings.local.json`, `<repo>/.mcp.json` | `permissions.allow` / `ask` / `deny` / `additionalDirectories` / `defaultMode`; `sandbox.enabled`, `sandbox.filesystem.allowWrite` / `denyRead`, `sandbox.network.allowedDomains` / `deniedDomains`; `projects[path].hasTrustDialogAccepted`, `mcpServers`, `enabledMcpjsonServers`, `disabledMcpjsonServers` | Tool rules are checked inside Claude's own process. Bash runs under macOS Seatbelt only when `sandbox.enabled` is on. Read, Edit, WebFetch and MCP are outside that sandbox. Precedence: managed > CLI flags > local > project > user | Yes for `permissions.*`, hooks and `sandbox.*` (file watcher, applies on next tool call). Model and some session keys only at start. Company policy is delivered on a schedule |
+| OpenAI Codex CLI | `~/.codex/config.toml`, `<repo>/.codex/config.toml` (loaded only for trusted projects) | `approval_policy`; `sandbox_mode` = `read-only` / `workspace-write` / `danger-full-access`; `[sandbox_workspace_write] network_access`, `writable_roots`; `[projects."<path>"] trust_level`; `[features.network_proxy]` | Seatbelt (`sandbox-exec`) unless `danger-full-access`. Write-denied inside the workspace: `.git`, `.agents`, `.codex` | Yes (documented for v0.130+). Not installed here, so unverified |
+| Cursor (IDE + `agent` CLI v2026.10.01) | `~/.cursor/cli-config.json`, `~/.cursor/sandbox.json`, `<repo>/.cursor/sandbox.json`, `<repo>/.cursor/cli.json`, `~/.cursor/mcp.json`, `~/.cursor/hooks.json`, `~/.cursor/managed/team_*/hooks/`, `~/Library/Application Support/Cursor/User/globalStorage/state.vscdb` (`autorun.cachedAdminSettings`) | Permission tokens `Shell(cmd)`, `Read(glob)`, `Write(glob)`, `WebFetch(domain)`, `Mcp(server:tool)`; `approvalMode`; `sandbox.mode`, `sandbox.networkAccess`; `sandbox.json`: `type`, `readBoundary`, `additionalReadwritePaths`, `additionalReadonlyPaths`, `networkPolicy.default` / `allow` / `deny` | Allow/deny lists are checked inside Cursor's process. Shell commands run under Seatbelt (`cursorsandbox`) only when the sandbox is on. Team admin settings cap everything | Partial. `cli-config.json` has no documented watcher; `sandbox.json` is safest after a new session |
+| T3 Code (v0.0.45, `com.t3tools.t3code`) | `~/.t3/userdata/settings.json` (providers, `binaryPath`), `client-settings.json`, `desktop-settings.json`, `state.sqlite` (pending approvals), `~/.t3/caches/*.json` | No permission rules of its own | Uses the permission systems of the agents it runs | Needs reconnect (unverified) |
+| Gemini CLI | `~/.gemini/settings.json`, `~/.gemini/trustedFolders.json` | `security.folderTrust.enabled`; `trustedFolders.json` maps paths to `TRUSTED` / `UNTRUSTED`; `sandbox` | Untrusted folders run in safe mode. Seatbelt when sandbox is on | Restart likely needed |
+| OpenCode | `~/.config/opencode/opencode.json` | `permission` map (`"*": "ask"`, per-tool patterns) | Checked in-process only. The project says explicitly that it is not a sandbox | Unverified |
+| Claude Desktop | `~/Library/Application Support/Claude/claude_desktop_config.json` | MCP servers, `preferences.bypassPermissionsGateByAccount` | Same stack as Claude Code in agent mode | — |
+
+Not found on this Mac: aider, Codeium, Windsurf, Continue, iTerm.
+
+### A2. Current state of this Mac
+
+1. **Cursor sandbox is off.** `approvalMode: "unrestricted"`, `sandbox.mode: "disabled"`, and the company admin sets `SANDBOXING_MODE_DISABLED`, `NETWORKING_MODE_ALWAYS_DISABLED` and `GIT_MODE_ALWAYS_DISABLED`. The MCP tool allowlist and allowed MCP servers are set by the company. Nothing in the admin settings blocks user hooks (`enforceHooksReadiness: false`). A team hooks folder exists at `~/.cursor/managed/team_14968313`.
+2. **Claude company policy is strict.**
+   - It denies WebFetch, WebSearch and reading `.env`.
+   - `disableAutoMode` and `disableBypassPermissionsMode` are both `"disable"`.
+   - `allowManagedHooksOnly`, `allowManagedMcpServersOnly` and `strictKnownMarketplaces` are set.
+   - `allowManagedPermissionRulesOnly` is **absent**, so user permission rules still work.
+   - User `settings.json` has no hooks.
+3. **Codex and Gemini are stubs.** `~/.codex/config.toml` has only one MCP server, and the `codex` and `gemini` CLIs aren't installed.
+4. **A Cursor "My Machines" worker is running** for `~/Work/studio`. T3 Code runs `cursor-agent … acp`.
+5. **Docker Desktop is installed.** Podman, OrbStack and Colima aren't.
+
+### A3. macOS Privacy (TCC)
+
+- `~/Library/Application Support/com.apple.TCC/TCC.db` can't be read without Full Disk Access ("authorization denied").
+- Grants can be reset, never granted: `tccutil reset <Service> <bundle id>`, or `tccutil reset All <bundle id>`. Some services, such as CoreLocation, can't be reset this way.
+- Services that matter for agents: `SystemPolicyAllFiles` (Full Disk Access), `DeveloperTool`, `Accessibility`, `AppleEvents` (Automation), `ScreenCapture`, `Microphone`, `Camera`, `AddressBook`, `Reminders`.
+- Bundle IDs: Cursor `com.todesktop.230313mzl4w4u92`, Claude Desktop `com.anthropic.claudefordesktop`, T3 Code `com.t3tools.t3code`, Terminal `com.apple.Terminal`.
+- Privacy grants follow the app's code signature, bundle ID and path. Unsigned or ad-hoc-signed builds lose them on every rebuild.
+
+### A4. Hook capabilities
+
+**Claude Code**
+- `PreToolUse` can answer `allow` / `deny` / `ask` / `defer` (`hookSpecificOutput.permissionDecision`).
+- `allow` skips Claude's permission prompt. Deny and ask rules are still checked afterwards.
+- Default timeout for command hooks is 600 s.
+- Exit code 2 blocks the action. Other non-zero exit codes count as errors.
+- `tool_input.file_path` is always an absolute path.
+- MCP calls include `mcp_server.name` and `source`.
+
+**Cursor**
+- Agent hooks: `sessionStart`/`sessionEnd`, `preToolUse`/`postToolUse`/`postToolUseFailure`, `subagentStart`/`subagentStop`, `beforeShellExecution`/`afterShellExecution`, `beforeMCPExecution`/`afterMCPExecution`, `beforeReadFile`/`afterFileEdit`, `beforeSubmitPrompt`, `preCompact`, `stop`, `afterAgentResponse`/`afterAgentThought`.
+- Tab hooks: `beforeTabFileRead`, `afterTabFileEdit`. App hook: `workspaceOpen`.
+- `preToolUse` and `beforeReadFile` answer `allow`/`deny` only. `beforeShellExecution` and `beforeMCPExecution` also allow `ask`.
+- Crashes, timeouts and non-zero exits other than 2 let the action through, unless the hook has `failClosed: true`. Invalid JSON always blocks.
+- User-level hooks don't run in cloud agents.
+
+**T3 Code**
+- Claude sessions don't set `settingSources`, so the SDK loads user, project and local settings, including hooks.
+- T3's periodic Claude health check sets `disableAllHooks: true`.
+- Cursor sessions pass `settingSources` = project, user, team, … The source notes that hooks can only deny or ask, and that local SDK runs reject "ask".
+
+### A5. T3 Code tech stack (MIT license, [pingdotgg/t3code](https://github.com/pingdotgg/t3code))
+
+| Layer | Used |
+|---|---|
+| Shell | Electron 44.4.5, `electron-builder`, `electron-updater`, `electron-store` |
+| UI | React 19.3, TanStack Router, Tailwind 4.3, Base UI, shadcn style `base-mira` (zinc palette, lucide icons, `@coss` registry), `zustand`, Tiptap, `@pierre/diffs`, `@dnd-kit` |
+| Local server | Node 24, Effect 4.0.4, `node-pty`, SQLite, `@anthropic-ai/claude-agent-sdk`, `@cursor/sdk`, `@opencode-ai/sdk`, ACP |
+| Native | Rust `resource-monitor` |
+| Repo | pnpm monorepo (`apps/desktop`, `apps/web`, `apps/server`, `apps/mobile`, `packages/*`), Vite+ |
+
+UI building blocks in `apps/web/src/components/ui/`:
+- Dialogs and overlays: alert-dialog, dialog, sheet, popover, preview-card, tooltip, menu.
+- Forms: autocomplete, checkbox, combobox, input, input-group, number-field, radio-group, select, switch, textarea, toggle, toggle-group, color-picker, calendar.
+- Layout and display: badge, button, collapsible, command, empty, group, `kbd`, label, middle-truncate, scroll-area, separator, sidebar, skeleton, spinner, table.
+- Feedback and flows: toast, wizard.
+
+Useful bigger components: `AppSidebarLayout`, `CommandPalette`, `RightPanelSheet`, `DiffPanel`, `ConfirmDialogHost`, `QuitHoldOverlay`.
+
+Settings pages: appearance, archived, connections, diagnostics, general, integrations, keybindings, open-source-licenses, projects, providers, scheduled-tasks, snap-shot, source-control, storage.
+
+### A6. StrongDM Leash and name check
+
+- [strongdm/leash](https://github.com/strongdm/leash):
+  - Go, Apache-2.0, 592 stars, latest release v1.1.7 (2026-03-11), last commit 2026-04-06.
+  - StrongDM was acquired by Delinea in March 2026.
+  - Runs agents (`claude`, `codex`, `gemini`, `qwen`, `opencode`) in Docker, Podman or OrbStack, monitors them with eBPF, and enforces Cedar policies for files, network, processes and MCP.
+  - Control UI and WebSocket API on `localhost:18080`.
+  - Experimental macOS native mode uses Endpoint Security and Network Extension system extensions signed by StrongDM.
+  - Open bug [#85](https://github.com/strongdm/leash/issues/85): the CA certificate is broken on Docker Desktop for Mac, so HTTPS fails inside the container.
+- Name conflicts:
+  - "Leash" is taken by StrongDM.
+  - "AI Leash" is taken by a Tauri-based macOS agent app ([patheticgeek/ai-leash](https://patheticgeek.github.io/ai-leash/)).
+  - "Wand" is a remote Mac-control app.
+  - "Leeway" is an AI usage tracker.
+  - "Control Wand" had no exact match.
+  - Chosen: **Agentic Leash**. Fine for personal use; reconsider before publishing.
+
+### A7. Local toolchain
+
+- Node v24.15.0 (nvm), pnpm 11.6.0, no Bun, Docker at `/usr/local/bin/docker`.
+- `/usr/bin/eslogger` and `/usr/bin/fs_usage` are present.
+- `eslogger` events relevant here: `open`, `close`, `write`, `create`, `rename`, `unlink`, `link`, `truncate`, `exec`, `fork`, `exit`, `uipc_connect`, `tcc_modify`, `btm_launch_item_add`. Its only filter is `--select <program path prefix>`, with no pid filter. It needs root plus Full Disk Access for the responsible process.
+- No code-signing identity is installed, and only Command Line Tools are present (no full Xcode).
+
+### A8. Electron runtime facts
+
+- `node:sqlite` works without flags since Electron 35.0.2. A missing-builtin bug was fixed in 36.7.3 / 37.2.3 / 38.
+- `ELECTRON_RUN_AS_NODE=1` runs the app binary as plain Node, unless the `runAsNode` fuse is disabled.
+
+---
+
+## Appendix B: Full decision log (Q1–Q39)
+
+Format: **question**. Options considered. Recommendation. Your answer. **Final.**
+
+### Round 1: scope
+
+- **Q1 Who it's for.** Options: personal, product, company tool. Recommended: personal first, product-ready later. Your answer: yes. **Final: personal tool.**
+- **Q2 Enforcement.** Options: config editor; hook broker; OS-level blocking (Endpoint Security / Network Extension, which needs Apple approval). Recommended: config editor + hook broker. Your answer: yes. **Final: config editor + hook broker** (plus rules mode for Claude on this Mac, Q38).
+- **Q3 "Other apps".** Options: MCP servers, macOS Privacy grants, both. Recommended: both, with Privacy view + reset only. Your answer: yes. **Final: both.**
+- **Q4 v1 agents.** Recommended: Claude Code + Cursor; T3 Code as parent; Codex and Gemini next. Your answer: yes. **Final: as recommended.**
+- **Q5 Network scope.** Recommended: agent-level only; point to LuLu or Little Snitch for a system firewall. Your answer: yes. **Final: agent-level only.**
+- **Q6 Company policy.** Recommended: shown locked, never changed. Your answer: yes. **Final: locked.**
+
+### Round 2: architecture and grants
+
+- **Q7 Tech stack.** Options: Electron, Tauri, SwiftUI. Recommended: Electron + React + TS + Tailwind, single package. Your answer: yes. **Final: Electron.** (`better-sqlite3` was later replaced by `node:sqlite`, Q21.)
+- **Q8 Background process.** Recommended: no background service; check expiry when each request is made. **Your change: always running in the background with a menu bar icon, and popups when an agent asks.** **Final: always-running app + `grants.db` read directly by the hook.**
+- **Q9 Folder with no grant.** Recommended: popup when the app is running, otherwise the agent's own prompt. Your answer: yes. **Final: as recommended** (see Q20 for the Cursor fallback).
+- **Q10 Time-limit presets.** Recommended: 15 min, 1 h default, 8 h, Forever; no session scope. Your answer: yes. **Final: as recommended.**
+- **Q11 Grant shape.** Recommended: folder, recursive, read or read-write, one agent or all. Your answer: yes. **Final: as recommended.**
+- **Q12 Source of truth.** Recommended: config-trusted folders shown "from config"; revoking edits the file after a `.bak`; Leash grants in `grants.db`. Your answer: yes. **Final: as recommended.**
+- **Q13 Shell commands.** Recommended: best-effort path detection, labelled in the UI. Your answer: yes. **Final: as recommended.**
+- **Q14 Audit log.** Recommended: every hook decision in SQLite, 30 days, Log view. Your answer: yes. **Final: as recommended.**
+
+### Round 3: background app and hook
+
+- **Q15 Name.** Path: "Leash" → you suggested Asent Leash, Super Intelligence Leash, AI Leash, Harness Leash, Control Wand → the name check (A6) recommended Control Wand → you chose **Agentic Leash** and confirmed your own implementation. **Final: Agentic Leash, `~/.agentic-leash/`.**
+- **Q16 Window behaviour.** First recommendation: menu bar only. **Your change: a full app with a window; closing moves it to the menu bar; only Quit from the menu bar closes it fully.** **Final: full app; close and ⌘Q hide the window and Dock icon; menu bar Quit exits.**
+- **Q17 Hook ↔ app.** Recommended: hook checks the database first; only misses go to the Unix socket. Your answer: yes. **Final: as recommended.**
+- **Q18 Popup.** Recommended: drop-down panel from the menu bar; `Enter` / `1`–`4` / `Esc`; queued. Your answer: yes. **Final: as recommended.**
+- **Q19 Layout.** Three tabs, later replaced by Q36. **Final: see Q36.**
+- **Q20 App down or no answer.** Recommended: Claude asks; Cursor shell asks; Cursor reads allowed; 2-minute timeout. Your answer: yes. **Fact found later (A4): Cursor's SDK rejects "ask". Final: Claude gets `ask`, Cursor gets `allow` everywhere; 120 s popup timeout.**
+- **Q21 Hook runtime.** Recommended: the app's own binary as Node + `node:sqlite`; measure on day 1; Bun as fallback. Your answer: yes. **Final: as recommended (Task 0.1).**
+- **Q22 Hook install.** Recommended: `.bak`, merge, uninstall only our entries, check on launch. Your answer: yes. **Final: as recommended.**
+- **Q23 Repo location.** Recommended: `~/Projects/<name>`. Your answer: yes. **Final: `~/Projects/agentic-leash`.**
+
+### Round 4: restarts and Revoke all (your additions)
+
+- **Q24 Restart after config changes.** You asked for agents to be forced to reload. Fact: hook-based grants apply on the next tool call with no reload; only config-file edits and Privacy resets need restarts. Recommended: banner listing running agents + one **Restart now** click, never automatic. Your answer: yes. **Final: as recommended.**
+- **Q25 Revoke all.** You asked for one button that revokes everything. Recommended: red button + menu bar item + `⌃⌥⌘L`; clears grants, turns on lockdown, optional stop agents; config files untouched. Your answer: yes. **Final: as recommended** (rules mode also writes lockdown deny rules for Claude, Q38).
+- **Q26 Cursor `failClosed`.** Recommended: `true`. Your answer: yes. **Final: `true`.**
+
+### Round 5: monitoring and history (your addition: StrongDM-style monitoring)
+
+- **Q27 Container mode.** Options: reuse StrongDM Leash; build your own; no containers in v1. Recommended: none in v1, reuse Leash in v2. **Your change: your own implementation, no StrongDM code.** **Final: no containers in v1; own container mode in v2.**
+- **Q28 Live file feed.** Recommended: root helper running `eslogger`, tracking process trees, plus hooks for the Cursor IDE. Your answer: yes. **Final: as recommended.**
+- **Q29 Network feed.** Options: connection polling, URL log, both. Recommended: both, labelled best-effort. Your answer: yes. **Final: both.**
+- **Q30 What gets recorded.** Recommended: writes with SHA-256 + before/after copies for text files up to 1 MB; reads collapsed per minute; skip list; sensitive paths flagged with a notification; 90 days. Your answer: yes. **Final: as recommended** (the "before" copy is best-effort, M4 Task 4).
+- **Q31 Tamper resistance.** Recommended: history in a root-owned folder; the hook blocks agents from touching Leash's files. Your answer: yes. **Final: as recommended.**
+
+### Round 6: architecture confirmation and design
+
+- **Q32 Which architecture.** Recommended: the designed one (Electron menu bar app + hooks + `eslogger` helper + SQLite + simple grant rows, no Cedar). Your answer: yes. **Final: as recommended.**
+- **Q33 Container design timing.** Recommended: a separate grilling session after v1 ships. Your answer: yes. **Final: v2.**
+- **Q34 After a full quit.** Recommended: the helper keeps recording; hooks keep enforcing; popups stop; a warning on quit. Your answer: yes. **Final: as recommended.**
+- **Q35 Copy T3 Code's UI.** You asked for T3 Code's design, layout, settings and interactions. Fact: T3 Code is MIT. Recommended: copy the UI building blocks, theme, sidebar, command palette, toasts, dialogs, keybindings and diff panel; strip Effect and chat logic; add the MIT notice. Your answer: yes. **Final: as recommended.**
+- **Q36 Layout.** Recommended: sidebar with Live, Grants, History, the Agents list (with T3 Code nesting its agents) and Settings; right panel for diffs; ⌘K. Your answer: yes. **Final: as recommended.**
+- **Q37 Settings pages.** Recommended: General, Agents, Monitoring, Appearance, Keybindings, Diagnostics, Licenses. Your answer: yes. **Final: as recommended.**
+
+### Round 7: found while writing the plan (awaiting your answer)
+
+- **Q38 Enforcement mode per agent.** Fact: Claude ignores user hooks on this Mac (`allowManagedHooksOnly: true`). Recommended: `hook` / `rules` / `monitor-only` modes chosen automatically; Claude on this Mac uses `rules` mode through its permission rules, with expiry done by a 60 s LaunchAgent sweep and no Leash popup for Claude. **Pending.**
+- **Q39 Leash only restricts.** Fact: Claude's hook answer `allow` skips Claude's own prompt. Recommended: the hook never loosens; it gives no answer for covered paths and only ever says deny or ask. **Pending.**
