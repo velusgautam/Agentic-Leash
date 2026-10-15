@@ -1,0 +1,40 @@
+import { createHashHistory, createRootRoute, createRoute, createRouter, redirect } from "@tanstack/react-router";
+import { AppLayout } from "~/components/AppLayout";
+import { AgentPage } from "~/routes/agent";
+import { GrantsPage } from "~/routes/grants";
+import { HistoryPage } from "~/routes/history";
+import { LivePage } from "~/routes/live";
+import { SettingsPage } from "~/routes/settings";
+
+const rootRoute = createRootRoute({ component: AppLayout });
+
+const routeTree = rootRoute.addChildren([
+  createRoute({
+    getParentRoute: () => rootRoute,
+    path: "/",
+    beforeLoad: () => {
+      throw redirect({ to: "/live" });
+    },
+  }),
+  createRoute({ getParentRoute: () => rootRoute, path: "/live", component: LivePage }),
+  createRoute({ getParentRoute: () => rootRoute, path: "/grants", component: GrantsPage }),
+  createRoute({ getParentRoute: () => rootRoute, path: "/history", component: HistoryPage }),
+  createRoute({ getParentRoute: () => rootRoute, path: "/agents/$agentId", component: AgentPage }),
+  createRoute({
+    getParentRoute: () => rootRoute,
+    path: "/settings",
+    beforeLoad: () => {
+      throw redirect({ to: "/settings/$section", params: { section: "general" } });
+    },
+  }),
+  createRoute({ getParentRoute: () => rootRoute, path: "/settings/$section", component: SettingsPage }),
+]);
+
+// Hash history: the packaged renderer loads from file://.
+export const router = createRouter({ routeTree, history: createHashHistory() });
+
+declare module "@tanstack/react-router" {
+  interface Register {
+    router: typeof router;
+  }
+}
