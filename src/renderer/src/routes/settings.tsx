@@ -135,7 +135,7 @@ function Appearance() {
 }
 
 function Keybindings() {
-  const rows = [["Hide to menu bar", "⌘Q"], ["Command palette", "⌘K"], ["Allow for 1 hour", "Return"], ["Presets", "1–4"], ["Deny", "Esc"], ["Revoke all", "⌃⌥⌘L"]];
+  const rows = [["Hide to menu bar", "⌘Q"], ["Command palette", "⌘K"], ["Approval: pick duration", "1–4"], ["Approval: allow", "Return"], ["Approval: deny", "Esc"], ["Revoke all, no confirm", "⌃⌥⌘L"]];
   return (
     <SettingsSection title="Keybindings">
       {rows.map(([action, keys]) => <SettingsRow key={action} title={action} control={<span className="font-mono text-xs">{keys}</span>} />)}

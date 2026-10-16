@@ -56,6 +56,8 @@ describe("history", () => {
     late.apply(opened);
     expect(late.has(9)).toBe(true);
     expect(classify(opened, late, "/Users/me")?.kind).toBe("read");
+    late.apply({ process: { audit_token: { pid: 12 }, executable: { path: "/Users/me/.local/share/cursor-agent/versions/2026.10.01/node" } }, event: { open: { file: { path: "/tmp/x" }, fflag: 1 } } });
+    expect(late.agent(12)).toBe("cursor-agent");
     const db = openHistoryDb(join(mkdtempSync(join(tmpdir(), "al-hist-")), "history.db"));
     insertEvents(db, [read!, { ...read!, ts: read!.ts + 1000 }]);
     expect(listHistory(db)).toHaveLength(1);
@@ -67,8 +69,10 @@ describe("history", () => {
 
 describe("system", () => {
   it("parses process lists, lsof and percentiles", () => {
-    const rows = parsePs("PID PPID ARGS\n 10 1 /Applications/Cursor.app/Contents/MacOS/Cursor\n 11 10 claude --continue\n");
-    expect(restartTargets(rows).map((target) => target.kind)).toEqual(["gui", "cli"]);
+    const rows = parsePs(
+      "PID PPID ARGS\n 10 1 /Applications/Cursor.app/Contents/MacOS/Cursor\n 12 10 /Applications/Cursor.app/Contents/Frameworks/Cursor Helper.app/Contents/MacOS/Cursor Helper --type=renderer\n 11 10 claude --continue\n 13 1 node /opt/homebrew/bin/gemini\n 14 1 /usr/bin/grep claude\n",
+    );
+    expect(restartTargets(rows).map((target) => `${target.agent}:${target.kind}`)).toEqual(["cursor:gui", "claude-code:cli", "gemini:cli"]);
     expect(parseLsof("COMMAND PID USER FD TYPE DEVICE SIZE/OFF NODE NAME\nnode 12 u 1u IPv4 0t0 TCP 10.0.0.1:1->1.2.3.4:443 (ESTABLISHED)\n")).toEqual([{ pid: 12, remote: "1.2.3.4:443" }]);
     expect(percentiles([10, 20, 30]).p50).toBe(20);
   });

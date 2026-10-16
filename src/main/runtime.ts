@@ -4,9 +4,9 @@ import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { promisify } from "node:util";
 import { app, BrowserWindow, globalShortcut, ipcMain, nativeTheme } from "electron";
-import { DEFAULT_TTL_S, grantsDbPath, HISTORY_DIR, homeDir, KNOWN_GAPS, leashDir, POPUP_TIMEOUT_S, socketPath, TCC_CLIENTS } from "../shared/constants";
-import { decisionDurations, deleteGrant, deleteGrants, getSetting, insertGrant, listDecisions, listGrants, openGrantsDb, setSetting } from "../shared/db";
-import { listHistory, openHistoryDb } from "../helper/historyDb";
+import { DEFAULT_TTL_S, grantsDbPath, HISTORY_DIR, homeDir, isClaudeBinary, KNOWN_GAPS, leashDir, POPUP_TIMEOUT_S, socketPath, TCC_CLIENTS } from "../shared/constants";
+import { cancelScheduled, decisionDurations, deleteGrant, deleteGrants, getSetting, insertGrant, listDecisions, listGrants, listScheduled, openGrantsDb, scheduleRevoke, setSetting } from "../shared/db";
+import { historyText, listHistory, openHistoryDb, queryHistory, type HistoryFilter } from "../helper/historyDb";
 import type { Access, AgentId, AgentSnapshot, HistoryRow, ThemeSource } from "../shared/types";
 import { loadClaude } from "./agents/claude";
 import { cursorWatchPaths, cursorWorkers, loadCursor } from "./agents/cursor";
@@ -16,13 +16,16 @@ import { Broker } from "./broker";
 import { claudeHooksInstalled, cursorHooksInstalled, mergeClaudeHooks, mergeCursorHooks, removeClaudeHooks, removeCursorHooks } from "./hookInstall";
 import { readJson } from "./agents/fs";
 import { writeWithBackup } from "./backup";
+import { applyDueClaudeTrust, revokeClaudeTrust } from "./claudeTrust";
+import { revokeStoredGrant } from "./revokeConfig";
+import { parentFolders } from "../shared/parents";
 import { publishClaudeRules } from "./rulesMode";
 import { guiQuitScript, parsePs, percentiles, restartTargets } from "./system";
 import { readUiState, writeUiState } from "./uiState";
 import { readTcc } from "./tcc";
 
 const exec = promisify(execFile);
-let restartNeeded = false;
+const pendingRestart = new Set<AgentId>();
 
 function claudeRoot(): string {
   return process.env.CLAUDE_CONFIG_DIR || join(homeDir(), ".claude");
@@ -56,7 +59,7 @@ async function psLines(): Promise<string[]> {
   }
 }
 
-export function startRuntime(options: { userData: string; openApproval: () => void; setPending: (count: number) => void; notify: (title: string, body: string) => void }): { revokeAll: () => Promise<void> } {
+export function startRuntime(options: { userData: string; openApproval: () => void; closeApproval: () => void; setPending: (count: number) => void; notify: (title: string, body: string) => void }): { revokeAll: () => { revoked: number } } {
   const db = openGrantsDb(grantsDbPath());
   const home = homeDir();
   let snapshots: AgentSnapshot[] = [];
@@ -67,6 +70,7 @@ export function startRuntime(options: { userData: string; openApproval: () => vo
   const broker = new Broker((pending) => {
     options.setPending(pending.length);
     if (pending.length) options.openApproval();
+    else options.closeApproval();
     for (const item of pending) {
       if (timeouts.has(item.id)) continue;
       timeouts.set(item.id, setTimeout(() => broker.decide(item.id, { decision: "timeout" }), POPUP_TIMEOUT_S * 1000));
@@ -90,13 +94,14 @@ export function startRuntime(options: { userData: string; openApproval: () => vo
     const privacy = readTcc(join(homedir(), "Library/Application Support/com.apple.TCC/TCC.db"));
     for (const snapshot of snapshots) {
       const bundles = new Set(TCC_CLIENTS.filter((client) => client.agent === snapshot.id).map((client) => client.bundleId));
-      snapshot.privacy = privacy.filter((row) => bundles.has(row.bundleId));
+      snapshot.privacy = privacy.filter((row) => bundles.has(row.bundleId) || (snapshot.id === "claude-code" && isClaudeBinary(row.client)));
     }
     mirrorConfigGrants(db, snapshots, home, Date.now());
     const claude = snapshots.find((snapshot) => snapshot.id === "claude-code");
     publishClaudeRules(db, join(claudeRoot(), "settings.json"), home, claude?.enforcement === "rules");
   };
 
+  const claudeJson = () => join(home, ".claude.json");
   void scan().catch((error) => console.error(error));
 
   let timer: NodeJS.Timeout | null = null;
@@ -111,6 +116,9 @@ export function startRuntime(options: { userData: string; openApproval: () => vo
       /* missing config files are normal */
     }
   }
+  setInterval(() => {
+    if (applyDueClaudeTrust(db, claudeJson(), Date.now()).length) rescan();
+  }, 30_000);
 
   const pollHistory = () => {
     try {
@@ -133,49 +141,99 @@ export function startRuntime(options: { userData: string; openApproval: () => vo
   pollHistory();
   setInterval(pollHistory, 500);
 
-  const allow = (paths: string[], agent: AgentId | "*", access: Access, ttlSeconds: number | null) => {
+  const allow = (paths: string[], agent: AgentId | "*", access: Access, ttlSeconds: number | null, exact = false) => {
     const expiresAt = ttlSeconds === null ? null : Date.now() + ttlSeconds * 1000;
     for (const path of paths) {
-      const root = path.split("/").pop()?.includes(".") ? dirname(path) : path;
+      const root = exact || !path.split("/").pop()?.includes(".") ? path : dirname(path);
+      if (root === "/" || root === "/Users") continue;
       insertGrant(db, { agent, path: root, access, source: "leash", createdAt: Date.now(), expiresAt });
     }
     const claude = snapshots.find((snapshot) => snapshot.id === "claude-code");
     publishClaudeRules(db, join(claudeRoot(), "settings.json"), home, claude?.enforcement === "rules");
   };
 
-  const revokeAll = async () => {
-    deleteGrants(db, "source = ?", "leash");
+  const withHistory = <T,>(read: (historyDb: ReturnType<typeof openHistoryDb>) => T): T => {
+    const historyDb = openHistoryDb(join(process.env.AGENTIC_LEASH_HISTORY_DIR || HISTORY_DIR, "history.db"), true);
+    try {
+      return read(historyDb);
+    } finally {
+      historyDb.close();
+    }
+  };
+  const revokeAll = () => {
+    const grants = listGrants(db);
+    for (const grant of grants) revokeStoredGrant(home, grant);
+    deleteGrants(db, "source = ? OR source = ?", "leash", "config");
     setSetting(db, "lockdown", "1");
     publishClaudeRules(db, join(claudeRoot(), "settings.json"), home, snapshots.find((snapshot) => snapshot.id === "claude-code")?.enforcement === "rules");
+    rescan();
+    return { revoked: grants.length };
   };
 
   ipcMain.handle("agents:list", () => snapshots);
   ipcMain.handle("grants:list", () => listGrants(db));
-  ipcMain.handle("grants:revoke", (_event, id: number) => deleteGrant(db, id));
+  ipcMain.handle("grants:status", () => ({ count: listGrants(db).length, lockdown: getSetting(db, "lockdown", "0") === "1" }));
+  ipcMain.handle("grants:revoke", (_event, id: number) => {
+    const grant = listGrants(db).find((item) => item.id === id);
+    if (grant) revokeStoredGrant(home, grant);
+    deleteGrant(db, id);
+    rescan();
+  });
   ipcMain.handle("grants:revoke-all", () => revokeAll());
   ipcMain.handle("grants:create", (_event, input: { agent: AgentId | "*"; path: string; access: Access; ttlSeconds: number | null }) => {
     allow([input.path], input.agent, input.access, input.ttlSeconds);
   });
   ipcMain.handle("grants:unlock", () => setSetting(db, "lockdown", "0"));
   ipcMain.handle("decisions:list", () => listDecisions(db));
-  ipcMain.handle("history:list", () => history);
+  ipcMain.handle("history:list", (_event, hideNoise?: boolean) => (hideNoise ? withHistory((historyDb) => listHistory(historyDb, 0, 200, true)) : history));
+  ipcMain.handle("history:query", (_event, filter: HistoryFilter) => withHistory((historyDb) => queryHistory(historyDb, filter)));
+  ipcMain.handle("history:text", (_event, id: number) => withHistory((historyDb) => historyText(historyDb, id)));
   ipcMain.handle("approval:list", () => broker.list());
-  ipcMain.handle("approval:decide", (_event, id: string, decision: "allow" | "deny", ttlSeconds: number | null) => {
+  ipcMain.handle("approval:close", () => options.closeApproval());
+  ipcMain.handle("approval:decide", (_event, id: string, decision: "allow" | "deny", ttlSeconds: number | null, scopePath?: string) => {
     const pending = broker.list().find((item) => item.id === id);
     const timeout = timeouts.get(id);
     if (timeout) clearTimeout(timeout);
-    if (decision === "allow" && pending) allow(pending.request.paths, pending.request.agent, pending.request.access, ttlSeconds === undefined ? DEFAULT_TTL_S : ttlSeconds);
+    if (decision === "allow" && pending) {
+      const scope = typeof scopePath === "string" && parentFolders(pending.request.paths).includes(scopePath) ? scopePath : undefined;
+      allow(scope ? [scope] : pending.request.paths, pending.request.agent, pending.request.access, ttlSeconds === undefined ? DEFAULT_TTL_S : ttlSeconds, Boolean(scope));
+    }
     broker.decide(id, { decision, ttlSeconds: ttlSeconds ?? undefined });
   });
-  ipcMain.handle("runtime:restart-needed", () => restartNeeded);
-  ipcMain.handle("runtime:restart", async () => {
+  // Agents that aren't running read the new config on their next start, so they drop out here.
+  const staleTargets = async () => {
+    if (!pendingRestart.size) return [];
     const { stdout } = await exec("/bin/ps", ["-axo", "pid,ppid,args"]);
-    for (const target of restartTargets(parsePs(stdout))) {
-      if (target.kind === "gui" && target.bundleId) await exec("/usr/bin/osascript", ["-e", guiQuitScript(target.bundleId)]);
-      else process.kill(target.pid, "SIGTERM");
+    const targets = restartTargets(parsePs(stdout)).filter((target) => pendingRestart.has(target.agent));
+    for (const agent of pendingRestart) if (!targets.some((target) => target.agent === agent)) pendingRestart.delete(agent);
+    return targets;
+  };
+  ipcMain.handle("runtime:restart-needed", async () => {
+    const targets = await staleTargets();
+    const byName = new Map<string, { name: string; kind: "gui" | "cli"; count: number }>();
+    for (const target of targets) {
+      const entry = byName.get(target.name) ?? { name: target.name, kind: target.kind, count: 0 };
+      entry.count += 1;
+      byName.set(target.name, entry);
     }
-    restartNeeded = false;
+    return [...byName.values()];
   });
+  ipcMain.handle("runtime:restart", async () => {
+    const targets = await staleTargets();
+    const quit = new Set<string>();
+    for (const target of targets) {
+      try {
+        if (target.kind === "gui" && target.bundleId) {
+          if (!quit.has(target.bundleId)) await exec("/usr/bin/osascript", ["-e", guiQuitScript(target.bundleId)]);
+          quit.add(target.bundleId);
+        } else process.kill(target.pid, "SIGTERM");
+      } catch {
+        /* already exited, or the app refused to quit */
+      }
+    }
+    pendingRestart.clear();
+  });
+  ipcMain.handle("runtime:dismiss-restart", () => pendingRestart.clear());
   ipcMain.handle("hooks:status", () => {
     const cursorFile = readJson(join(home, ".cursor/hooks.json"));
     const claudeFile = readJson(join(claudeRoot(), "settings.json"));
@@ -186,7 +244,7 @@ export function startRuntime(options: { userData: string; openApproval: () => vo
     const claudePath = join(claudeRoot(), "settings.json");
     writeWithBackup(cursorPath, `${JSON.stringify(mergeCursorHooks(readJson(cursorPath), hookCommand("cursor")), null, 2)}\n`);
     writeWithBackup(claudePath, `${JSON.stringify(mergeClaudeHooks(readJson(claudePath), hookCommand("claude")), null, 2)}\n`);
-    restartNeeded = true;
+    pendingRestart.add("claude-code").add("cursor");
     return true;
   });
   ipcMain.handle("hooks:uninstall", () => {
@@ -194,7 +252,7 @@ export function startRuntime(options: { userData: string; openApproval: () => vo
     const claudePath = join(claudeRoot(), "settings.json");
     writeWithBackup(cursorPath, `${JSON.stringify(removeCursorHooks(readJson(cursorPath)), null, 2)}\n`);
     writeWithBackup(claudePath, `${JSON.stringify(removeClaudeHooks(readJson(claudePath)), null, 2)}\n`);
-    restartNeeded = true;
+    pendingRestart.add("claude-code").add("cursor");
   });
   ipcMain.handle("diagnostics:get", async () => {
     const stats = percentiles(decisionDurations(db));
@@ -216,15 +274,31 @@ export function startRuntime(options: { userData: string; openApproval: () => vo
     return theme;
   });
   ipcMain.handle("tcc:reset", async (_event, service: string, bundleId: string) => {
-    await exec("/usr/bin/tccutil", ["reset", service, bundleId]);
+    await exec("/usr/bin/tccutil", ["reset", service.replace(/^kTCCService/, ""), bundleId]);
     scan();
   });
-  ipcMain.handle("agents:remove-mcp", (_event, file: string, name: string) => {
-    const path = file.startsWith("~") ? join(home, file.slice(1)) : file;
-    const json = readJson(path) as { mcpServers?: Record<string, unknown> };
-    if (json.mcpServers) delete json.mcpServers[name];
+  ipcMain.handle("trust:scheduled", () => listScheduled(db));
+  ipcMain.handle("trust:revoke", (_event, path: string) => {
+    revokeClaudeTrust(claudeJson(), path);
+    cancelScheduled(db, path);
+    rescan();
+  });
+  ipcMain.handle("trust:schedule", (_event, path: string, dueAt: number) => {
+    if (typeof path !== "string" || !path.startsWith("/") || !Number.isFinite(dueAt) || dueAt <= Date.now()) return;
+    scheduleRevoke(db, path, dueAt);
+  });
+  ipcMain.handle("trust:cancel", (_event, path: string) => cancelScheduled(db, path));
+  ipcMain.handle("agents:remove-mcp", (_event, agent: AgentId, name: string) => {
+    const files: Partial<Record<AgentId, string>> = { "claude-code": claudeJson(), cursor: join(home, ".cursor/mcp.json"), gemini: join(home, ".gemini/settings.json") };
+    const path = files[agent];
+    if (!path || typeof name !== "string") return;
+    type Servers = { mcpServers?: Record<string, unknown> };
+    const json = readJson(path) as Servers & { projects?: Record<string, Servers> };
+    const scopes = [json, ...Object.values(json.projects ?? {})].filter((scope) => scope.mcpServers && name in scope.mcpServers);
+    if (!scopes.length) return;
+    for (const scope of scopes) delete scope.mcpServers![name];
     writeWithBackup(path, `${JSON.stringify(json, null, 2)}\n`);
-    restartNeeded = true;
+    pendingRestart.add(agent);
     rescan();
   });
   ipcMain.handle("onboarding:get", () => Boolean(readUiState(options.userData).onboarded));

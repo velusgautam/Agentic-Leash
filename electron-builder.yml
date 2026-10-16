@@ -4,10 +4,11 @@ directories:
   output: dist
 files:
   - out/**
+  - resources/**
   - package.json
 asarUnpack:
-  - out/main/leash-hook.js
-  - out/main/leash-helper.js
+  - resources/**
+  - out/main/**
 mac:
   target:
     - target: dmg

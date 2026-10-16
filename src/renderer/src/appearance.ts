@@ -16,7 +16,7 @@ export function readAppearance(): AppearancePrefs {
   }
 }
 
-// Same variable mapping as T3 Code's appearanceContrast.ts.
+// Contrast below 100% fades toward the background. Above 100% it pushes toward black or white.
 export function applyAppearance(prefs: AppearancePrefs): void {
   const root = document.documentElement;
   root.style.setProperty("--appearance-contrast-base", `${Math.min(prefs.contrast, 100)}%`);

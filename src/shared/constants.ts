@@ -31,8 +31,23 @@ export const TCC_CLIENTS = [
   { agent: "cursor" as const, bundleId: "com.todesktop.230313mzl4w4u92" },
   { agent: "t3-code" as const, bundleId: "com.t3tools.t3code" },
   { agent: "claude-code" as const, bundleId: "com.anthropic.claudefordesktop" },
-  { agent: "terminal" as const, bundleId: "com.apple.Terminal" },
+  // The claude CLI has no bundle; macOS attributes its prompts to the launching terminal.
+  { agent: "claude-code" as const, bundleId: "com.apple.Terminal" },
+  { agent: "claude-code" as const, bundleId: "com.googlecode.iterm2" },
+  { agent: "claude-code" as const, bundleId: "com.mitchellh.ghostty" },
+  { agent: "claude-code" as const, bundleId: "dev.warp.Warp-Stable" },
 ];
+
+export const TCC_LABELS: Record<string, string> = {
+  "com.apple.Terminal": "via Terminal",
+  "com.googlecode.iterm2": "via iTerm",
+  "com.mitchellh.ghostty": "via Ghostty",
+  "dev.warp.Warp-Stable": "via Warp",
+};
+
+export function isClaudeBinary(client: string): boolean {
+  return client.startsWith("/") && (client.split("/").pop() === "claude" || client.includes("/claude-code"));
+}
 
 export function homeDir(): string {
   return process.env.AGENTIC_LEASH_HOME || homedir();

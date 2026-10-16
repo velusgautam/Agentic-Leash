@@ -1,5 +1,5 @@
 import { join, resolve } from "node:path";
-import { app, BrowserWindow, ipcMain, Menu, Notification, nativeTheme, shell, Tray } from "electron";
+import { app, BrowserWindow, dialog, ipcMain, Menu, Notification, nativeTheme, powerMonitor, shell, Tray } from "electron";
 import appIcon from "../../resources/icon.png?asset";
 import trayIcon from "../../resources/trayTemplate.png?asset";
 import type { OpenAtLoginState } from "../shared/bridge";
@@ -16,7 +16,7 @@ let approval: BrowserWindow | null = null;
 let tray: Tray | null = null;
 let quitting = false;
 let pendingCount = 0;
-let revokeAll = async () => {};
+let revokeAll = (): { revoked: number } => ({ revoked: 0 });
 
 function createWindow(visible: boolean): BrowserWindow {
   const window = new BrowserWindow({
@@ -54,31 +54,63 @@ function refreshTray(): void {
         open: showWindow,
         quit: () => app.quit(),
         pending: pendingCount,
-        revokeAll: () => void revokeAll(),
+        revokeAll: () => void confirmRevokeAll(),
       }),
     ),
   );
 }
 
+async function confirmRevokeAll(): Promise<void> {
+  const { response } = await dialog.showMessageBox({
+    type: "warning",
+    message: "Revoke all grants?",
+    detail: "Unmarks Claude's trusted folders (a .bak is written first), removes Cursor allow rules, deletes Agentic Leash grants, and turns lockdown on until you end it on the Grants page.",
+    buttons: ["Revoke all", "Cancel"],
+    defaultId: 1,
+    cancelId: 1,
+  });
+  if (response === 0) revokeAll();
+}
+
+function closeApproval(): void {
+  if (approval && !approval.isDestroyed()) approval.hide();
+}
+
+const APPROVAL_WIDTH = 520;
+
+// A new window in a fullscreen app gets its own Space unless it is an auxiliary panel.
+function presentApproval(window: BrowserWindow): void {
+  if (window.isFullScreen()) window.setFullScreen(false);
+  window.setFullScreenable(false);
+  window.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
+  window.setAlwaysOnTop(true, "floating");
+  app.focus({ steal: true });
+  window.show();
+  window.focus();
+}
+
 function openApproval(): void {
   if (approval && !approval.isDestroyed()) {
-    approval.show();
+    presentApproval(approval);
     return;
   }
   const bounds = tray?.getBounds() ?? { x: 0, y: 0, width: 0, height: 0 };
   approval = new BrowserWindow({
-    width: 420,
-    height: 280,
-    x: Math.round(bounds.x + bounds.width / 2 - 210),
+    width: APPROVAL_WIDTH,
+    height: 324,
+    x: Math.round(bounds.x + bounds.width / 2 - APPROVAL_WIDTH / 2),
     y: bounds.y + bounds.height + 4,
     frame: false,
+    fullscreenable: false,
     alwaysOnTop: true,
     resizable: false,
     skipTaskbar: true,
-    show: true,
+    show: false,
+    backgroundColor: nativeTheme.shouldUseDarkColors ? "#0a0a0a" : "#ffffff",
     webPreferences: { preload: join(__dirname, "../preload/index.js"), sandbox: true, contextIsolation: true },
   });
   loadRenderer(approval, "#/approval");
+  presentApproval(approval);
   approval.on("closed", () => {
     approval = null;
   });
@@ -126,17 +158,29 @@ function registerLoginItem(): void {
   }
 }
 
+// Cmd+Q is a native terminate, so the Hide menu accelerator never sees it.
+// JS app.quit() (tray Quit, tests) sets the flag first. Dock Quit is the same event as Cmd+Q.
+const nativeQuit = app.quit.bind(app);
+app.quit = () => {
+  quitting = true;
+  nativeQuit();
+};
+
 if (!app.requestSingleInstanceLock()) {
   app.quit();
 } else {
   app.on("second-instance", showWindow);
   app.on("activate", showWindow);
-  // Also fires for tray Quit, Dock > Quit, logout and shutdown; those must really quit.
-  app.on("before-quit", () => {
-    quitting = true;
+  app.on("before-quit", (event) => {
+    if (quitting) return;
+    event.preventDefault();
+    hideToMenuBar();
   });
 
   void app.whenReady().then(() => {
+    powerMonitor.on("shutdown", () => {
+      quitting = true;
+    });
     registerLoginItem();
     if (!app.isPackaged) app.dock?.setIcon(appIcon);
     tray = new Tray(trayIcon);
@@ -144,6 +188,7 @@ if (!app.requestSingleInstanceLock()) {
     ({ revokeAll } = startRuntime({
       userData: app.getPath("userData"),
       openApproval,
+      closeApproval,
       setPending: (count) => {
         pendingCount = count;
         refreshTray();

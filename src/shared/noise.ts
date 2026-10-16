@@ -1,0 +1,70 @@
+// Agent machinery and OS scratch. A sensitive path stays visible even inside one of these.
+const DIRS = [
+  "/.git",
+  "/node_modules",
+  "/.cache",
+  "/Library/Caches",
+  "/Library/Logs",
+  "/private/var/folders",
+  "/var/folders",
+  "/.claude/projects",
+  "/.claude/plugins",
+  "/.claude/debug",
+  "/.claude/cache",
+  "/.claude/statsig",
+  "/.claude/telemetry",
+  "/.claude/shell-snapshots",
+  "/.claude/todos",
+  "/.claude/session-env",
+  "/.claude/ide",
+  "/.claude/skills/synced",
+  "/.cursor/projects",
+  "/.cursor/ai-tracking",
+  "/Cursor/logs",
+  "/Cursor/Cache",
+  "/Cursor/CachedData",
+  "/.npm/_logs",
+  "/.npm/_cacache",
+  "/agent-transcripts",
+  "/.codex/sessions",
+  "/.gemini/tmp",
+];
+
+const PREFIXES = ["/dev/", "/tmp/", "/private/tmp/", "/System/", "/usr/lib/", "/usr/share/"];
+
+const NAMES = [".DS_Store", ".last-complete-round", ".localized"];
+
+const SUFFIXES = [".tmp", ".temp", ".swp", ".swo"];
+
+function base(path: string): string {
+  return path.slice(path.lastIndexOf("/") + 1);
+}
+
+function personal(path: string): boolean {
+  const name = base(path);
+  if (name === ".env" || name.startsWith(".env.")) return true;
+  return ["/.ssh/", "/.aws/", "/.gnupg/", "/Library/Keychains/", "/.kube/"].some((part) => path.includes(part));
+}
+
+function scratch(path: string): boolean {
+  if (PREFIXES.some((prefix) => path.startsWith(prefix))) return true;
+  if (DIRS.some((dir) => path.includes(`${dir}/`) || path.endsWith(dir))) return true;
+  const name = base(path);
+  if (NAMES.includes(name) || name.endsWith("~")) return true;
+  const lower = name.toLowerCase();
+  return SUFFIXES.some((suffix) => lower.endsWith(suffix));
+}
+
+export function isNoise(path: string): boolean {
+  return !personal(path) && scratch(path);
+}
+
+const like = (pattern: string) => `path LIKE '${pattern}'`;
+
+export const NOISE_SQL = `(${[
+  ...PREFIXES.map((prefix) => like(`${prefix}%`)),
+  ...DIRS.flatMap((dir) => [like(`%${dir}/%`), like(`%${dir}`)]),
+  ...NAMES.map((name) => like(`%/${name}`)),
+  ...SUFFIXES.map((suffix) => `lower(path) LIKE '%${suffix}'`),
+  like("%~"),
+].join(" OR ")})`;

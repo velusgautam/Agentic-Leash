@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { FolderLock, History, LockOpen, ShieldOff, Timer, Users } from "lucide-react";
 import type { DecisionRow, Grant } from "../../../shared/types";
+import { ConfirmAction, grantEffects, REVOKE_ALL_EFFECTS } from "~/components/ConfirmAction";
 import { AGENT_LABELS, AgentIcon } from "~/components/Icons";
 import { PageContainer, SettingsSection } from "~/components/settings";
 import { Button } from "~/components/ui/button";
@@ -85,13 +86,27 @@ export function GrantsPage() {
                   <span className="text-xs text-muted-foreground">{grant.source}</span>
                 </div>
               </div>
-              {grant.source === "leash" ? <Button size="sm" variant="destructive-outline" onClick={() => void window.leash.revokeGrant(grant.id).then(load)}>Revoke</Button> : null}
+              <ConfirmAction
+                trigger={<Button size="sm" variant="destructive-outline">Revoke</Button>}
+                title="Revoke this grant?"
+                description={grant.path}
+                effects={grantEffects(grant)}
+                confirmLabel="Revoke"
+                onConfirm={() => void window.leash.revokeGrant(grant.id).then(load)}
+              />
             </div>
           ))}
         </SettingsSection>
       )}
       <div className="flex gap-2 px-3">
-        <Button variant="destructive" onClick={() => void window.leash.revokeAll().then(load)}><ShieldOff />Revoke all and lock down</Button>
+        <ConfirmAction
+          trigger={<Button variant="destructive" disabled={grants.length === 0}><ShieldOff />{grants.length === 0 ? "Nothing to revoke" : "Revoke all and lock down"}</Button>}
+          title={`Revoke all ${grants.length} grants?`}
+          description="Every agent loses the folder access it has now."
+          effects={REVOKE_ALL_EFFECTS}
+          confirmLabel="Revoke all"
+          onConfirm={() => void window.leash.revokeAll().then(load)}
+        />
         <Button variant="outline" onClick={() => void window.leash.unlock()}><LockOpen />End lockdown</Button>
       </div>
     </PageContainer>
