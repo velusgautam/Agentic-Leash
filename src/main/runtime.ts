@@ -3,8 +3,9 @@ import { existsSync, watch } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { promisify } from "node:util";
-import { app, BrowserWindow, globalShortcut, ipcMain, nativeTheme } from "electron";
-import { DEFAULT_TTL_S, grantsDbPath, HISTORY_DIR, homeDir, isClaudeBinary, KNOWN_GAPS, leashDir, POPUP_TIMEOUT_S, socketPath, TCC_CLIENTS } from "../shared/constants";
+import { app, BrowserWindow, globalShortcut, ipcMain, nativeTheme, shell } from "electron";
+import { DEFAULT_TTL_S, grantsDbPath, HISTORY_DIR, homeDir, isClaudeBinary, IS_MAC, leashDir, POPUP_TIMEOUT_S, socketPath, TCC_CLIENTS } from "../shared/constants";
+import { diagnosticsReport } from "../shared/diagnostics";
 import { cancelScheduled, decisionDurations, deleteGrant, deleteGrants, getSetting, insertGrant, listDecisions, listGrants, listScheduled, openGrantsDb, scheduleRevoke, setSetting } from "../shared/db";
 import { historyText, listHistory, openHistoryDb, queryHistory, type HistoryFilter } from "../helper/historyDb";
 import type { Access, AgentId, AgentSnapshot, HistoryRow, ThemeSource } from "../shared/types";
@@ -18,10 +19,12 @@ import { readJson } from "./agents/fs";
 import { writeWithBackup } from "./backup";
 import { applyDueClaudeTrust, revokeClaudeTrust } from "./claudeTrust";
 import { revokeStoredGrant } from "./revokeConfig";
+import { AUTO_ALLOWS, parseAutoAllowOff } from "../shared/autoAllow";
 import { parentFolders } from "../shared/parents";
 import { publishClaudeRules } from "./rulesMode";
 import { guiQuitScript, parsePs, percentiles, restartTargets } from "./system";
 import { readUiState, writeUiState } from "./uiState";
+import { FULL_DISK_URL, hasFullDiskAccess } from "./fullDisk";
 import { readTcc } from "./tcc";
 
 const exec = promisify(execFile);
@@ -41,7 +44,7 @@ function hookCommand(kind: "claude" | "cursor"): string {
 
 async function ensureSweepAgent(): Promise<void> {
   const script = hookScript();
-  if (!existsSync(script)) return;
+  if (!IS_MAC || !existsSync(script)) return;
   const { installSweepAgent, sweepServiceTarget } = await import("./helperInstall");
   const plist = installSweepAgent(process.execPath, script);
   const uid = process.getuid?.();
@@ -50,14 +53,20 @@ async function ensureSweepAgent(): Promise<void> {
   await exec("/bin/launchctl", ["bootstrap", `gui/${uid}`, plist]).catch(() => undefined);
 }
 
-async function psLines(): Promise<string[]> {
+async function psText(): Promise<string> {
+  if (process.platform === "win32") return "";
   try {
-    const { stdout } = await exec("/bin/ps", ["-axo", "pid,ppid,args"]);
-    return stdout.split("\n");
+    return (await exec("ps", ["-axo", "pid,ppid,args"])).stdout;
   } catch {
-    return [];
+    return "";
   }
 }
+
+async function psLines(): Promise<string[]> {
+  return (await psText()).split("\n");
+}
+
+const cursorStateDb = () => join(app.getPath("appData"), "Cursor/User/globalStorage/state.vscdb");
 
 export function startRuntime(options: { userData: string; openApproval: () => void; closeApproval: () => void; setPending: (count: number) => void; notify: (title: string, body: string) => void }): { revokeAll: () => { revoked: number } } {
   const db = openGrantsDb(grantsDbPath());
@@ -86,12 +95,12 @@ export function startRuntime(options: { userData: string; openApproval: () => vo
     const workers = cursorWorkers(await psLines());
     snapshots = [
       loadClaude(claudeRoot(), join(home, ".claude.json")),
-      loadCursor(join(home, ".cursor"), join(homedir(), "Library/Application Support/Cursor/User/globalStorage/state.vscdb"), workers),
+      loadCursor(join(home, ".cursor"), cursorStateDb(), workers),
       loadT3(join(home, ".t3/userdata/settings.json")),
       loadCodex(join(home, ".codex/config.toml")),
       loadGemini(join(home, ".gemini")),
     ];
-    const privacy = readTcc(join(homedir(), "Library/Application Support/com.apple.TCC/TCC.db"));
+    const privacy = IS_MAC ? readTcc(join(homedir(), "Library/Application Support/com.apple.TCC/TCC.db")) : [];
     for (const snapshot of snapshots) {
       const bundles = new Set(TCC_CLIENTS.filter((client) => client.agent === snapshot.id).map((client) => client.bundleId));
       snapshot.privacy = privacy.filter((row) => bundles.has(row.bundleId) || (snapshot.id === "claude-code" && isClaudeBinary(row.client)));
@@ -109,7 +118,7 @@ export function startRuntime(options: { userData: string; openApproval: () => vo
     if (timer) clearTimeout(timer);
     timer = setTimeout(() => void scan().catch((error) => console.error(error)), 300);
   };
-  for (const path of [claudeRoot(), join(home, ".claude.json"), ...cursorWatchPaths(join(home, ".cursor"), join(homedir(), "Library/Application Support/Cursor/User/globalStorage/state.vscdb")), join(home, ".t3/userdata/settings.json")]) {
+  for (const path of [claudeRoot(), join(home, ".claude.json"), ...cursorWatchPaths(join(home, ".cursor"), cursorStateDb()), join(home, ".t3/userdata/settings.json")]) {
     try {
       watch(path, rescan);
     } catch {
@@ -184,6 +193,19 @@ export function startRuntime(options: { userData: string; openApproval: () => vo
     allow([input.path], input.agent, input.access, input.ttlSeconds);
   });
   ipcMain.handle("grants:unlock", () => setSetting(db, "lockdown", "0"));
+  const autoAllowRows = () => {
+    const off = new Set(parseAutoAllowOff(getSetting(db, "auto_allow_off", "[]")));
+    return AUTO_ALLOWS.map((rule) => ({ ...rule, enabled: !off.has(rule.id) }));
+  };
+  ipcMain.handle("auto-allow:list", () => autoAllowRows());
+  ipcMain.handle("auto-allow:set", (_event, id: string, enabled: boolean) => {
+    if (!AUTO_ALLOWS.some((rule) => rule.id === id) || typeof enabled !== "boolean") return autoAllowRows();
+    const off = new Set(parseAutoAllowOff(getSetting(db, "auto_allow_off", "[]")));
+    if (enabled) off.delete(id);
+    else off.add(id);
+    setSetting(db, "auto_allow_off", JSON.stringify([...off]));
+    return autoAllowRows();
+  });
   ipcMain.handle("decisions:list", () => listDecisions(db));
   ipcMain.handle("history:list", (_event, hideNoise?: boolean) => (hideNoise ? withHistory((historyDb) => listHistory(historyDb, 0, 200, true)) : history));
   ipcMain.handle("history:query", (_event, filter: HistoryFilter) => withHistory((historyDb) => queryHistory(historyDb, filter)));
@@ -203,8 +225,7 @@ export function startRuntime(options: { userData: string; openApproval: () => vo
   // Agents that aren't running read the new config on their next start, so they drop out here.
   const staleTargets = async () => {
     if (!pendingRestart.size) return [];
-    const { stdout } = await exec("/bin/ps", ["-axo", "pid,ppid,args"]);
-    const targets = restartTargets(parsePs(stdout)).filter((target) => pendingRestart.has(target.agent));
+    const targets = restartTargets(parsePs(await psText())).filter((target) => pendingRestart.has(target.agent));
     for (const agent of pendingRestart) if (!targets.some((target) => target.agent === agent)) pendingRestart.delete(agent);
     return targets;
   };
@@ -223,7 +244,7 @@ export function startRuntime(options: { userData: string; openApproval: () => vo
     const quit = new Set<string>();
     for (const target of targets) {
       try {
-        if (target.kind === "gui" && target.bundleId) {
+        if (IS_MAC && target.kind === "gui" && target.bundleId) {
           if (!quit.has(target.bundleId)) await exec("/usr/bin/osascript", ["-e", guiQuitScript(target.bundleId)]);
           quit.add(target.bundleId);
         } else process.kill(target.pid, "SIGTERM");
@@ -256,15 +277,23 @@ export function startRuntime(options: { userData: string; openApproval: () => vo
   });
   ipcMain.handle("diagnostics:get", async () => {
     const stats = percentiles(decisionDurations(db));
-    let helperStatus = "not installed";
-    try {
+    let helperStatus = IS_MAC ? "not installed" : "unsupported on this OS";
+    if (IS_MAC) try {
       const { stdout } = await exec("/bin/launchctl", ["print", "system/com.agenticleash.helper"]);
       helperStatus = stdout.includes("state = running") ? "running" : stdout.split("\n")[0] || "installed";
     } catch {
       helperStatus = "not installed";
     }
-    const installed = cursorHooksInstalled(readJson(join(home, ".cursor/hooks.json")), hookCommand("cursor")) && claudeHooksInstalled(readJson(join(claudeRoot(), "settings.json")), hookCommand("claude"));
-    return { hookP50Ms: stats.p50, hookP95Ms: stats.p95, helperStatus, lastSweep: getSetting(db, "last_sweep", "") || null, hooksInstalled: installed, gaps: KNOWN_GAPS };
+    const last = listDecisions(db, 1)[0];
+    return diagnosticsReport({
+      claude: claudeHooksInstalled(readJson(join(claudeRoot(), "settings.json")), hookCommand("claude")),
+      cursor: cursorHooksInstalled(readJson(join(home, ".cursor/hooks.json")), hookCommand("cursor")),
+      helperStatus,
+      lastSweep: getSetting(db, "last_sweep", "") || null,
+      hookP50Ms: stats.p50,
+      hookP95Ms: stats.p95,
+      lastDecision: last ? { ts: last.ts, agent: last.agent, tool: last.tool, verdict: last.verdict, reason: last.reason } : null,
+    });
   });
   ipcMain.handle("theme:get", () => readUiState(options.userData).theme ?? "system");
   ipcMain.handle("theme:set", (_event, theme: ThemeSource) => {
@@ -273,7 +302,10 @@ export function startRuntime(options: { userData: string; openApproval: () => vo
     for (const window of BrowserWindow.getAllWindows()) window.webContents.send("theme:changed", theme);
     return theme;
   });
+  ipcMain.handle("fda:status", () => IS_MAC && hasFullDiskAccess(join(homedir(), "Library/Application Support/com.apple.TCC/TCC.db")));
+  ipcMain.handle("fda:open", () => (IS_MAC ? shell.openExternal(FULL_DISK_URL) : undefined));
   ipcMain.handle("tcc:reset", async (_event, service: string, bundleId: string) => {
+    if (!IS_MAC) return;
     await exec("/usr/bin/tccutil", ["reset", service.replace(/^kTCCService/, ""), bundleId]);
     scan();
   });
@@ -306,12 +338,13 @@ export function startRuntime(options: { userData: string; openApproval: () => vo
     writeUiState(options.userData, { ...readUiState(options.userData), onboarded: done });
   });
   ipcMain.handle("helper:install", async () => {
+    if (!IS_MAC) throw new Error("The activity helper is macOS-only.");
     const { helperInstallScript } = await import("./helperInstall");
     await exec("/usr/bin/osascript", ["-e", helperInstallScript(process.execPath, hookScript().replace("leash-hook.js", "leash-helper.js"))]);
   });
 
   try {
-    globalShortcut.register("Control+Alt+Command+L", () => void revokeAll());
+    globalShortcut.register(IS_MAC ? "Control+Alt+Command+L" : "Control+Alt+Shift+L", () => void revokeAll());
   } catch {
     /* shortcut already owned */
   }

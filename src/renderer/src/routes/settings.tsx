@@ -2,9 +2,12 @@ import { useEffect, useState, type CSSProperties } from "react";
 import { useParams } from "@tanstack/react-router";
 import { Monitor, Moon, Sun } from "lucide-react";
 import licenses from "../../../../THIRD_PARTY_LICENSES.md?raw";
+import type { AutoAllow } from "../../../shared/autoAllow";
 import type { OpenAtLoginState } from "../../../shared/bridge";
 import type { Diagnostics, ThemeSource } from "../../../shared/types";
+import { AGENT_LABELS } from "~/components/Icons";
 import { PageContainer, SettingsRow, SettingsSection } from "~/components/settings";
+import { FullDiskControl } from "~/components/FullDiskControl";
 import { Button } from "~/components/ui/button";
 import { Switch } from "~/components/ui/switch";
 import { cn } from "~/lib/utils";
@@ -35,6 +38,35 @@ function General() {
         }
       />
     </SettingsSection>
+  );
+}
+
+function AutomaticAllows() {
+  const [rows, setRows] = useState<(AutoAllow & { enabled: boolean })[]>([]);
+  useEffect(() => {
+    void window.leash.listAutoAllows().then(setRows);
+  }, []);
+  const groups: { agent: string; title: string }[] = [];
+  for (const row of rows) {
+    if (!groups.some((group) => group.agent === row.agent)) groups.push({ agent: row.agent, title: row.agent === "*" ? "Every agent" : (AGENT_LABELS[row.agent] ?? row.agent) });
+  }
+  if (!rows.length) return null;
+  return (
+    <div className="space-y-6">
+      <p className="px-3 text-xs leading-normal text-muted-foreground/80 sm:px-4">Read is allowed without a prompt, at home or inside a project. Write still asks. Sensitive files still ask.</p>
+      {groups.map((group) => (
+        <SettingsSection key={group.agent} title={group.title}>
+          {rows.filter((row) => row.agent === group.agent).map((row) => (
+            <SettingsRow
+              key={row.id}
+              title={row.label}
+              description={row.folder}
+              control={<Switch aria-label={`${group.title} ${row.label}`} checked={row.enabled} onCheckedChange={(enabled) => void window.leash.setAutoAllow(row.id, enabled).then(setRows)} />}
+            />
+          ))}
+        </SettingsSection>
+      ))}
+    </div>
   );
 }
 
@@ -143,19 +175,39 @@ function Keybindings() {
   );
 }
 
+const HOOK_STATUS = { installed: "Installed", missing: "Missing", none: "No hook" };
+const VERDICT_LABEL: Record<string, string> = { pass: "Allowed", deny: "Denied", timeout: "Timed out" };
+
+function when(iso: string): string {
+  const date = new Date(iso);
+  return Number.isNaN(date.getTime()) ? iso : date.toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" });
+}
+
 function Diagnostics() {
   const [info, setInfo] = useState<Diagnostics | null>(null);
   useEffect(() => {
     void window.leash.diagnostics().then(setInfo);
   }, []);
+  if (!info) return <SettingsSection title="Diagnostics"><SettingsRow title="Checking" /></SettingsSection>;
+  const decision = info.lastDecision;
+  const decisionText = decision
+    ? `${AGENT_LABELS[decision.agent] ?? decision.agent} · ${decision.tool} · ${VERDICT_LABEL[decision.verdict] ?? decision.verdict}${decision.reason ? ` · ${decision.reason}` : ""} · ${when(new Date(decision.ts).toISOString())}`
+    : "None yet";
   return (
-    <SettingsSection title="Health">
-      <SettingsRow title="Hook latency" description={info ? `p50 ${info.hookP50Ms ?? "—"} ms · p95 ${info.hookP95Ms ?? "—"} ms` : "Measuring"} />
-      <SettingsRow title="Helper" description={info?.helperStatus ?? "Checking"} />
-      <SettingsRow title="Hooks" description={info?.hooksInstalled ? "Installed" : "Missing"} />
-      <SettingsRow title="Last sweep" description={info?.lastSweep || "No sweep recorded"} />
-      {(info?.gaps ?? []).map((gap) => <SettingsRow key={gap} title="Known gap" description={gap} />)}
-    </SettingsSection>
+    <>
+      <SettingsSection title="Hooks">
+        {info.hooks.map((hook) => <SettingsRow key={hook.agent} title={hook.label} description={HOOK_STATUS[hook.status]} />)}
+      </SettingsSection>
+      <SettingsSection title="Health">
+        <SettingsRow title="Helper" description={info.helperStatus} />
+        <SettingsRow title="Hook latency" description={`p50 ${info.hookP50Ms ?? "—"} ms · p95 ${info.hookP95Ms ?? "—"} ms`} />
+        <SettingsRow title="Last sweep" description={info.lastSweep ? when(info.lastSweep) : "No sweep recorded"} />
+        <SettingsRow title="Last decision" description={decisionText} />
+      </SettingsSection>
+      <SettingsSection title="Errors">
+        {info.errors.length ? info.errors.map((error) => <SettingsRow key={error} title={error} />) : <SettingsRow title="None" description="Hooks and the helper are fine." />}
+      </SettingsSection>
+    </>
   );
 }
 
@@ -164,7 +216,7 @@ function Onboarding() {
     <SettingsSection title="First-run setup">
       <SettingsRow title="1. Install hooks" description="Merges into Claude and Cursor, and writes a .bak first." control={<Button size="sm" onClick={() => void window.leash.installHooks()}>Install hooks</Button>} />
       <SettingsRow title="2. Install the helper" description="Available from the installed app. Grants the history database to root." control={<Button size="sm" onClick={() => void window.leash.installHelper()}>Install helper</Button>} />
-      <SettingsRow title="3. Full Disk Access" description="System Settings → Privacy & Security → Full Disk Access → Agentic Leash." />
+      <SettingsRow title="3. Full Disk Access" description="macOS will not ask. Turn on Agentic Leash in the list, then come back." control={<FullDiskControl />} />
       <SettingsRow title="4. Start at login" description="Use the switch in General. It turns on in the installed app." control={<Button size="sm" variant="outline" onClick={() => void window.leash.setOnboarding(true)}>Mark setup done</Button>} />
     </SettingsSection>
   );
@@ -184,7 +236,7 @@ export function SettingsPage() {
   return (
     <PageContainer>
       <h1 className="px-3 text-lg font-medium sm:px-4">{entry.label}</h1>
-      {entry.id === "general" ? <><General /><Onboarding /></> : entry.id === "agents" ? <Agents /> : entry.id === "monitoring" ? <Monitoring /> : entry.id === "appearance" ? <Appearance /> : entry.id === "keybindings" ? <Keybindings /> : entry.id === "diagnostics" ? <Diagnostics /> : <Licenses />}
+      {entry.id === "general" ? <><General /><AutomaticAllows /><Onboarding /></> : entry.id === "agents" ? <Agents /> : entry.id === "monitoring" ? <Monitoring /> : entry.id === "appearance" ? <Appearance /> : entry.id === "keybindings" ? <Keybindings /> : entry.id === "diagnostics" ? <Diagnostics /> : <Licenses />}
     </PageContainer>
   );
 }

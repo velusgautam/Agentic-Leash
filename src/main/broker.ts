@@ -25,8 +25,11 @@ export class Broker {
   }
 
   listen(socketPath: string): Server {
-    mkdirSync(dirname(socketPath), { recursive: true });
-    rmSync(socketPath, { force: true });
+    const pipe = process.platform === "win32";
+    if (!pipe) {
+      mkdirSync(dirname(socketPath), { recursive: true });
+      rmSync(socketPath, { force: true });
+    }
     const server = createServer((socket) => {
       let buffer = "";
       socket.on("data", (chunk) => {
@@ -40,7 +43,7 @@ export class Broker {
         }
       });
     });
-    server.listen(socketPath, () => chmodSync(socketPath, 0o600));
+    server.listen(socketPath, () => pipe || chmodSync(socketPath, 0o600));
     this.server = server;
     return server;
   }

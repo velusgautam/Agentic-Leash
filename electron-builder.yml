@@ -20,3 +20,23 @@ mac:
   category: public.app-category.developer-tools
 dmg:
   title: Agentic Leash
+win:
+  target:
+    - target: nsis
+      arch:
+        - x64
+  icon: resources/icon.png
+  artifactName: ${productName}-${version}-win-${arch}.${ext}
+nsis:
+  oneClick: false
+  perMachine: false
+  allowToChangeInstallationDirectory: true
+linux:
+  target:
+    - target: AppImage
+      arch:
+        - x64
+  icon: resources/icon.png
+  category: Development
+  maintainer: Agentic Leash
+  artifactName: ${productName}-${version}-linux-${arch}.${ext}

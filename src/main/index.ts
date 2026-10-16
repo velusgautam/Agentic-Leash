@@ -1,5 +1,5 @@
 import { join, resolve } from "node:path";
-import { app, BrowserWindow, dialog, ipcMain, Menu, Notification, nativeTheme, powerMonitor, shell, Tray } from "electron";
+import { app, BrowserWindow, dialog, ipcMain, Menu, Notification, nativeImage, nativeTheme, powerMonitor, shell, Tray } from "electron";
 import appIcon from "../../resources/icon.png?asset";
 import trayIcon from "../../resources/trayTemplate.png?asset";
 import type { OpenAtLoginState } from "../shared/bridge";
@@ -7,6 +7,8 @@ import { isOpenAtLogin, setOpenAtLogin } from "./loginItem";
 import { appMenuTemplate, trayMenuTemplate } from "./menus";
 import { startRuntime } from "./runtime";
 import { readUiState, writeUiState } from "./uiState";
+
+const isMac = process.platform === "darwin";
 
 if (process.env.AGENTIC_LEASH_USER_DATA) app.setPath("userData", process.env.AGENTIC_LEASH_USER_DATA);
 
@@ -26,8 +28,7 @@ function createWindow(visible: boolean): BrowserWindow {
     minHeight: 620,
     show: false,
     title: "Agentic Leash",
-    titleBarStyle: "hiddenInset",
-    trafficLightPosition: { x: 16, y: 19 },
+    ...(isMac ? { titleBarStyle: "hiddenInset" as const, trafficLightPosition: { x: 16, y: 19 } } : {}),
     backgroundColor: nativeTheme.shouldUseDarkColors ? "#0a0a0a" : "#ffffff",
     webPreferences: { preload: join(__dirname, "../preload/index.js"), sandbox: true, contextIsolation: true },
   });
@@ -72,14 +73,20 @@ async function confirmRevokeAll(): Promise<void> {
   if (response === 0) revokeAll();
 }
 
+// app.hide() is how macOS hands focus back to the app that was frontmost before the popup.
+let returnFocus = false;
+
 function closeApproval(): void {
   if (approval && !approval.isDestroyed()) approval.hide();
+  if (isMac && returnFocus) app.hide();
+  returnFocus = false;
 }
 
 const APPROVAL_WIDTH = 520;
 
 // A new window in a fullscreen app gets its own Space unless it is an auxiliary panel.
 function presentApproval(window: BrowserWindow): void {
+  if (!BrowserWindow.getFocusedWindow()) returnFocus = true;
   if (window.isFullScreen()) window.setFullScreen(false);
   window.setFullScreenable(false);
   window.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
@@ -97,9 +104,9 @@ function openApproval(): void {
   const bounds = tray?.getBounds() ?? { x: 0, y: 0, width: 0, height: 0 };
   approval = new BrowserWindow({
     width: APPROVAL_WIDTH,
-    height: 324,
-    x: Math.round(bounds.x + bounds.width / 2 - APPROVAL_WIDTH / 2),
-    y: bounds.y + bounds.height + 4,
+    height: 410,
+    // Windows/Linux trays sit at the bottom, so anchoring below would go off-screen; let Electron center it.
+    ...(isMac ? { x: Math.round(bounds.x + bounds.width / 2 - APPROVAL_WIDTH / 2), y: bounds.y + bounds.height + 4 } : {}),
     frame: false,
     fullscreenable: false,
     alwaysOnTop: true,
@@ -140,20 +147,25 @@ function hideToMenuBar(): void {
 // <bundle>.app/Contents/MacOS/<exe> → <bundle>.app
 const appBundlePath = () => resolve(process.execPath, "../../..");
 
+// Electron has no login-item API on Linux.
+const loginItemSupported = () => app.isPackaged && process.platform !== "linux";
+const openAtLogin = () => (isMac ? isOpenAtLogin() : app.getLoginItemSettings().openAtLogin);
+const applyOpenAtLogin = (enabled: boolean) => (isMac ? setOpenAtLogin(enabled, appBundlePath()) : app.setLoginItemSettings({ openAtLogin: enabled, args: ["--hidden"] }));
+
 function loginItemState(): OpenAtLoginState {
-  return { available: app.isPackaged, enabled: app.isPackaged && isOpenAtLogin() };
+  return { available: loginItemSupported(), enabled: loginItemSupported() && openAtLogin() };
 }
 
 function registerLoginItem(): void {
   ipcMain.handle("login-item:get", () => loginItemState());
   ipcMain.handle("login-item:set", (_event, enabled: boolean) => {
-    if (app.isPackaged) setOpenAtLogin(enabled, appBundlePath());
+    if (loginItemSupported()) applyOpenAtLogin(enabled);
     return loginItemState();
   });
   const dir = app.getPath("userData");
   const state = readUiState(dir);
-  if (app.isPackaged && !state.loginItemConfigured) {
-    setOpenAtLogin(true, appBundlePath());
+  if (loginItemSupported() && !state.loginItemConfigured) {
+    applyOpenAtLogin(true);
     writeUiState(dir, { ...state, loginItemConfigured: true });
   }
 }
@@ -183,8 +195,9 @@ if (!app.requestSingleInstanceLock()) {
     });
     registerLoginItem();
     if (!app.isPackaged) app.dock?.setIcon(appIcon);
-    tray = new Tray(trayIcon);
+    tray = new Tray(isMac ? trayIcon : nativeImage.createFromPath(appIcon).resize({ width: 16, height: 16 }));
     tray.setToolTip("Agentic Leash");
+    if (!isMac) tray.on("click", showWindow);
     ({ revokeAll } = startRuntime({
       userData: app.getPath("userData"),
       openApproval,

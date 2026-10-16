@@ -36,6 +36,8 @@ export interface DecideOptions {
   now: number;
   lockdown: boolean;
   protectedRoots: string[];
+  home?: string;
+  autoAllowOff?: string[];
 }
 
 export interface HistoryEvent {
@@ -97,10 +99,11 @@ export interface PendingRequest {
 }
 
 export interface Diagnostics {
-  hookP50Ms: number | null;
-  hookP95Ms: number | null;
+  hooks: { agent: string; label: string; status: "installed" | "missing" | "none" }[];
   helperStatus: string;
   lastSweep: string | null;
-  hooksInstalled: boolean;
-  gaps: string[];
+  hookP50Ms: number | null;
+  hookP95Ms: number | null;
+  lastDecision: { ts: number; agent: string; tool: string; verdict: string; reason: string | null } | null;
+  errors: string[];
 }
