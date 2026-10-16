@@ -4,7 +4,7 @@
       <stop offset="0" stop-color="#2b2d34"/>
       <stop offset="1" stop-color="#0c0d10"/>
     </linearGradient>
-    <linearGradient id="leash" gradientUnits="userSpaceOnUse" x1="280" y1="220" x2="860" y2="900">
+    <linearGradient id="leash" gradientUnits="userSpaceOnUse" x1="300" y1="240" x2="760" y2="860">
       <stop offset="0" stop-color="#ff8a5c"/>
       <stop offset="1" stop-color="#e5484d"/>
     </linearGradient>
@@ -19,7 +19,8 @@
   </defs>
   <rect x="100" y="100" width="824" height="824" rx="185" fill="url(#bg)"/>
   <rect x="103" y="103" width="818" height="818" rx="182" fill="none" stroke="url(#sheen)" stroke-width="6"/>
-  <circle cx="512" cy="490" r="190" fill="url(#glow)"/>
+  <circle cx="512" cy="520" r="210" fill="url(#glow)"/>
+  <g transform="translate(512 520) scale(1.12) translate(-512 -520)">
   <path fill="url(#leash)" fill-rule="evenodd" d="
     M512 214
     C606 278 694 302 748 302
@@ -38,28 +39,7 @@
     C384 344 458 326 512 278
     Z
   "/>
-  <path fill="url(#leash)" d="
-    M458 748
-    C520 790 610 830 690 848
-    C760 864 800 846 812 820
-    C836 848 846 886 824 916
-    C760 930 680 910 600 876
-    C520 842 460 800 430 770
-    C414 754 430 730 458 748
-    Z
-  "/>
-  <path fill="url(#leash)" fill-rule="evenodd" d="
-    M812 868
-    m-62 0
-    a62 62 0 1 0 124 0
-    a62 62 0 1 0 -124 0
-    Z
-    M812 868
-    m-26 0
-    a26 26 0 1 0 52 0
-    a26 26 0 1 0 -52 0
-    Z
-  "/>
   <circle cx="512" cy="492" r="74" fill="#ff3b30"/>
   <circle cx="490" cy="470" r="20" fill="#ffe4e0" opacity="0.9"/>
+  </g>
 </svg>

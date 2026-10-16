@@ -7,7 +7,7 @@ type Icon = FC<SVGProps<SVGSVGElement>>;
 export const LeashMark: Icon = ({ className, ...props }) => {
   const id = useId();
   return (
-    <svg {...props} viewBox="250 190 680 780" aria-hidden className={className}>
+    <svg {...props} viewBox="250 190 530 670" aria-hidden className={className}>
       <defs>
         <linearGradient id={id} x1="0.2" y1="0" x2="0.8" y2="1">
           <stop offset="0" stopColor="#ff8a5c" />
@@ -15,8 +15,6 @@ export const LeashMark: Icon = ({ className, ...props }) => {
         </linearGradient>
       </defs>
       <path fill={`url(#${id})`} fillRule="evenodd" d="M512 214 C606 278 694 302 748 302 L748 516 C748 656 652 760 512 828 C372 760 276 656 276 516 L276 302 C330 302 418 278 512 214 Z M512 278 C566 326 640 344 686 344 L686 516 C686 622 618 702 512 756 C406 702 338 622 338 516 L338 344 C384 344 458 326 512 278 Z" />
-      <path fill={`url(#${id})`} d="M458 748 C520 790 610 830 690 848 C760 864 800 846 812 820 C836 848 846 886 824 916 C760 930 680 910 600 876 C520 842 460 800 430 770 C414 754 430 730 458 748 Z" />
-      <path fill={`url(#${id})`} fillRule="evenodd" d="M812 868 m-62 0 a62 62 0 1 0 124 0 a62 62 0 1 0 -124 0 Z M812 868 m-26 0 a26 26 0 1 0 52 0 a26 26 0 1 0 -52 0 Z" />
       <circle cx="512" cy="492" r="74" fill="#ff3b30" />
     </svg>
   );
