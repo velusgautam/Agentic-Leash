@@ -12,6 +12,8 @@ const leash: LeashBridge = {
   revokeAll: () => ipcRenderer.invoke("grants:revoke-all"),
   grantStatus: () => ipcRenderer.invoke("grants:status"),
   createGrant: (input) => ipcRenderer.invoke("grants:create", input),
+  listAutoAllows: () => ipcRenderer.invoke("auto-allow:list"),
+  setAutoAllow: (id, enabled) => ipcRenderer.invoke("auto-allow:set", id, enabled),
   unlock: () => ipcRenderer.invoke("grants:unlock"),
   listDecisions: () => ipcRenderer.invoke("decisions:list"),
   listHistory: (hideNoise) => ipcRenderer.invoke("history:list", hideNoise),
@@ -43,6 +45,8 @@ const leash: LeashBridge = {
   onboardingDone: () => ipcRenderer.invoke("onboarding:get"),
   setOnboarding: (done) => ipcRenderer.invoke("onboarding:set", done),
   installHelper: () => ipcRenderer.invoke("helper:install"),
+  fullDiskAccess: () => ipcRenderer.invoke("fda:status"),
+  openFullDiskAccess: () => ipcRenderer.invoke("fda:open"),
 };
 
 contextBridge.exposeInMainWorld("leash", leash);

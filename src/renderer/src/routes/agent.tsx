@@ -4,6 +4,7 @@ import { FolderOpen, Globe, Lock, Plug, ShieldCheck, ShieldX } from "lucide-reac
 import { revokeDue, type RevokePreset } from "../../../shared/revokeWhen";
 import type { AgentId, AgentSnapshot, Enforcement, ScheduledRevoke } from "../../../shared/types";
 import { ConfirmAction, TRUST_EFFECTS } from "~/components/ConfirmAction";
+import { FullDiskControl } from "~/components/FullDiskControl";
 import { AGENT_LABELS, AgentIcon } from "~/components/Icons";
 import { PageContainer, SettingsSection } from "~/components/settings";
 import { Button } from "~/components/ui/button";
@@ -26,7 +27,11 @@ function Row({ icon, locked, children, action }: { icon: ReactNode; locked: bool
     <div className="flex items-center gap-3 px-4 py-2.5 text-sm">
       <span className="text-muted-foreground">{icon}</span>
       <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2">{children}</div>
-      {locked ? <Lock className="size-3.5 text-muted-foreground" aria-label="Locked by company policy" /> : action}
+      {locked ? (
+        <span title="Set by your organization's managed policy. Can't be changed locally.">
+          <Pill tone="bg-muted text-muted-foreground"><Lock className="size-3" />Org locked</Pill>
+        </span>
+      ) : action}
     </div>
   );
 }
@@ -195,7 +200,12 @@ export function AgentPage() {
             <Pill tone={row.authValue ? "bg-emerald-500/10 text-emerald-700 dark:text-emerald-300" : "bg-red-500/10 text-red-700 dark:text-red-300"}>{row.authValue ? "granted" : "denied"}</Pill>
             {row.via ? <span className="text-xs text-muted-foreground">{row.via}</span> : null}
           </Row>
-        )) : <Empty emoji="🔐">Privacy grants show up here once Full Disk Access is on.</Empty>}
+        )) : (
+          <div className="flex items-center justify-between gap-3 px-4 py-4">
+            <p className="text-sm text-muted-foreground"><span aria-hidden className="mr-2">🔐</span>Privacy grants show up here once Full Disk Access is on.</p>
+            <FullDiskControl />
+          </div>
+        )}
       </SettingsSection>
     </PageContainer>
   );

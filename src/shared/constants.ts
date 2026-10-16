@@ -2,7 +2,11 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 
 export const APP_NAME = "Agentic Leash";
-export const HISTORY_DIR = "/Library/Application Support/AgenticLeash";
+export const HISTORY_DIR =
+  process.platform === "win32" ? join(process.env.ProgramData || "C:\\ProgramData", "AgenticLeash")
+  : process.platform === "linux" ? "/var/lib/agentic-leash"
+  : "/Library/Application Support/AgenticLeash";
+export const IS_MAC = process.platform === "darwin";
 export const POPUP_TIMEOUT_S = 120;
 export const HOOK_TIMEOUT_S = 150;
 export const DEFAULT_TTL_S = 3600;
@@ -16,16 +20,6 @@ export const TTL_PRESETS = [
   { key: "3", label: "8 hours", seconds: 8 * 60 * 60 },
   { key: "4", label: "Forever", seconds: null },
 ] as const;
-
-export const KNOWN_GAPS = [
-  "Shell commands are checked by path heuristics only. cat $(echo ~/x) gets through.",
-  "Cursor IDE agent reads and edits happen in the editor process. They are attributed through hooks, not eslogger.",
-  "The Cursor My Machines worker and Codex/Gemini are monitor-only in v1.",
-  "When company policy blocks Claude hooks, there is no Leash popup for Claude. Claude's own prompt is used.",
-  "Network history is polled every 2 seconds, so short connections can be missed.",
-  "Diff baselines are best-effort (content cache or git HEAD).",
-  "The hook decision log lives in your home folder. It is protected from agents by the hook, not by file ownership.",
-];
 
 export const TCC_CLIENTS = [
   { agent: "cursor" as const, bundleId: "com.todesktop.230313mzl4w4u92" },
@@ -62,6 +56,7 @@ export function grantsDbPath(home = homeDir()): string {
 }
 
 export function socketPath(home = homeDir()): string {
+  if (process.platform === "win32") return `\\\\.\\pipe\\agentic-leash-${home.replace(/[^\w-]/g, "_")}`;
   return join(leashDir(home), "agentic-leash.sock");
 }
 

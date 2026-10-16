@@ -1,0 +1,50 @@
+export interface DiagnosticHook {
+  agent: string;
+  label: string;
+  status: "installed" | "missing" | "none";
+}
+
+export interface DiagnosticDecision {
+  ts: number;
+  agent: string;
+  tool: string;
+  verdict: string;
+  reason: string | null;
+}
+
+export interface DiagnosticReport {
+  hooks: DiagnosticHook[];
+  helperStatus: string;
+  lastSweep: string | null;
+  hookP50Ms: number | null;
+  hookP95Ms: number | null;
+  lastDecision: DiagnosticDecision | null;
+  errors: string[];
+}
+
+const PLAIN: DiagnosticHook[] = [
+  { agent: "t3-code", label: "T3 Code", status: "none" },
+  { agent: "codex", label: "Codex", status: "none" },
+  { agent: "gemini", label: "Gemini CLI", status: "none" },
+];
+
+export function diagnosticsReport(input: {
+  claude: boolean;
+  cursor: boolean;
+  helperStatus: string;
+  lastSweep: string | null;
+  hookP50Ms: number | null;
+  hookP95Ms: number | null;
+  lastDecision: DiagnosticDecision | null;
+}): DiagnosticReport {
+  const hooks: DiagnosticHook[] = [
+    { agent: "claude-code", label: "Claude Code", status: input.claude ? "installed" : "missing" },
+    { agent: "cursor", label: "Cursor", status: input.cursor ? "installed" : "missing" },
+    ...PLAIN,
+  ];
+  const errors = [
+    ...hooks.filter((hook) => hook.status === "missing").map((hook) => `${hook.label} hook is not installed.`),
+    ...(input.helperStatus === "running" ? [] : [`History helper is ${input.helperStatus}.`]),
+  ];
+  return { hooks, helperStatus: input.helperStatus, lastSweep: input.lastSweep, hookP50Ms: input.hookP50Ms, hookP95Ms: input.hookP95Ms, lastDecision: input.lastDecision, errors };
+}

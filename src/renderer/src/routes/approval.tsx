@@ -74,7 +74,7 @@ export function ApprovalPage() {
       : { label: request.paths.length > 1 ? "Paths" : "Path", value: request.paths.join("\n") };
   return (
     <div className="flex h-dvh flex-col bg-popover text-popover-foreground">
-      <header className="drag-region flex items-center gap-3 border-b border-border/60 px-4 py-3">
+      <header className="drag-region flex shrink-0 items-center gap-3 border-b border-border/60 px-4 py-3">
         <span className="flex size-8 shrink-0 items-center justify-center rounded-lg border border-border/60 bg-card">
           <AgentIcon agent={request.agent} />
         </span>
@@ -87,8 +87,8 @@ export function ApprovalPage() {
         {pending.length > 1 ? <span className="rounded-full bg-muted px-2 py-0.5 text-xs text-muted-foreground tabular-nums">1 of {pending.length}</span> : null}
         <CloseButton />
       </header>
-      <div className="flex min-h-0 flex-col gap-3 px-4 py-3">
-        <div className="min-h-0">
+      <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto px-4 py-3 [&>*]:shrink-0">
+        <div>
           <div className="mb-1 text-[11px] font-medium text-muted-foreground">{target.label}</div>
           <pre className="max-h-24 overflow-auto rounded-lg border border-border/60 bg-muted/40 px-3 py-2 font-mono text-xs leading-relaxed break-all whitespace-pre-wrap">{target.value}</pre>
         </div>
@@ -126,7 +126,7 @@ export function ApprovalPage() {
           </div>
         </div>
       </div>
-      <footer className="mt-auto flex items-center justify-end gap-2 border-t border-border/60 bg-muted/50 px-4 py-2.5">
+      <footer className="flex shrink-0 items-center justify-end gap-2 border-t border-border/60 bg-muted/50 px-4 py-2.5">
         <Button size="sm" variant="ghost" className="h-8 text-sm" onClick={deny}>
           Deny <Kbd>esc</Kbd>
         </Button>

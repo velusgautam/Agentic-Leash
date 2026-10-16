@@ -1,3 +1,4 @@
+import type { AutoAllow } from "./autoAllow";
 import type { Access, AgentId, AgentSnapshot, DecisionRow, Diagnostics, Grant, HistoryRow, PendingRequest, ScheduledRevoke, ThemeSource } from "./types";
 
 export interface OpenAtLoginState {
@@ -15,6 +16,8 @@ export interface LeashBridge {
   revokeAll(): Promise<{ revoked: number }>;
   grantStatus(): Promise<{ count: number; lockdown: boolean }>;
   createGrant(input: { agent: AgentId | "*"; path: string; access: Access; ttlSeconds: number | null }): Promise<void>;
+  listAutoAllows(): Promise<(AutoAllow & { enabled: boolean })[]>;
+  setAutoAllow(id: string, enabled: boolean): Promise<(AutoAllow & { enabled: boolean })[]>;
   unlock(): Promise<void>;
   listDecisions(): Promise<DecisionRow[]>;
   listHistory(hideNoise?: boolean): Promise<HistoryRow[]>;
@@ -42,4 +45,6 @@ export interface LeashBridge {
   onboardingDone(): Promise<boolean>;
   setOnboarding(done: boolean): Promise<void>;
   installHelper(): Promise<void>;
+  fullDiskAccess(): Promise<boolean>;
+  openFullDiskAccess(): Promise<void>;
 }
