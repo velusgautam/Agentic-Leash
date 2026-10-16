@@ -1,7 +1,7 @@
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import { DatabaseSync } from "node:sqlite";
-import type { Access, AgentId, DecisionRow, Grant } from "./types";
+import type { Access, AgentId, DecisionRow, Grant, ScheduledRevoke } from "./types";
 
 const SCHEMA = `
 CREATE TABLE IF NOT EXISTS grants (
@@ -15,6 +15,10 @@ CREATE TABLE IF NOT EXISTS grants (
 );
 CREATE INDEX IF NOT EXISTS grants_live ON grants (agent, expires_at);
 CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS scheduled_revokes (
+  path TEXT PRIMARY KEY,
+  due_at INTEGER NOT NULL
+);
 CREATE TABLE IF NOT EXISTS decisions (
   id INTEGER PRIMARY KEY,
   ts INTEGER NOT NULL,
@@ -53,6 +57,7 @@ function toGrant(row: GrantSql): Grant {
 export function openGrantsDb(path: string): DatabaseSync {
   mkdirSync(dirname(path), { recursive: true });
   const db = new DatabaseSync(path);
+  db.exec("PRAGMA busy_timeout = 5000");
   db.exec("PRAGMA journal_mode = WAL");
   db.exec(SCHEMA);
   return db;
@@ -70,6 +75,19 @@ export function insertGrant(
     .prepare("INSERT INTO grants (agent, path, access, source, created_at, expires_at) VALUES (?, ?, ?, ?, ?, ?)")
     .run(grant.agent, grant.path, grant.access, grant.source, grant.createdAt, grant.expiresAt);
   return Number(result.lastInsertRowid);
+}
+
+export function listScheduled(db: DatabaseSync): ScheduledRevoke[] {
+  const rows = db.prepare("SELECT path, due_at FROM scheduled_revokes ORDER BY due_at").all() as unknown as { path: string; due_at: number }[];
+  return rows.map((row) => ({ path: row.path, dueAt: row.due_at }));
+}
+
+export function scheduleRevoke(db: DatabaseSync, path: string, dueAt: number): void {
+  db.prepare("INSERT INTO scheduled_revokes (path, due_at) VALUES (?, ?) ON CONFLICT(path) DO UPDATE SET due_at = excluded.due_at").run(path, dueAt);
+}
+
+export function cancelScheduled(db: DatabaseSync, path: string): void {
+  db.prepare("DELETE FROM scheduled_revokes WHERE path = ?").run(path);
 }
 
 export function deleteGrant(db: DatabaseSync, id: number): void {

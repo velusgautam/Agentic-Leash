@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { readFileSync, realpathSync } from "node:fs";
+import { readFileSync, realpathSync, statSync } from "node:fs";
 import { dirname, relative } from "node:path";
 import type { HistoryEvent } from "../shared/types";
 
@@ -7,6 +7,9 @@ const MAX_BYTES = 1_000_000;
 
 export function readText(file: string): string | null {
   try {
+    // Reading a tty or FIFO blocks the helper and steals the user's keystrokes.
+    const stat = statSync(file);
+    if (!stat.isFile() || stat.size > MAX_BYTES) return null;
     const bytes = readFileSync(file);
     if (bytes.length > MAX_BYTES || bytes.includes(0)) return null;
     return bytes.toString("utf8");

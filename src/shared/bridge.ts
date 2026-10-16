@@ -1,4 +1,4 @@
-import type { Access, AgentId, AgentSnapshot, DecisionRow, Diagnostics, Grant, HistoryRow, PendingRequest, ThemeSource } from "./types";
+import type { Access, AgentId, AgentSnapshot, DecisionRow, Diagnostics, Grant, HistoryRow, PendingRequest, ScheduledRevoke, ThemeSource } from "./types";
 
 export interface OpenAtLoginState {
   enabled: boolean;
@@ -12,15 +12,20 @@ export interface LeashBridge {
   listAgents(): Promise<AgentSnapshot[]>;
   listGrants(): Promise<Grant[]>;
   revokeGrant(id: number): Promise<void>;
-  revokeAll(): Promise<void>;
+  revokeAll(): Promise<{ revoked: number }>;
+  grantStatus(): Promise<{ count: number; lockdown: boolean }>;
   createGrant(input: { agent: AgentId | "*"; path: string; access: Access; ttlSeconds: number | null }): Promise<void>;
   unlock(): Promise<void>;
   listDecisions(): Promise<DecisionRow[]>;
-  listHistory(): Promise<HistoryRow[]>;
+  listHistory(hideNoise?: boolean): Promise<HistoryRow[]>;
+  queryHistory(filter: { from: number | null; to: number | null; agents: string[]; path: string; kind: string; sensitive: boolean; hideNoise?: boolean; offset: number; limit: number }): Promise<{ rows: HistoryRow[]; total: number }>;
+  historyText(id: number): Promise<{ before: string | null; after: string | null }>;
   listPending(): Promise<PendingRequest[]>;
-  decidePending(id: string, decision: "allow" | "deny", ttlSeconds: number | null): Promise<void>;
-  restartNeeded(): Promise<boolean>;
+  decidePending(id: string, decision: "allow" | "deny", ttlSeconds: number | null, scopePath?: string): Promise<void>;
+  closeApproval(): Promise<void>;
+  restartNeeded(): Promise<{ name: string; kind: "gui" | "cli"; count: number }[]>;
   restartAgents(): Promise<void>;
+  dismissRestart(): Promise<void>;
   hooksInstalled(): Promise<boolean>;
   installHooks(): Promise<boolean>;
   uninstallHooks(): Promise<void>;
@@ -29,7 +34,11 @@ export interface LeashBridge {
   setTheme(theme: ThemeSource): Promise<ThemeSource>;
   onTheme(listener: (theme: ThemeSource) => void): () => void;
   resetTcc(service: string, bundleId: string): Promise<void>;
-  removeMcp(file: string, name: string): Promise<void>;
+  removeMcp(agent: AgentId, name: string): Promise<void>;
+  scheduledRevokes(): Promise<ScheduledRevoke[]>;
+  revokeTrust(path: string): Promise<void>;
+  scheduleTrust(path: string, dueAt: number): Promise<void>;
+  cancelTrust(path: string): Promise<void>;
   onboardingDone(): Promise<boolean>;
   setOnboarding(done: boolean): Promise<void>;
   installHelper(): Promise<void>;

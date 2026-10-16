@@ -2,6 +2,7 @@ import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { HISTORY_RETENTION_MS } from "../shared/constants";
+import { NOISE_SQL } from "../shared/noise";
 import { sha256 } from "./classify";
 import type { HistoryEvent, HistoryRow } from "../shared/types";
 
@@ -59,11 +60,91 @@ export function insertEvents(db: DatabaseSync, events: HistoryEvent[]): void {
   }
 }
 
-export function listHistory(db: DatabaseSync, afterId = 0, limit = 200): HistoryRow[] {
+const KINDS = new Set(["read", "write", "create", "delete", "rename", "exec", "net"]);
+
+interface HistorySql {
+  id: number;
+  ts: number;
+  agent: string;
+  kind: string;
+  path: string;
+  dest_path: string | null;
+  sensitive: number;
+  before_blob?: string | null;
+  after_blob?: string | null;
+}
+
+function toRow(row: HistorySql, withText: boolean): HistoryRow {
+  return {
+    id: row.id,
+    ts: row.ts,
+    agent: row.agent,
+    kind: row.kind,
+    path: row.path,
+    destPath: row.dest_path,
+    sensitive: row.sensitive === 1,
+    beforeText: withText ? (row.before_blob ?? null) : null,
+    afterText: withText ? (row.after_blob ?? null) : null,
+  };
+}
+
+export interface HistoryFilter {
+  from: number | null;
+  to: number | null;
+  agents: string[];
+  path: string;
+  kind: string;
+  sensitive: boolean;
+  hideNoise?: boolean;
+  offset: number;
+  limit: number;
+}
+
+export function listHistory(db: DatabaseSync, afterId = 0, limit = 200, hideNoise = false): HistoryRow[] {
+  const noise = hideNoise ? `AND (sensitive = 1 OR NOT ${NOISE_SQL})` : "";
   const rows = db
-    .prepare("SELECT id, ts, agent, kind, path, dest_path, sensitive, before_blob, after_blob FROM events WHERE id > ? ORDER BY id DESC LIMIT ?")
-    .all(afterId, limit) as unknown as { id: number; ts: number; agent: string; kind: string; path: string; dest_path: string | null; sensitive: number; before_blob: string | null; after_blob: string | null }[];
-  return rows.map((row) => ({ id: row.id, ts: row.ts, agent: row.agent, kind: row.kind, path: row.path, destPath: row.dest_path, sensitive: row.sensitive === 1, beforeText: row.before_blob, afterText: row.after_blob }));
+    .prepare(`SELECT id, ts, agent, kind, path, dest_path, sensitive FROM events WHERE id > ? ${noise} ORDER BY id DESC LIMIT ?`)
+    .all(afterId, limit) as unknown as HistorySql[];
+  return rows.map((row) => toRow(row, false));
+}
+
+export function queryHistory(db: DatabaseSync, filter: HistoryFilter): { rows: HistoryRow[]; total: number } {
+  const where = ["1 = 1"];
+  const args: (string | number)[] = [];
+  if (filter.from !== null) {
+    where.push("ts >= ?");
+    args.push(filter.from);
+  }
+  if (filter.to !== null) {
+    where.push("ts <= ?");
+    args.push(filter.to);
+  }
+  const agents = filter.agents.filter((agent) => /^[a-z0-9-]+$/.test(agent));
+  if (agents.length) {
+    where.push(`agent IN (${agents.map(() => "?").join(", ")})`);
+    args.push(...agents);
+  }
+  if (filter.path) {
+    where.push("path LIKE ? ESCAPE '\\'");
+    args.push(`%${filter.path.replace(/[\\%_]/g, (char) => `\\${char}`)}%`);
+  }
+  if (KINDS.has(filter.kind)) {
+    where.push("kind = ?");
+    args.push(filter.kind);
+  }
+  if (filter.sensitive) where.push("sensitive = 1");
+  if (filter.hideNoise) where.push(`(sensitive = 1 OR NOT ${NOISE_SQL})`);
+  const clause = where.join(" AND ");
+  const total = Number((db.prepare(`SELECT count(*) AS n FROM events WHERE ${clause}`).get(...args) as { n: number }).n);
+  const rows = db
+    .prepare(`SELECT id, ts, agent, kind, path, dest_path, sensitive FROM events WHERE ${clause} ORDER BY id DESC LIMIT ? OFFSET ?`)
+    .all(...args, filter.limit, filter.offset) as unknown as HistorySql[];
+  return { rows: rows.map((row) => toRow(row, false)), total };
+}
+
+export function historyText(db: DatabaseSync, id: number): { before: string | null; after: string | null } {
+  const row = db.prepare("SELECT before_blob, after_blob FROM events WHERE id = ?").get(id) as { before_blob: string | null; after_blob: string | null } | undefined;
+  return { before: row?.before_blob ?? null, after: row?.after_blob ?? null };
 }
 
 export function pruneHistory(db: DatabaseSync, now: number): void {

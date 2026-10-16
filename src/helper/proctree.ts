@@ -1,5 +1,12 @@
 const ROOTS = new Set(["claude", "cursor-agent", "codex", "gemini", "opencode"]);
 
+// cursor-agent is a bash wrapper that execs a bundled node from its versions dir.
+function rootOf(path: string): string | undefined {
+  if (path.includes("/cursor-agent/versions/")) return "cursor-agent";
+  const base = path.split("/").pop() ?? "";
+  return ROOTS.has(base) ? base : undefined;
+}
+
 export interface EsEvent {
   time?: string;
   process?: { audit_token?: { pid?: number }; ppid?: number; executable?: { path?: string } };
@@ -24,10 +31,9 @@ export class ProcTree {
   }
 
   apply(event: EsEvent): void {
-    const exe = event.process?.executable?.path ?? "";
-    const base = exe.split("/").pop() ?? "";
+    const root = rootOf(event.process?.executable?.path ?? "");
     const pid = event.process?.audit_token?.pid;
-    if (pid && ROOTS.has(base)) this.tracked.set(pid, this.tracked.get(pid) ?? base);
+    if (pid && root) this.tracked.set(pid, this.tracked.get(pid) ?? root);
     const kind = event.event ?? {};
     if (kind.exec) this.onExec(event);
     if (kind.fork) this.onFork(kind.fork as { child?: { audit_token?: { pid?: number }; executable?: { path?: string } } });
@@ -43,9 +49,9 @@ export class ProcTree {
     const pid = exec?.target?.audit_token?.pid ?? event.process?.audit_token?.pid;
     const ppid = exec?.target?.ppid ?? event.process?.ppid;
     if (!pid) return;
-    const base = path.split("/").pop() ?? "";
-    if (ROOTS.has(base) || (ppid !== undefined && (this.tracked.has(ppid) || this.t3Pids.has(ppid)))) {
-      this.tracked.set(pid, this.tracked.get(ppid ?? -1) ?? base);
+    const root = rootOf(path);
+    if (root || (ppid !== undefined && (this.tracked.has(ppid) || this.t3Pids.has(ppid)))) {
+      this.tracked.set(pid, this.tracked.get(ppid ?? -1) ?? root ?? path.split("/").pop() ?? "");
     }
   }
 

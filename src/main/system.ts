@@ -1,14 +1,23 @@
+import type { AgentId } from "../shared/types";
+
 export interface PsRow {
   pid: number;
   ppid: number;
   args: string;
 }
 
+// Main executables only; Electron helpers live under Contents/Frameworks.
 const GUI = [
-  { name: "Cursor", bundleId: "com.todesktop.230313mzl4w4u92", match: /Cursor\.app|cursor-agent/ },
-  { name: "T3 Code", bundleId: "com.t3tools.t3code", match: /T3 Code/ },
-  { name: "Claude", bundleId: "com.anthropic.claudefordesktop", match: /Claude\.app/ },
-];
+  { agent: "cursor", name: "Cursor", bundleId: "com.todesktop.230313mzl4w4u92", match: /\/Cursor\.app\/Contents\/MacOS\/Cursor(\s|$)/ },
+  { agent: "t3-code", name: "T3 Code", bundleId: "com.t3tools.t3code", match: /\/T3 Code\.app\/Contents\/MacOS\/[^/\s]+(\s|$)/ },
+] as const;
+
+const CLI: Record<string, { agent: AgentId; name: string }> = {
+  claude: { agent: "claude-code", name: "Claude Code" },
+  "cursor-agent": { agent: "cursor", name: "Cursor agent" },
+  codex: { agent: "codex", name: "Codex" },
+  gemini: { agent: "gemini", name: "Gemini CLI" },
+};
 
 export function parsePs(text: string): PsRow[] {
   return text
@@ -21,16 +30,28 @@ export function parsePs(text: string): PsRow[] {
     .filter((row): row is PsRow => row !== null);
 }
 
-export function restartTargets(rows: PsRow[]): { name: string; pid: number; kind: "gui" | "cli"; bundleId?: string; hint?: string }[] {
-  const targets: { name: string; pid: number; kind: "gui" | "cli"; bundleId?: string; hint?: string }[] = [];
+export interface RestartTarget {
+  agent: AgentId;
+  name: string;
+  pid: number;
+  kind: "gui" | "cli";
+  bundleId?: string;
+}
+
+const command = (token: string | undefined) => token?.slice(token.lastIndexOf("/") + 1);
+
+export function restartTargets(rows: PsRow[]): RestartTarget[] {
+  const targets: RestartTarget[] = [];
   for (const row of rows) {
-    const gui = GUI.find((app) => app.match.test(row.args) && !row.args.includes("cursor-agent"));
+    const gui = GUI.find((app) => app.match.test(row.args));
     if (gui) {
-      targets.push({ name: gui.name, pid: row.pid, kind: "gui", bundleId: gui.bundleId });
+      targets.push({ agent: gui.agent, name: gui.name, pid: row.pid, kind: "gui", bundleId: gui.bundleId });
       continue;
     }
-    if (/\bclaude\b/.test(row.args)) targets.push({ name: "Claude Code", pid: row.pid, kind: "cli", hint: "claude --continue" });
-    else if (row.args.includes("cursor-agent")) targets.push({ name: "Cursor agent", pid: row.pid, kind: "cli" });
+    // `node /path/bin/gemini` runs the CLI as the second token.
+    const [first, second] = row.args.split(/\s+/);
+    const cli = CLI[command(first) ?? ""] ?? (command(first) === "node" ? CLI[command(second) ?? ""] : undefined);
+    if (cli) targets.push({ ...cli, pid: row.pid, kind: "cli" });
   }
   return targets;
 }

@@ -28,14 +28,18 @@ export async function handlePayload(options: {
     verdict = answer === "allow" ? { kind: "pass" } : answer === "deny" ? { kind: "deny", reason: "Denied in Agentic Leash" } : verdict;
   }
   const output = answer === "timeout" ? respond(options.entry, "timeout") : respond(options.entry, verdict.kind === "prompt" ? "timeout" : verdict);
-  recordDecision(options.db, {
-    ts: options.now,
-    agent: request.agent,
-    tool: request.tool,
-    paths: request.paths,
-    verdict: answer === "timeout" ? "timeout" : verdict.kind,
-    reason: verdict.kind === "deny" ? verdict.reason : undefined,
-    durationMs: Math.max(0, options.now - started),
-  });
+  try {
+    recordDecision(options.db, {
+      ts: options.now,
+      agent: request.agent,
+      tool: request.tool,
+      paths: request.paths,
+      verdict: answer === "timeout" ? "timeout" : verdict.kind,
+      reason: verdict.kind === "deny" ? verdict.reason : undefined,
+      durationMs: Math.max(0, options.now - started),
+    });
+  } catch {
+    /* a locked decision log must not fail the tool call */
+  }
   return output;
 }

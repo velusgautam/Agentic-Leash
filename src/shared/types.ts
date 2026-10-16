@@ -13,6 +13,11 @@ export interface Grant {
   expiresAt: number | null;
 }
 
+export interface ScheduledRevoke {
+  path: string;
+  dueAt: number;
+}
+
 export interface HookRequest {
   agent: "claude-code" | "cursor";
   event: string;
@@ -59,7 +64,7 @@ export interface AgentSnapshot {
   network: { rule: string; effect: "allow" | "deny"; source: string; locked: boolean }[];
   children: AgentId[];
   workers: string[];
-  privacy: { service: string; client: string; authValue: number; bundleId: string }[];
+  privacy: { service: string; client: string; authValue: number; bundleId: string; via?: string }[];
 }
 
 export interface DecisionRow {
