@@ -1,12 +1,15 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, type CSSProperties } from "react";
 import { useParams } from "@tanstack/react-router";
+import { Monitor, Moon, Sun } from "lucide-react";
 import licenses from "../../../../THIRD_PARTY_LICENSES.md?raw";
 import type { OpenAtLoginState } from "../../../shared/bridge";
 import type { Diagnostics, ThemeSource } from "../../../shared/types";
 import { PageContainer, SettingsRow, SettingsSection } from "~/components/settings";
 import { Button } from "~/components/ui/button";
 import { Switch } from "~/components/ui/switch";
+import { cn } from "~/lib/utils";
 import { SETTINGS_SECTIONS } from "~/nav";
+import { DEFAULT_APPEARANCE, readAppearance, saveAppearance, type AppearancePrefs } from "../appearance";
 
 function General() {
   const [login, setLogin] = useState<OpenAtLoginState | null>(null);
@@ -56,17 +59,78 @@ function Monitoring() {
   );
 }
 
+const THEMES = [
+  { value: "system", label: "System", icon: Monitor, preview: "bg-[linear-gradient(135deg,#f5f5f4_50%,#18181b_50%)]" },
+  { value: "light", label: "Light", icon: Sun, preview: "bg-[#f5f5f4]" },
+  { value: "dark", label: "Dark", icon: Moon, preview: "bg-[#18181b]" },
+] as const;
+
+function Slider({ label, value, min, max, onChange }: { label: string; value: number; min: number; max: number; onChange: (value: number) => void }) {
+  const ratio = (value - min) / (max - min);
+  const style = { "--settings-slider-progress": `${ratio * 100}%`, "--settings-slider-fill-offset": `${0.5 - ratio}rem` } as CSSProperties;
+  return (
+    <div className="flex w-full items-center gap-3 sm:w-52">
+      <output className="min-w-12 rounded-md bg-muted px-2 py-1 text-center font-mono text-xs font-medium tabular-nums">{value}%</output>
+      <input aria-label={label} className="settings-slider min-w-0 flex-1" type="range" min={min} max={max} step={5} value={value} style={style} onChange={(event) => onChange(Number(event.currentTarget.value))} />
+    </div>
+  );
+}
+
 function Appearance() {
   const [theme, setTheme] = useState<ThemeSource>("system");
+  const [prefs, setPrefs] = useState<AppearancePrefs>(readAppearance);
   useEffect(() => {
     void window.leash.getTheme().then(setTheme);
   }, []);
+  const update = (next: Partial<AppearancePrefs>) => {
+    const merged = { ...prefs, ...next };
+    setPrefs(merged);
+    saveAppearance(merged);
+  };
   return (
-    <SettingsSection title="Theme">
-      {(["system", "light", "dark"] as const).map((value) => (
-        <SettingsRow key={value} title={value[0]!.toUpperCase() + value.slice(1)} control={<input type="radio" name="theme" aria-label={value} checked={theme === value} onChange={() => void window.leash.setTheme(value).then(setTheme)} />} />
-      ))}
-    </SettingsSection>
+    <>
+      <SettingsSection title="Theme">
+        <div className="grid grid-cols-3 gap-3 p-3 sm:p-4">
+          {THEMES.map(({ value, label, icon: Icon, preview }) => (
+            <button
+              key={value}
+              type="button"
+              aria-label={label}
+              aria-pressed={theme === value}
+              onClick={() => void window.leash.setTheme(value).then(setTheme)}
+              className={cn("overflow-hidden rounded-lg border text-left transition-colors", theme === value ? "border-primary ring-2 ring-primary/30" : "border-border hover:border-foreground/30")}
+            >
+              <div className={cn("flex h-16 items-end gap-1 p-2", preview)}>
+                <span className="h-8 w-6 rounded-sm bg-[#ff8a5c]/80" />
+                <span className="h-5 flex-1 rounded-sm bg-zinc-500/30" />
+              </div>
+              <div className="flex items-center gap-1.5 px-2.5 py-2 text-sm">
+                <Icon className="size-3.5 text-muted-foreground" aria-hidden />
+                {label}
+              </div>
+            </button>
+          ))}
+        </div>
+      </SettingsSection>
+      <SettingsSection title="Interface">
+        <SettingsRow title="Contrast" description="Adjust the contrast of text and borders across the app." control={<Slider label="Contrast" value={prefs.contrast} min={50} max={200} onChange={(contrast) => update({ contrast })} />} />
+        <SettingsRow title="Transparency" description="Higher values make the sidebar, menus and dialogs more solid." control={<Slider label="Glass opacity" value={prefs.glass} min={40} max={100} onChange={(glass) => update({ glass })} />} />
+        <SettingsRow
+          title="Density"
+          description="Compact fits more rows on screen."
+          control={
+            <div className="inline-flex rounded-lg border border-border p-0.5">
+              {(["compact", "comfortable"] as const).map((density) => (
+                <button key={density} type="button" aria-pressed={prefs.density === density} onClick={() => update({ density })} className={cn("rounded-md px-2.5 py-1 text-xs capitalize", prefs.density === density ? "bg-accent font-medium" : "text-muted-foreground")}>
+                  {density}
+                </button>
+              ))}
+            </div>
+          }
+        />
+        <SettingsRow title="Reset" description="Back to the default contrast, transparency and density." control={<Button size="sm" variant="outline" onClick={() => update(DEFAULT_APPEARANCE)}>Reset</Button>} />
+      </SettingsSection>
+    </>
   );
 }
 

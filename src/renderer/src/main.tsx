@@ -2,7 +2,10 @@ import "./index.css";
 import { RouterProvider } from "@tanstack/react-router";
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
+import { applyAppearance, readAppearance } from "./appearance";
 import { router } from "./router";
+
+applyAppearance(readAppearance());
 
 const dark = matchMedia("(prefers-color-scheme: dark)");
 let source: "system" | "light" | "dark" = "system";

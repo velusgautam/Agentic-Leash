@@ -4,7 +4,7 @@ import { expireLeashGrants, pruneOldDecisions } from "./sweep";
 import { handlePayload } from "./handle";
 import { POPUP_TIMEOUT_S } from "../shared/constants";
 import { grantsDbPath, homeDir, socketPath } from "../shared/constants";
-import { openGrantsDb } from "../shared/db";
+import { openGrantsDb, setSetting } from "../shared/db";
 import { publishClaudeRules } from "../main/rulesMode";
 import { loadClaude } from "../main/agents/claude";
 import { join } from "node:path";
@@ -16,6 +16,7 @@ if (invoked && process.argv.includes("--sweep")) {
   const db = openGrantsDb(grantsDbPath());
   expireLeashGrants(db, Date.now());
   pruneOldDecisions(db, Date.now());
+  setSetting(db, "last_sweep", new Date().toISOString());
   const claudeDir = process.env.CLAUDE_CONFIG_DIR || join(homeDir(), ".claude");
   const mode = loadClaude(claudeDir, join(homeDir(), ".claude.json")).enforcement === "rules";
   publishClaudeRules(db, join(claudeDir, "settings.json"), homeDir(), mode);

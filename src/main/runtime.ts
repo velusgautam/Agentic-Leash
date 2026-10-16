@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import { watch } from "node:fs";
+import { existsSync, watch } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { promisify } from "node:util";
@@ -34,6 +34,17 @@ function hookScript(): string {
 
 function hookCommand(kind: "claude" | "cursor"): string {
   return `ELECTRON_RUN_AS_NODE=1 "${process.execPath}" "${hookScript()}" ${kind}`;
+}
+
+async function ensureSweepAgent(): Promise<void> {
+  const script = hookScript();
+  if (!existsSync(script)) return;
+  const { installSweepAgent, sweepServiceTarget } = await import("./helperInstall");
+  const plist = installSweepAgent(process.execPath, script);
+  const uid = process.getuid?.();
+  if (uid === undefined) return;
+  await exec("/bin/launchctl", ["bootout", sweepServiceTarget(uid)]).catch(() => undefined);
+  await exec("/bin/launchctl", ["bootstrap", `gui/${uid}`, plist]).catch(() => undefined);
 }
 
 async function psLines(): Promise<string[]> {
@@ -103,7 +114,7 @@ export function startRuntime(options: { userData: string; openApproval: () => vo
 
   const pollHistory = () => {
     try {
-      const historyDb = openHistoryDb(join(HISTORY_DIR, "history.db"), true);
+      const historyDb = openHistoryDb(join(process.env.AGENTIC_LEASH_HISTORY_DIR || HISTORY_DIR, "history.db"), true);
       const rows = listHistory(historyDb, 0, 300);
       historyDb.close();
       history = rows;
@@ -230,6 +241,7 @@ export function startRuntime(options: { userData: string; openApproval: () => vo
   } catch {
     /* shortcut already owned */
   }
+  void ensureSweepAgent();
   nativeTheme.themeSource = readUiState(options.userData).theme ?? "system";
   return { revokeAll };
 }
