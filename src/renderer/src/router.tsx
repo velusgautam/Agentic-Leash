@@ -1,6 +1,7 @@
 import { createHashHistory, createRootRoute, createRoute, createRouter, redirect } from "@tanstack/react-router";
 import { AppLayout } from "~/components/AppLayout";
 import { AgentPage } from "~/routes/agent";
+import { ApprovalPage } from "~/routes/approval";
 import { GrantsPage } from "~/routes/grants";
 import { HistoryPage } from "~/routes/history";
 import { LivePage } from "~/routes/live";
@@ -20,6 +21,7 @@ const routeTree = rootRoute.addChildren([
   createRoute({ getParentRoute: () => rootRoute, path: "/grants", component: GrantsPage }),
   createRoute({ getParentRoute: () => rootRoute, path: "/history", component: HistoryPage }),
   createRoute({ getParentRoute: () => rootRoute, path: "/agents/$agentId", component: AgentPage }),
+  createRoute({ getParentRoute: () => rootRoute, path: "/approval", component: ApprovalPage }),
   createRoute({
     getParentRoute: () => rootRoute,
     path: "/settings",
