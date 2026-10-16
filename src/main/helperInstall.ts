@@ -1,6 +1,8 @@
-import { writeFileSync } from "node:fs";
+import { mkdirSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
+
+const escapeXml = (value: string) => value.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 
 export function helperPlist(execPath: string, scriptPath: string): string {
   return `<?xml version="1.0" encoding="UTF-8"?>
@@ -24,8 +26,8 @@ export function sweepPlist(execPath: string, scriptPath: string): string {
 <plist version="1.0"><dict>
   <key>Label</key><string>com.agenticleash.sweep</string>
   <key>ProgramArguments</key><array>
-    <string>${execPath}</string>
-    <string>${scriptPath}</string>
+    <string>${escapeXml(execPath)}</string>
+    <string>${escapeXml(scriptPath)}</string>
     <string>--sweep</string>
   </array>
   <key>EnvironmentVariables</key><dict><key>ELECTRON_RUN_AS_NODE</key><string>1</string></dict>
@@ -37,11 +39,21 @@ export function sweepPlist(execPath: string, scriptPath: string): string {
 
 export function helperInstallScript(execPath: string, scriptPath: string): string {
   const plist = "/Library/LaunchDaemons/com.agenticleash.helper.plist";
-  const body = helperPlist(execPath, scriptPath).replaceAll('"', '\\"');
-  return `do shell script "mkdir -p '/Library/Application Support/AgenticLeash' && printf '%s' \\"${body}\\" > '${plist}' && launchctl bootstrap system '${plist}'" with administrator privileges`;
+  const body = Buffer.from(helperPlist(execPath, scriptPath)).toString("base64");
+  return `do shell script "/bin/mkdir -p '/Library/Application Support/AgenticLeash' && /bin/echo ${body} | /usr/bin/base64 -d > '${plist}' && /usr/sbin/chown root:wheel '${plist}' '/Library/Application Support/AgenticLeash' && /bin/chmod 644 '${plist}' && /bin/chmod 755 '/Library/Application Support/AgenticLeash' && (/bin/launchctl bootout system '${plist}' || true) && /bin/launchctl bootstrap system '${plist}'" with administrator privileges`;
 }
 
-export function installSweepAgent(execPath: string, scriptPath: string): void {
-  const path = join(homedir(), "Library/LaunchAgents/com.agenticleash.sweep.plist");
+export function sweepAgentPath(home = homedir()): string {
+  return join(home, "Library", "LaunchAgents", "com.agenticleash.sweep.plist");
+}
+
+export function installSweepAgent(execPath: string, scriptPath: string, home = homedir()): string {
+  const path = sweepAgentPath(home);
+  mkdirSync(dirname(path), { recursive: true });
   writeFileSync(path, sweepPlist(execPath, scriptPath));
+  return path;
+}
+
+export function sweepServiceTarget(uid: number): string {
+  return `gui/${uid}/com.agenticleash.sweep`;
 }

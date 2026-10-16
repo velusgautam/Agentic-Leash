@@ -51,6 +51,11 @@ describe("history", () => {
     const read = classify({ time: "2026-10-15T20:53:11.000Z", process: { audit_token: { pid: 5 }, executable: { path: "/usr/local/bin/claude" } }, event: { open: { file: { path: "/Users/me/.ssh/config" }, fflag: 1 } } }, tree, "/Users/me");
     expect(read?.sensitive).toBe(true);
     expect(read?.kind).toBe("read");
+    const late = new ProcTree();
+    const opened = { time: "2026-10-15T20:53:11.000Z", process: { audit_token: { pid: 9 }, executable: { path: "/tmp/bin/claude" } }, event: { open: { file: { path: "/Users/me/.ssh/config" }, fflag: 1 } } };
+    late.apply(opened);
+    expect(late.has(9)).toBe(true);
+    expect(classify(opened, late, "/Users/me")?.kind).toBe("read");
     const db = openHistoryDb(join(mkdtempSync(join(tmpdir(), "al-hist-")), "history.db"));
     insertEvents(db, [read!, { ...read!, ts: read!.ts + 1000 }]);
     expect(listHistory(db)).toHaveLength(1);

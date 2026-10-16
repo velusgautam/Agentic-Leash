@@ -2091,6 +2091,10 @@ code {
   --chat-content-max-width: 100%;
 }
 
+:root[data-density="compact"] {
+  font-size: 93.75%;
+}
+
 :root[data-diff-color-scheme="blue-orange"] {
   --diff-addition: light-dark(var(--color-blue-600), var(--color-blue-400));
   --diff-deletion: light-dark(var(--color-orange-600), var(--color-orange-400));

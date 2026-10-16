@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { Link, Outlet, useLocation, useNavigate } from "@tanstack/react-router";
-import { ArrowLeft, Settings } from "lucide-react";
+import { ArrowLeft, RotateCw, Settings, ShieldOff } from "lucide-react";
+import { AgentIcon, LeashMark } from "~/components/Icons";
 import { Button } from "~/components/ui/button";
 import {
   Sidebar,
@@ -41,6 +42,7 @@ function MainNav({ pathname }: { pathname: string }) {
                 isActive={pathname === `/agents/${id}`}
                 render={<Link to="/agents/$agentId" params={{ agentId: id }} />}
               >
+                <AgentIcon agent={id} />
                 {label}
               </SidebarMenuButton>
             </SidebarMenuItem>
@@ -108,7 +110,8 @@ export function AppLayout() {
         resizable={{ minWidth: 208, maxWidth: 360, storageKey: "agentic-leash:sidebar-width" }}
       >
         {/* pl-20 clears the traffic lights at x=16. */}
-        <SidebarHeader className="drag-region h-13 flex-row items-center pr-3 pl-20 text-sm font-medium">
+        <SidebarHeader className="drag-region h-13 flex-row items-center gap-2 pr-3 pl-20 text-sm font-semibold tracking-tight">
+          <LeashMark className="h-4.5 w-auto" />
           Agentic Leash
         </SidebarHeader>
         <SidebarContent>{onSettings ? <SettingsNav pathname={pathname} /> : <MainNav pathname={pathname} />}</SidebarContent>
@@ -116,7 +119,8 @@ export function AppLayout() {
           <SidebarFooter>
             <SidebarMenu>
               <SidebarMenuItem>
-                <SidebarMenuButton variant="outline" className="text-destructive" onClick={() => void window.leash.revokeAll()}>
+                <SidebarMenuButton variant="outline" className="border-destructive/30 text-destructive hover:bg-destructive/10" onClick={() => void window.leash.revokeAll()}>
+                  <ShieldOff />
                   Revoke all
                 </SidebarMenuButton>
               </SidebarMenuItem>
@@ -134,8 +138,8 @@ export function AppLayout() {
       <SidebarInset className="min-h-0 overflow-auto">
         <div className="drag-region h-13 shrink-0" />
         {restart ? (
-          <div className="mx-5 mb-2 flex items-center justify-between rounded-lg border border-border px-3 py-2 text-sm">
-            <span>Restart needed. Start new agent sessions, or restart the running ones.</span>
+          <div className="mx-5 mb-2 flex items-center justify-between gap-3 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-sm">
+            <span className="flex items-center gap-2"><RotateCw className="size-4 text-amber-500" aria-hidden />Restart needed. Start new agent sessions, or restart the running ones.</span>
             <Button size="sm" onClick={() => void window.leash.restartAgents().then(() => setRestart(false))}>
               Restart agents
             </Button>

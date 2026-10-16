@@ -19,7 +19,15 @@ export class ProcTree {
     return this.tracked.get(pid) ?? "unknown";
   }
 
+  pids(): number[] {
+    return [...this.tracked.keys()];
+  }
+
   apply(event: EsEvent): void {
+    const exe = event.process?.executable?.path ?? "";
+    const base = exe.split("/").pop() ?? "";
+    const pid = event.process?.audit_token?.pid;
+    if (pid && ROOTS.has(base)) this.tracked.set(pid, this.tracked.get(pid) ?? base);
     const kind = event.event ?? {};
     if (kind.exec) this.onExec(event);
     if (kind.fork) this.onFork(kind.fork as { child?: { audit_token?: { pid?: number }; executable?: { path?: string } } });

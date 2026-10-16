@@ -1,7 +1,10 @@
 import { useEffect, useState } from "react";
+import { FolderLock, History, LockOpen, ShieldOff, Timer, Users } from "lucide-react";
 import type { DecisionRow, Grant } from "../../../shared/types";
+import { AGENT_LABELS, AgentIcon } from "~/components/Icons";
 import { PageContainer, SettingsSection } from "~/components/settings";
 import { Button } from "~/components/ui/button";
+import { cn } from "~/lib/utils";
 
 function remaining(expiresAt: number | null): string {
   if (expiresAt === null) return "Forever";
@@ -9,6 +12,23 @@ function remaining(expiresAt: number | null): string {
   if (seconds >= 3600) return `${Math.floor(seconds / 3600)}h ${Math.floor((seconds % 3600) / 60)}m`;
   if (seconds >= 60) return `${Math.floor(seconds / 60)}m`;
   return `${seconds}s`;
+}
+
+const pill = "inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-xs font-medium whitespace-nowrap";
+const VERDICT: Record<string, string> = {
+  allow: "bg-emerald-500/10 text-emerald-700 dark:text-emerald-300",
+  pass: "bg-emerald-500/10 text-emerald-700 dark:text-emerald-300",
+  deny: "bg-red-500/10 text-red-700 dark:text-red-300",
+  ask: "bg-amber-500/12 text-amber-700 dark:text-amber-300",
+};
+
+function Agent({ agent }: { agent: string }) {
+  return (
+    <span className="flex items-center gap-1.5 text-xs">
+      {agent === "*" ? <Users className="size-3.5 text-muted-foreground" aria-hidden /> : <AgentIcon agent={agent} className="size-3.5" />}
+      {agent === "*" ? "All agents" : AGENT_LABELS[agent] ?? agent}
+    </span>
+  );
 }
 
 export function GrantsPage() {
@@ -27,34 +47,52 @@ export function GrantsPage() {
   return (
     <PageContainer>
       <div className="flex items-center justify-between px-3">
-        <h1 className="text-lg font-medium">Grants</h1>
-        <Button size="sm" variant="outline" onClick={() => setLog((value) => !value)}>{log ? "Show grants" : "Decision log"}</Button>
+        <h1 className="text-lg font-semibold tracking-tight">Grants</h1>
+        <Button size="sm" variant="outline" onClick={() => setLog((value) => !value)}>
+          {log ? <FolderLock /> : <History />}
+          {log ? "Show grants" : "Decision log"}
+        </Button>
       </div>
       {log ? (
         <SettingsSection title="Decisions, last 30 days">
-          {decisions.length === 0 ? <p className="px-4 py-3 text-sm text-muted-foreground">No decisions yet</p> : null}
+          {decisions.length === 0 ? <p className="px-4 py-4 text-sm text-muted-foreground"><span aria-hidden className="mr-2">🗒️</span>No decisions yet</p> : null}
           {decisions.map((row) => (
-            <div key={row.id} className="px-4 py-2 text-sm">{new Date(row.ts).toLocaleString()} · {row.agent} · {row.tool} · {row.verdict}</div>
+            <div key={row.id} className="flex items-center gap-3 overflow-x-auto px-4 py-2.5 text-sm whitespace-nowrap">
+              <span className="font-mono text-xs text-muted-foreground tabular-nums">{new Date(row.ts).toLocaleString()}</span>
+              <Agent agent={row.agent} />
+              <span className="font-mono text-xs">{row.tool}</span>
+              <span className={cn(pill, VERDICT[row.verdict] ?? "bg-muted text-muted-foreground")}>{row.verdict}</span>
+              {row.durationMs !== null ? <span className="text-xs text-muted-foreground tabular-nums">{row.durationMs} ms</span> : null}
+            </div>
           ))}
         </SettingsSection>
       ) : grants.length === 0 ? (
-        <p className="px-3 text-sm text-muted-foreground">No grants yet</p>
+        <div className="rounded-xl border border-dashed border-border/70 px-6 py-12 text-center">
+          <div className="text-3xl" aria-hidden>🗝️</div>
+          <p className="mt-2 text-sm text-muted-foreground">No grants yet</p>
+        </div>
       ) : (
         <SettingsSection title="Live grants">
           {grants.map((grant) => (
-            <div key={grant.id} className="flex items-center justify-between gap-3 px-4 py-3 text-sm">
-              <div>
-                <div className="font-medium">{grant.path}</div>
-                <div className="text-xs text-muted-foreground">{grant.agent} · {grant.access} · {grant.source} · {remaining(grant.expiresAt)}</div>
+            <div key={grant.id} className="flex items-center gap-3 px-4 py-3 text-sm">
+              <FolderLock className="size-4 shrink-0 text-muted-foreground" aria-hidden />
+              <div className="min-w-0 flex-1 space-y-1">
+                <div className="overflow-x-auto font-mono text-xs font-medium whitespace-nowrap">{grant.path}</div>
+                <div className="flex flex-wrap items-center gap-2">
+                  <Agent agent={grant.agent} />
+                  <span className={cn(pill, grant.access === "write" ? "bg-amber-500/12 text-amber-700 dark:text-amber-300" : "bg-sky-500/10 text-sky-700 dark:text-sky-300")}>{grant.access}</span>
+                  <span className={cn(pill, "bg-muted text-foreground/80")}><Timer className="size-3" aria-hidden />{remaining(grant.expiresAt)}</span>
+                  <span className="text-xs text-muted-foreground">{grant.source}</span>
+                </div>
               </div>
               {grant.source === "leash" ? <Button size="sm" variant="destructive-outline" onClick={() => void window.leash.revokeGrant(grant.id).then(load)}>Revoke</Button> : null}
             </div>
           ))}
         </SettingsSection>
       )}
-      <div className="px-3">
-        <Button variant="destructive" onClick={() => void window.leash.revokeAll().then(load)}>Revoke all and lock down</Button>
-        <Button className="ml-2" variant="outline" onClick={() => void window.leash.unlock()}>End lockdown</Button>
+      <div className="flex gap-2 px-3">
+        <Button variant="destructive" onClick={() => void window.leash.revokeAll().then(load)}><ShieldOff />Revoke all and lock down</Button>
+        <Button variant="outline" onClick={() => void window.leash.unlock()}><LockOpen />End lockdown</Button>
       </div>
     </PageContainer>
   );

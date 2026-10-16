@@ -1,5 +1,6 @@
 import { join, resolve } from "node:path";
 import { app, BrowserWindow, ipcMain, Menu, Notification, nativeTheme, shell, Tray } from "electron";
+import appIcon from "../../resources/icon.png?asset";
 import trayIcon from "../../resources/trayTemplate.png?asset";
 import type { OpenAtLoginState } from "../shared/bridge";
 import { isOpenAtLogin, setOpenAtLogin } from "./loginItem";
@@ -137,6 +138,7 @@ if (!app.requestSingleInstanceLock()) {
 
   void app.whenReady().then(() => {
     registerLoginItem();
+    if (!app.isPackaged) app.dock?.setIcon(appIcon);
     tray = new Tray(trayIcon);
     tray.setToolTip("Agentic Leash");
     ({ revokeAll } = startRuntime({

@@ -746,6 +746,16 @@ export interface AgentAdapter {
 - `pnpm dist` produces `dist/Agentic Leash-<version>-arm64.dmg`.
 - After installing over a previous build, Full Disk Access is still granted.
 
+## Design follow-up (after packaging)
+
+**Status:** first pass done (2026-10-16).
+
+- App icon: graphite tile, coral leash-shaped shield, amber signal dot (`resources/icon.svg` → `icon.png`). Used for the Dock in dev, the `.dmg`, and the sidebar mark.
+- Provider icons (Claude, Cursor, OpenAI and T3 paths from T3 Code, MIT; Gemini sparkle) in the sidebar, agent pages, Live, History and Grants.
+- Live and History share `EventRow`: kind badges with color and icon, dividers, a red accent on sensitive rows. Narrow windows scroll sideways; paths stay on one line with no ellipsis.
+- Agent pages: icon tile, installed/enforcement pills, lock icons for company-managed rows, emojis only in empty states.
+- Settings > Appearance follows T3 Code: theme cards, contrast (50–200%), transparency (40–100%), density (compact/comfortable).
+
 ---
 
 ## 6. Known gaps (shown in the app's Diagnostics page)
