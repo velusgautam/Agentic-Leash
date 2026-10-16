@@ -15,7 +15,7 @@ test("sidebar navigates pages, agents and settings", async () => {
   await expect(win.getByText("No history yet")).toBeVisible();
 
   await win.getByRole("link", { name: "Claude Code", exact: true }).click();
-  await expect(win.getByText("Folders, MCP servers and network rules for Claude Code show up here.")).toBeVisible();
+  await expect(win.getByText("Folders", { exact: true })).toBeVisible();
 
   await win.getByRole("link", { name: "Settings", exact: true }).click();
   for (const name of SECTIONS) await expect(win.getByRole("link", { name, exact: true })).toBeVisible();

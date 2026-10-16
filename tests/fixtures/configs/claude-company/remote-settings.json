@@ -1,0 +1,5 @@
+{
+  "allowManagedHooksOnly": true,
+  "permissions": { "deny": ["WebSearch", "WebFetch", "Read(**/.env*)", "Read(**/id_rsa)"] },
+  "allowedMcpServers": [{ "serverUrl": "https://example.invalid/mcp" }]
+}

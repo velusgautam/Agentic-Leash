@@ -1,0 +1,20 @@
+appId: com.agenticleash.app
+productName: Agentic Leash
+directories:
+  output: dist
+files:
+  - out/**
+  - package.json
+asarUnpack:
+  - out/main/leash-hook.js
+  - out/main/leash-helper.js
+mac:
+  target:
+    - target: dmg
+      arch:
+        - arm64
+  identity: Agentic Leash Dev
+  hardenedRuntime: false
+  category: public.app-category.developer-tools
+dmg:
+  title: Agentic Leash

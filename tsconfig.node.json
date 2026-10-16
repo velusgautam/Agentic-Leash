@@ -7,6 +7,8 @@
     "src/main/**/*",
     "src/preload/**/*",
     "src/shared/**/*",
+    "src/hook/**/*",
+    "src/helper/**/*",
     "tests/**/*"
   ],
   "compilerOptions": { "composite": true, "types": ["electron-vite/node"] }

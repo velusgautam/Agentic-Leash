@@ -1,0 +1,6 @@
+{
+  "permissions": {
+    "additionalDirectories": ["/Users/me/Desktop"],
+    "allow": ["Read(/Users/me/src)"]
+  }
+}

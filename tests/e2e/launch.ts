@@ -6,6 +6,6 @@ import { _electron as electron, type ElectronApplication } from "@playwright/tes
 export function launch(args: string[] = []): Promise<ElectronApplication> {
   return electron.launch({
     args: [".", ...args],
-    env: { ...process.env, AGENTIC_LEASH_USER_DATA: mkdtempSync(join(tmpdir(), "al-e2e-")) },
+    env: { ...process.env, AGENTIC_LEASH_USER_DATA: mkdtempSync(join(tmpdir(), "al-e2e-")), AGENTIC_LEASH_HOME: mkdtempSync(join(tmpdir(), "al-home-")) },
   });
 }

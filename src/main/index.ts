@@ -4,14 +4,18 @@ import trayIcon from "../../resources/trayTemplate.png?asset";
 import type { OpenAtLoginState } from "../shared/bridge";
 import { isOpenAtLogin, setOpenAtLogin } from "./loginItem";
 import { appMenuTemplate, trayMenuTemplate } from "./menus";
+import { startRuntime } from "./runtime";
 import { readUiState, writeUiState } from "./uiState";
 
 if (process.env.AGENTIC_LEASH_USER_DATA) app.setPath("userData", process.env.AGENTIC_LEASH_USER_DATA);
 
 let win: BrowserWindow | null = null;
+let approval: BrowserWindow | null = null;
 // Module scope on purpose: a garbage-collected Tray vanishes from the menu bar.
 let tray: Tray | null = null;
 let quitting = false;
+let pendingCount = 0;
+let revokeAll = async () => {};
 
 function createWindow(visible: boolean): BrowserWindow {
   const window = new BrowserWindow({
@@ -31,9 +35,52 @@ function createWindow(visible: boolean): BrowserWindow {
     void shell.openExternal(url);
     return { action: "deny" };
   });
-  if (!app.isPackaged && process.env.ELECTRON_RENDERER_URL) void window.loadURL(process.env.ELECTRON_RENDERER_URL);
-  else void window.loadFile(join(__dirname, "../renderer/index.html"));
+  loadRenderer(window);
   return window;
+}
+
+function loadRenderer(window: BrowserWindow, hash = ""): void {
+  if (!app.isPackaged && process.env.ELECTRON_RENDERER_URL) void window.loadURL(`${process.env.ELECTRON_RENDERER_URL}${hash}`);
+  else void window.loadFile(join(__dirname, "../renderer/index.html"), hash ? { hash: hash.slice(1) } : undefined);
+}
+
+function refreshTray(): void {
+  if (!tray) return;
+  tray.setTitle(pendingCount ? String(pendingCount) : "");
+  tray.setContextMenu(
+    Menu.buildFromTemplate(
+      trayMenuTemplate({
+        open: showWindow,
+        quit: () => app.quit(),
+        pending: pendingCount,
+        revokeAll: () => void revokeAll(),
+      }),
+    ),
+  );
+}
+
+function openApproval(): void {
+  if (approval && !approval.isDestroyed()) {
+    approval.show();
+    return;
+  }
+  const bounds = tray?.getBounds() ?? { x: 0, y: 0, width: 0, height: 0 };
+  approval = new BrowserWindow({
+    width: 420,
+    height: 280,
+    x: Math.round(bounds.x + bounds.width / 2 - 210),
+    y: bounds.y + bounds.height + 4,
+    frame: false,
+    alwaysOnTop: true,
+    resizable: false,
+    skipTaskbar: true,
+    show: true,
+    webPreferences: { preload: join(__dirname, "../preload/index.js"), sandbox: true, contextIsolation: true },
+  });
+  loadRenderer(approval, "#/approval");
+  approval.on("closed", () => {
+    approval = null;
+  });
 }
 
 function showWindow(): void {
@@ -90,6 +137,17 @@ if (!app.requestSingleInstanceLock()) {
 
   void app.whenReady().then(() => {
     registerLoginItem();
+    tray = new Tray(trayIcon);
+    tray.setToolTip("Agentic Leash");
+    ({ revokeAll } = startRuntime({
+      userData: app.getPath("userData"),
+      openApproval,
+      setPending: (count) => {
+        pendingCount = count;
+        refreshTray();
+      },
+      notify: (title, body) => new Notification({ title, body }).show(),
+    }));
     const hidden = process.argv.includes("--hidden");
     win = createWindow(!hidden);
     win.on("close", (event) => {
@@ -99,8 +157,6 @@ if (!app.requestSingleInstanceLock()) {
     });
     if (hidden) app.dock?.hide();
     Menu.setApplicationMenu(Menu.buildFromTemplate(appMenuTemplate({ hide: hideToMenuBar, dev: !app.isPackaged })));
-    tray = new Tray(trayIcon);
-    tray.setToolTip("Agentic Leash");
-    tray.setContextMenu(Menu.buildFromTemplate(trayMenuTemplate({ open: showWindow, quit: () => app.quit() })));
+    refreshTray();
   });
 }

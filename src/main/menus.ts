@@ -16,9 +16,21 @@ export function appMenuTemplate({ hide, dev }: { hide: () => void; dev: boolean 
   ];
 }
 
-export function trayMenuTemplate({ open, quit }: { open: () => void; quit: () => void }): MenuItemConstructorOptions[] {
+export function trayMenuTemplate({
+  open,
+  quit,
+  pending = 0,
+  revokeAll,
+}: {
+  open: () => void;
+  quit: () => void;
+  pending?: number;
+  revokeAll?: () => void;
+}): MenuItemConstructorOptions[] {
   return [
     { id: "open", label: "Open Agentic Leash", click: open },
+    { id: "pending", label: pending ? `Pending requests (${pending})` : "Pending requests", enabled: pending > 0, click: open },
+    { id: "revoke-all", label: "Revoke all", click: revokeAll },
     { type: "separator" },
     { id: "quit", label: "Quit Agentic Leash", click: quit },
   ];

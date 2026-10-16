@@ -1,0 +1,56 @@
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
+import { describe, expect, it } from "vitest";
+import { handlePayload } from "../../src/hook/handle";
+import { normaliseHook } from "../../src/hook/normalise";
+import { respond } from "../../src/hook/respond";
+import { openGrantsDb } from "../../src/shared/db";
+
+const fixture = (name: string) => JSON.parse(readFileSync(join("tests/fixtures/hooks", name), "utf8"));
+
+describe("normalise", () => {
+  it("reads claude and cursor fixtures", () => {
+    expect(normaliseHook(fixture("claude-preToolUse-read.json"), "claude").kind).toBe("request");
+    const edit = normaliseHook(fixture("claude-preToolUse-edit.json"), "claude");
+    expect(edit.kind === "request" && edit.request.access).toBe("write");
+    const bash = normaliseHook(fixture("claude-preToolUse-bash.json"), "claude");
+    expect(bash.kind === "request" && bash.request.paths.some((path) => path.endsWith("/Users/velu.gautam"))).toBe(true);
+    const read = normaliseHook(fixture("cursor-preToolUse-read.json"), "cursor");
+    expect(read.kind === "request" && read.request.paths[0]).toContain("spike-results.md");
+    expect(normaliseHook(fixture("cursor-ide-via-claude-settings-preToolUse-read.json"), "claude")).toEqual({ kind: "ignore" });
+    const shell = normaliseHook(fixture("cursor-beforeShellExecution.json"), "cursor");
+    expect(shell.kind === "request" && shell.request.command).toBe("ls spikes");
+  });
+});
+
+describe("respond", () => {
+  it("gives no opinion on pass and denies with a reason", () => {
+    expect(respond("claude", { kind: "pass" })).toEqual({ stdout: "", exitCode: 0 });
+    expect(JSON.parse(respond("claude", { kind: "deny", reason: "no" }).stdout).hookSpecificOutput.permissionDecision).toBe("deny");
+    expect(JSON.parse(respond("cursor", { kind: "pass" }).stdout).permission).toBe("allow");
+    expect(JSON.parse(respond("cursor", "timeout").stdout).permission).toBe("allow");
+    expect(JSON.parse(respond("claude", "timeout").stdout).hookSpecificOutput.permissionDecision).toBe("ask");
+  });
+});
+
+describe("handlePayload", () => {
+  it("does not ask when lockdown already denies", async () => {
+    const db = openGrantsDb(join("/tmp", `al-handle-${Date.now()}.db`));
+    db.prepare("INSERT INTO settings (key, value) VALUES ('lockdown', '1')").run();
+    let asked = false;
+    const result = await handlePayload({
+      entry: "cursor",
+      raw: fixture("cursor-preToolUse-read.json"),
+      db,
+      now: Date.now(),
+      home: "/tmp",
+      ask: async () => {
+        asked = true;
+        return "allow";
+      },
+    });
+    expect(asked).toBe(false);
+    expect(JSON.parse(result.stdout).permission).toBe("deny");
+    db.close();
+  });
+});

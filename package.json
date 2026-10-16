@@ -11,6 +11,7 @@
     "typecheck": "tsc --noEmit -p tsconfig.node.json --composite false && tsc --noEmit -p tsconfig.web.json --composite false",
     "test": "vitest run",
     "test:e2e": "electron-vite build && playwright test",
+    "dist": "electron-vite build && electron-builder",
     "postinstall": "install-electron"
   },
   "devDependencies": {
