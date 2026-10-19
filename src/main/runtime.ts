@@ -4,9 +4,9 @@ import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { promisify } from "node:util";
 import { app, BrowserWindow, globalShortcut, ipcMain, nativeTheme, shell } from "electron";
-import { DEFAULT_TTL_S, grantsDbPath, HISTORY_DIR, homeDir, isClaudeBinary, IS_MAC, leashDir, POPUP_TIMEOUT_S, socketPath, TCC_CLIENTS } from "../shared/constants";
+import { DEFAULT_TTL_S, grantsDbPath, HISTORY_DIR, homeDir, isClaudeBinary, IS_MAC, leashDir, POPUP_TIMEOUT_S, protectedRoots, socketPath, TCC_CLIENTS } from "../shared/constants";
 import { diagnosticsReport } from "../shared/diagnostics";
-import { cancelScheduled, decisionDurations, deleteGrant, deleteGrants, getSetting, insertGrant, listDecisions, listGrants, listScheduled, openGrantsDb, scheduleRevoke, setSetting } from "../shared/db";
+import { cancelScheduled, collapseGrantDupes, decisionDurations, deleteGrant, deleteGrants, getSetting, listDecisions, listGrants, listScheduled, openGrantsDb, scheduleRevoke, setSetting, upsertGrant } from "../shared/db";
 import { historyText, listHistory, openHistoryDb, queryHistory, type HistoryFilter } from "../helper/historyDb";
 import type { Access, AgentId, AgentSnapshot, HistoryRow, ThemeSource } from "../shared/types";
 import { loadClaude } from "./agents/claude";
@@ -20,6 +20,8 @@ import { writeWithBackup } from "./backup";
 import { applyDueClaudeTrust, revokeClaudeTrust } from "./claudeTrust";
 import { revokeStoredGrant } from "./revokeConfig";
 import { AUTO_ALLOWS, parseAutoAllowOff } from "../shared/autoAllow";
+import { MAIN_RETENTION_DAYS, NOISE_RETENTION_DAYS, parseRetentionDays, retentionDays } from "../shared/retention";
+import { coveredPending } from "../hook/decide";
 import { parentFolders } from "../shared/parents";
 import { publishClaudeRules } from "./rulesMode";
 import { guiQuitScript, parsePs, percentiles, restartTargets } from "./system";
@@ -70,6 +72,7 @@ const cursorStateDb = () => join(app.getPath("appData"), "Cursor/User/globalStor
 
 export function startRuntime(options: { userData: string; openApproval: () => void; closeApproval: () => void; setPending: (count: number) => void; notify: (title: string, body: string) => void }): { revokeAll: () => { revoked: number } } {
   const db = openGrantsDb(grantsDbPath());
+  collapseGrantDupes(db);
   const home = homeDir();
   let snapshots: AgentSnapshot[] = [];
   let history: HistoryRow[] = [];
@@ -155,7 +158,7 @@ export function startRuntime(options: { userData: string; openApproval: () => vo
     for (const path of paths) {
       const root = exact || !path.split("/").pop()?.includes(".") ? path : dirname(path);
       if (root === "/" || root === "/Users") continue;
-      insertGrant(db, { agent, path: root, access, source: "leash", createdAt: Date.now(), expiresAt });
+      upsertGrant(db, { agent, path: root, access, source: "leash", createdAt: Date.now(), expiresAt });
     }
     const claude = snapshots.find((snapshot) => snapshot.id === "claude-code");
     publishClaudeRules(db, join(claudeRoot(), "settings.json"), home, claude?.enforcement === "rules");
@@ -207,11 +210,37 @@ export function startRuntime(options: { userData: string; openApproval: () => vo
     return autoAllowRows();
   });
   ipcMain.handle("decisions:list", () => listDecisions(db));
-  ipcMain.handle("history:list", (_event, hideNoise?: boolean) => (hideNoise ? withHistory((historyDb) => listHistory(historyDb, 0, 200, true)) : history));
+  ipcMain.handle("history:list", () => history);
   ipcMain.handle("history:query", (_event, filter: HistoryFilter) => withHistory((historyDb) => queryHistory(historyDb, filter)));
+  const retentionState = () => ({
+    main: retentionDays(getSetting(db, "history_days", ""), MAIN_RETENTION_DAYS),
+    noise: retentionDays(getSetting(db, "noise_days", ""), NOISE_RETENTION_DAYS),
+  });
+  ipcMain.handle("history:retention:get", () => retentionState());
+  ipcMain.handle("history:retention:set", (_event, which: "main" | "noise", days: number) => {
+    const parsed = which === "main" || which === "noise" ? parseRetentionDays(String(days)) : null;
+    if (parsed === null) return retentionState();
+    setSetting(db, which === "main" ? "history_days" : "noise_days", String(parsed));
+    return retentionState();
+  });
   ipcMain.handle("history:text", (_event, id: number) => withHistory((historyDb) => historyText(historyDb, id)));
   ipcMain.handle("approval:list", () => broker.list());
   ipcMain.handle("approval:close", () => options.closeApproval());
+  const releaseCovered = () => {
+    const options = {
+      now: Date.now(),
+      lockdown: getSetting(db, "lockdown", "0") === "1",
+      protectedRoots: protectedRoots(home),
+      home,
+      autoAllowOff: parseAutoAllowOff(getSetting(db, "auto_allow_off", "[]")),
+    };
+    for (const coveredId of coveredPending(broker.list(), listGrants(db), options)) {
+      const timeout = timeouts.get(coveredId);
+      if (timeout) clearTimeout(timeout);
+      timeouts.delete(coveredId);
+      broker.decide(coveredId, { decision: "allow" });
+    }
+  };
   ipcMain.handle("approval:decide", (_event, id: string, decision: "allow" | "deny", ttlSeconds: number | null, scopePath?: string) => {
     const pending = broker.list().find((item) => item.id === id);
     const timeout = timeouts.get(id);
@@ -221,6 +250,7 @@ export function startRuntime(options: { userData: string; openApproval: () => vo
       allow(scope ? [scope] : pending.request.paths, pending.request.agent, pending.request.access, ttlSeconds === undefined ? DEFAULT_TTL_S : ttlSeconds, Boolean(scope));
     }
     broker.decide(id, { decision, ttlSeconds: ttlSeconds ?? undefined });
+    if (decision === "allow") releaseCovered();
   });
   // Agents that aren't running read the new config on their next start, so they drop out here.
   const staleTargets = async () => {

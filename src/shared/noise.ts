@@ -36,6 +36,8 @@ const NAMES = [".DS_Store", ".last-complete-round", ".localized"];
 
 const SUFFIXES = [".tmp", ".temp", ".swp", ".swo"];
 
+const JUNK_PREFIXES = ["/dev/"];
+
 function base(path: string): string {
   return path.slice(path.lastIndexOf("/") + 1);
 }
@@ -59,12 +61,23 @@ export function isNoise(path: string): boolean {
   return !personal(path) && scratch(path);
 }
 
-const like = (pattern: string) => `path LIKE '${pattern}'`;
+export function isJunk(path: string): boolean {
+  if (JUNK_PREFIXES.some((prefix) => path.startsWith(prefix))) return true;
+  const name = base(path);
+  if (NAMES.includes(name) || name.endsWith("~")) return true;
+  const lower = name.toLowerCase();
+  return SUFFIXES.some((suffix) => lower.endsWith(suffix));
+}
 
-export const NOISE_SQL = `(${[
-  ...PREFIXES.map((prefix) => like(`${prefix}%`)),
-  ...DIRS.flatMap((dir) => [like(`%${dir}/%`), like(`%${dir}`)]),
-  ...NAMES.map((name) => like(`%/${name}`)),
-  ...SUFFIXES.map((suffix) => `lower(path) LIKE '%${suffix}'`),
-  like("%~"),
-].join(" OR ")})`;
+function tmpPath(path: string): boolean {
+  return path === "/tmp" || path === "/private/tmp" || path.startsWith("/tmp/") || path.startsWith("/private/tmp/");
+}
+
+export function eventBucket(event: { kind: string; path: string; destPath?: string | null }): "main" | "noise" | "drop" {
+  if (event.kind === "net") return "main";
+  if (personal(event.path) || (event.destPath ? personal(event.destPath) : false)) return "main";
+  if (isJunk(event.path)) return "drop";
+  if (!isNoise(event.path)) return "main";
+  if (event.kind === "read") return tmpPath(event.path) ? "noise" : "drop";
+  return "noise";
+}

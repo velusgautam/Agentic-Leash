@@ -1729,6 +1729,15 @@ code {
   background: var(--app-scrollbar-thumb-hover);
 }
 
+/* WebKit draws the thumb in a square gutter, past border-radius. */
+.table-frame {
+  clip-path: inset(0 round var(--radius-xl));
+}
+
+.table-frame::-webkit-scrollbar-thumb {
+  border-radius: var(--radius-xl);
+}
+
 /* Chat markdown rendering */
 
 .chat-markdown > :first-child {

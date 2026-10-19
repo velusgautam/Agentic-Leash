@@ -23,6 +23,12 @@ test("History shows a selected write with its diff and the covering grant", asyn
   await win.evaluate(`window.leash.createGrant({ agent: "cursor", path: "/Users/someone/project", access: "write", ttlSeconds: 3600 })`);
   await win.evaluate(`window.leash.createGrant({ agent: "claude-code", path: "/Users/someone/project/src", access: "write", ttlSeconds: 3600 })`);
   await win.getByRole("link", { name: "History", exact: true }).click();
+  await expect.poll(() => win.evaluate(() => {
+    const scroller = document.querySelector(".table-frame");
+    if (!(scroller instanceof HTMLElement)) return false;
+    const style = getComputedStyle(scroller);
+    return style.clipPath.includes("inset") && style.borderRadius !== "0px";
+  })).toBe(true);
   await win.getByText("/Users/someone/project/src/index.ts").click();
   const details = win.getByRole("complementary");
   await expect(details.getByText("Allowed by Claude Code · Agentic Leash grant")).toBeVisible();

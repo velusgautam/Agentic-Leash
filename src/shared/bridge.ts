@@ -20,8 +20,10 @@ export interface LeashBridge {
   setAutoAllow(id: string, enabled: boolean): Promise<(AutoAllow & { enabled: boolean })[]>;
   unlock(): Promise<void>;
   listDecisions(): Promise<DecisionRow[]>;
-  listHistory(hideNoise?: boolean): Promise<HistoryRow[]>;
-  queryHistory(filter: { from: number | null; to: number | null; agents: string[]; path: string; kind: string; sensitive: boolean; hideNoise?: boolean; offset: number; limit: number }): Promise<{ rows: HistoryRow[]; total: number }>;
+  listHistory(): Promise<HistoryRow[]>;
+  queryHistory(filter: { from: number | null; to: number | null; agents: string[]; path: string; kind: string; sensitive: boolean; includeNoise?: boolean; offset: number; limit: number }): Promise<{ rows: HistoryRow[]; total: number }>;
+  historyRetention(): Promise<{ main: number; noise: number }>;
+  setHistoryRetention(which: "main" | "noise", days: number): Promise<{ main: number; noise: number }>;
   historyText(id: number): Promise<{ before: string | null; after: string | null }>;
   listPending(): Promise<PendingRequest[]>;
   decidePending(id: string, decision: "allow" | "deny", ttlSeconds: number | null, scopePath?: string): Promise<void>;

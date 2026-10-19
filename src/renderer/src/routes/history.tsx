@@ -49,17 +49,17 @@ export function HistoryPage() {
   const [path, setPath] = useState("");
   const [kind, setKind] = useState("all");
   const [sensitive, setSensitive] = useState(false);
-  const [important, setImportant] = useState(true);
+  const [includeNoise, setIncludeNoise] = useState(false);
   const [selected, setSelected] = useState<HistoryRow | null>(null);
   const [text, setText] = useState<{ before: string | null; after: string | null } | null>(null);
   const [grants, setGrants] = useState<Grant[]>([]);
   const parentRef = useRef<HTMLDivElement>(null);
   const loading = useRef(false);
-  const filtered = range !== "any" || agents.length > 0 || path !== "" || kind !== "all" || sensitive || !important;
+  const filtered = range !== "any" || agents.length > 0 || path !== "" || kind !== "all" || sensitive || includeNoise;
   const load = (offset: number, replace: boolean) => {
     if (loading.current) return;
     loading.current = true;
-    void window.leash.queryHistory({ from, to, agents, path, kind, sensitive, hideNoise: important, offset, limit: PAGE }).then((result) => {
+    void window.leash.queryHistory({ from, to, agents, path, kind, sensitive, includeNoise, offset, limit: PAGE }).then((result) => {
       setTotal(result.total);
       setRows((current) => (replace ? result.rows : [...current, ...result.rows]));
     }).finally(() => {
@@ -70,7 +70,7 @@ export function HistoryPage() {
   useEffect(() => {
     load(0, true);
     loadGrants();
-  }, [from, to, agents.join(","), path, kind, sensitive, important]);
+  }, [from, to, agents.join(","), path, kind, sensitive, includeNoise]);
   useEffect(() => {
     if (selected?.kind !== "write") {
       setText(null);
@@ -93,7 +93,7 @@ export function HistoryPage() {
     setPath("");
     setKind("all");
     setSensitive(false);
-    setImportant(true);
+    setIncludeNoise(false);
   };
   const toggleAgent = (agent: string) => setAgents((current) => (current.includes(agent) ? current.filter((item) => item !== agent) : [...current, agent]));
 
@@ -141,9 +141,9 @@ export function HistoryPage() {
           <ShieldAlert className="size-3.5" aria-hidden />
           Sensitive
         </button>
-        <button type="button" aria-pressed={important} title="Hides /dev, temp files, caches, and agent session logs. .env, SSH keys and other sensitive files stay visible." onClick={() => setImportant((value) => !value)} className={cn(control, "inline-flex items-center gap-1.5 px-2.5", !important && "border-primary/40 bg-primary/10")}>
-          {important ? <EyeOff className="size-3.5" aria-hidden /> : <Eye className="size-3.5" aria-hidden />}
-          {important ? "Important only" : "All files"}
+        <button type="button" aria-pressed={includeNoise} title="Shows scratch-path writes, execs, and /tmp reads." onClick={() => setIncludeNoise((value) => !value)} className={cn(control, "inline-flex items-center gap-1.5 px-2.5", includeNoise && "border-primary/40 bg-primary/10")}>
+          {includeNoise ? <Eye className="size-3.5" aria-hidden /> : <EyeOff className="size-3.5" aria-hidden />}
+          Include noise
         </button>
         {filtered ? <button type="button" className="ml-1 text-xs text-muted-foreground underline-offset-2 hover:text-foreground hover:underline" onClick={clear}>Clear filters</button> : null}
       </div>
@@ -157,10 +157,10 @@ export function HistoryPage() {
       list={rows.length === 0 ? (
         <div className="rounded-xl border border-dashed border-border/70 px-6 py-12 text-center">
           <div className="text-3xl" aria-hidden>📭</div>
-          <p className="mt-2 text-sm text-muted-foreground">{filtered ? "No events match these filters. Temp files and agent logs are hidden while Important only is on." : "No history yet"}</p>
+          <p className="mt-2 text-sm text-muted-foreground">{filtered ? "No events match these filters." : "No history yet"}</p>
         </div>
       ) : (
-        <div ref={parentRef} className="@container/list min-h-0 flex-1 overflow-auto rounded-xl border border-border/60 bg-card/40" onScroll={(event) => {
+        <div ref={parentRef} className="@container/list table-frame min-h-0 flex-1 overflow-y-auto rounded-xl border border-border/60 bg-card/40" onScroll={(event) => {
           const node = event.currentTarget;
           if (node.scrollTop + node.clientHeight > node.scrollHeight - 240 && rows.length < total) load(rows.length, false);
         }}>

@@ -28,7 +28,7 @@ export function KindBadge({ kind }: { kind: string }) {
 
 export function EventList({ children }: { children: ReactNode }) {
   return (
-    <div className="@container/list overflow-hidden rounded-xl border border-border/60 bg-card/40 shadow-xs/5">
+    <div className="@container/list table-frame min-h-0 flex-1 overflow-y-auto rounded-xl border border-border/60 bg-card/40 shadow-xs/5">
       <ul className="divide-y divide-border/50">{children}</ul>
     </div>
   );
