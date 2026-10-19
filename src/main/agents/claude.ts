@@ -59,7 +59,7 @@ export function snapshotFromClaude(input: { settings: ClaudeSettings; settingsLo
   const company = managedSettings.some((settings) => settings.allowManagedHooksOnly === true);
   const snapshot: AgentSnapshot = {
     id: "claude-code",
-    name: "Claude Code",
+    name: "Claude",
     installed: input.installed,
     enforcement: blocked ? "rules" : "hook",
     note: blocked ? (company ? "Rules mode (fallback): company policy blocks hooks" : "Rules mode (fallback): hooks are disabled") : "Hook mode",

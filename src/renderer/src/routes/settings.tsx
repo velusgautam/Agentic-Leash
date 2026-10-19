@@ -4,10 +4,12 @@ import { Monitor, Moon, Sun } from "lucide-react";
 import licenses from "../../../../THIRD_PARTY_LICENSES.md?raw";
 import type { AutoAllow } from "../../../shared/autoAllow";
 import type { OpenAtLoginState } from "../../../shared/bridge";
-import type { Diagnostics, ThemeSource } from "../../../shared/types";
+import type { AgentId, Diagnostics, ThemeSource } from "../../../shared/types";
 import { AGENT_LABELS } from "~/components/Icons";
 import { PageContainer, SettingsRow, SettingsSection } from "~/components/settings";
 import { FullDiskControl } from "~/components/FullDiskControl";
+import { SetupButton } from "~/components/SetupButton";
+import { useSetup } from "~/components/useSetup";
 import { Button } from "~/components/ui/button";
 import { Switch } from "~/components/ui/switch";
 import { cn } from "~/lib/utils";
@@ -72,14 +74,29 @@ function AutomaticAllows() {
 }
 
 function Agents() {
-  const [installed, setInstalled] = useState(false);
-  useEffect(() => {
-    void window.leash.hooksInstalled().then(setInstalled);
-  }, []);
+  const { status, run } = useSetup();
+  const rows = (status?.agents ?? []).filter((agent) => agent.installed);
+  if (!rows.length) return <SettingsSection title="Agents"><SettingsRow title="No agents on this Mac" description="Claude, Cursor, Codex, or Gemini shows up here once it is installed." /></SettingsSection>;
   return (
-    <SettingsSection title="Hooks">
-      <SettingsRow title="Agent hooks" description={installed ? "Installed. New sessions pick them up." : "Not installed yet."} control={<Button size="sm" onClick={() => void window.leash.installHooks().then(() => setInstalled(true))}>Install</Button>} />
-      <SettingsRow title="Remove hooks" description="Removes only Agentic Leash entries. A .bak is written first." control={<Button size="sm" variant="outline" onClick={() => void window.leash.uninstallHooks().then(() => setInstalled(false))}>Uninstall</Button>} />
+    <SettingsSection title="Agents">
+      {rows.map((agent) => {
+        const name = AGENT_LABELS[agent.id] ?? agent.id;
+        const hookId = agent.id === "claude-code" || agent.id === "cursor" ? agent.id : null;
+        return (
+          <SettingsRow
+            key={agent.id}
+            title={name}
+            description={hookId ? "Off hides this agent and removes its hooks." : "Off hides this agent. It has no hook install yet."}
+            control={
+              <span className="flex items-center gap-2">
+                {hookId ? <SetupButton kind="hook" actionKey={agent.id} done={agent.hooks === true} onClick={() => window.leash.installHooks(hookId)} /> : null}
+                {hookId && agent.hooks ? <Button size="sm" variant="outline" onClick={() => run(`${agent.id}:off`, () => window.leash.uninstallHooks(hookId))}>Uninstall</Button> : null}
+                <Switch aria-label={`Show ${name}`} checked={agent.enabled} onCheckedChange={(enabled) => run(`show:${agent.id}`, () => window.leash.setAgentEnabled(agent.id as AgentId, enabled))} />
+              </span>
+            }
+          />
+        );
+      })}
     </SettingsSection>
   );
 }
@@ -118,9 +135,16 @@ function Monitoring() {
   const save = (which: "main" | "noise", value: number) => {
     void window.leash.setHistoryRetention(which, value).then(setDays);
   };
+  const { status } = useSetup();
+  const skipped = status?.helper === "skipped";
   return (
     <SettingsSection title="Helper">
-      <SettingsRow title="File history helper" description="Installs a root LaunchDaemon that runs eslogger. macOS will ask for an administrator password." control={<Button size="sm" onClick={() => void window.leash.installHelper()}>Install helper</Button>} />
+      <SettingsRow
+        title="File history helper"
+        description={skipped ? "Available in the installed app." : "Installs a root LaunchDaemon that runs eslogger. macOS will ask for an administrator password."}
+        control={skipped ? <Button size="sm" disabled>Available in the installed app</Button> : <SetupButton kind="helper" actionKey="helper" done={status?.helper === "running"} onClick={() => window.leash.installHelper()} />}
+      />
+      <SettingsRow title="Full Disk Access" description="If Agentic Leash is missing from the list, click + and add Agentic Leash.app." control={<FullDiskControl />} />
       <SettingsRow title="Main history" description="Days to keep project files, network, and sensitive paths. From 5 to 365." control={days ? <DayField label="Main history days" value={days.main} onCommit={(value) => save("main", value)} /> : null} />
       <SettingsRow title="Noise history" description="Days to keep scratch-path writes, execs, and temporary reads. From 5 to 365." control={days ? <DayField label="Noise history days" value={days.noise} onCommit={(value) => save("noise", value)} /> : null} />
     </SettingsSection>
@@ -247,17 +271,6 @@ function Diagnostics() {
   );
 }
 
-function Onboarding() {
-  return (
-    <SettingsSection title="First-run setup">
-      <SettingsRow title="1. Install hooks" description="Merges into Claude and Cursor, and writes a .bak first." control={<Button size="sm" onClick={() => void window.leash.installHooks()}>Install hooks</Button>} />
-      <SettingsRow title="2. Install the helper" description="Available from the installed app. Grants the history database to root." control={<Button size="sm" onClick={() => void window.leash.installHelper()}>Install helper</Button>} />
-      <SettingsRow title="3. Full Disk Access" description="macOS will not ask. Turn on Agentic Leash in the list, then come back." control={<FullDiskControl />} />
-      <SettingsRow title="4. Start at login" description="Use the switch in General. It turns on in the installed app." control={<Button size="sm" variant="outline" onClick={() => void window.leash.setOnboarding(true)}>Mark setup done</Button>} />
-    </SettingsSection>
-  );
-}
-
 function Licenses() {
   return (
     <SettingsSection title="Third-party licenses">
@@ -272,7 +285,7 @@ export function SettingsPage() {
   return (
     <PageContainer>
       <h1 className="px-3 text-lg font-medium sm:px-4">{entry.label}</h1>
-      {entry.id === "general" ? <><General /><AutomaticAllows /><Onboarding /></> : entry.id === "agents" ? <Agents /> : entry.id === "monitoring" ? <Monitoring /> : entry.id === "appearance" ? <Appearance /> : entry.id === "keybindings" ? <Keybindings /> : entry.id === "diagnostics" ? <Diagnostics /> : <Licenses />}
+      {entry.id === "general" ? <><General /><AutomaticAllows /></> : entry.id === "agents" ? <Agents /> : entry.id === "monitoring" ? <Monitoring /> : entry.id === "appearance" ? <Appearance /> : entry.id === "keybindings" ? <Keybindings /> : entry.id === "diagnostics" ? <Diagnostics /> : <Licenses />}
     </PageContainer>
   );
 }

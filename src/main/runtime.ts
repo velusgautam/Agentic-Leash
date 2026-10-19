@@ -1,9 +1,9 @@
 import { execFile } from "node:child_process";
-import { existsSync, watch } from "node:fs";
+import { existsSync, mkdirSync, watch } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { promisify } from "node:util";
-import { app, BrowserWindow, globalShortcut, ipcMain, nativeTheme, shell } from "electron";
+import { app, BrowserWindow, globalShortcut, ipcMain, nativeTheme } from "electron";
 import { DEFAULT_TTL_S, grantsDbPath, HISTORY_DIR, homeDir, isClaudeBinary, IS_MAC, leashDir, POPUP_TIMEOUT_S, protectedRoots, socketPath, TCC_CLIENTS } from "../shared/constants";
 import { diagnosticsReport } from "../shared/diagnostics";
 import { cancelScheduled, collapseGrantDupes, decisionDurations, deleteGrant, deleteGrants, getSetting, listDecisions, listGrants, listScheduled, openGrantsDb, scheduleRevoke, setSetting, upsertGrant } from "../shared/db";
@@ -27,6 +27,7 @@ import { publishClaudeRules } from "./rulesMode";
 import { guiQuitScript, parsePs, percentiles, restartTargets } from "./system";
 import { readUiState, writeUiState } from "./uiState";
 import { FULL_DISK_URL, hasFullDiskAccess } from "./fullDisk";
+import { macAppPresent, setupReady, type HelperState, type SetupAgent, type SetupStatus } from "../shared/setup";
 import { readTcc } from "./tcc";
 
 const exec = promisify(execFile);
@@ -34,6 +35,17 @@ const pendingRestart = new Set<AgentId>();
 
 function claudeRoot(): string {
   return process.env.CLAUDE_CONFIG_DIR || join(homeDir(), ".claude");
+}
+
+type HookAgent = "claude-code" | "cursor";
+
+function hookPath(agent: HookAgent, home: string): string {
+  return agent === "cursor" ? join(home, ".cursor/hooks.json") : join(claudeRoot(), "settings.json");
+}
+
+function writeHookFile(path: string, value: unknown): void {
+  mkdirSync(dirname(path), { recursive: true });
+  writeWithBackup(path, `${JSON.stringify(value, null, 2)}\n`);
 }
 
 function hookScript(): string {
@@ -103,6 +115,10 @@ export function startRuntime(options: { userData: string; openApproval: () => vo
       loadCodex(join(home, ".codex/config.toml")),
       loadGemini(join(home, ".gemini")),
     ];
+    for (const [id, appName] of [["claude-code", "Claude"], ["cursor", "Cursor"]] as const) {
+      const snapshot = snapshots.find((item) => item.id === id);
+      if (snapshot && macAppPresent(appName, home, existsSync)) snapshot.installed = true;
+    }
     const privacy = IS_MAC ? readTcc(join(homedir(), "Library/Application Support/com.apple.TCC/TCC.db")) : [];
     for (const snapshot of snapshots) {
       const bundles = new Set(TCC_CLIENTS.filter((client) => client.agent === snapshot.id).map((client) => client.bundleId));
@@ -285,25 +301,76 @@ export function startRuntime(options: { userData: string; openApproval: () => vo
     pendingRestart.clear();
   });
   ipcMain.handle("runtime:dismiss-restart", () => pendingRestart.clear());
-  ipcMain.handle("hooks:status", () => {
-    const cursorFile = readJson(join(home, ".cursor/hooks.json"));
-    const claudeFile = readJson(join(claudeRoot(), "settings.json"));
-    return cursorHooksInstalled(cursorFile, hookCommand("cursor")) && claudeHooksInstalled(claudeFile, hookCommand("claude"));
+  const agentInstalled = (id: AgentId): boolean => {
+    if (id === "claude-code") return existsSync(claudeRoot()) || macAppPresent("Claude", home, existsSync);
+    if (id === "cursor") return existsSync(join(home, ".cursor")) || macAppPresent("Cursor", home, existsSync);
+    if (id === "codex") return existsSync(join(home, ".codex/config.toml"));
+    if (id === "gemini") return existsSync(join(home, ".gemini/settings.json")) || existsSync(join(home, ".gemini/trustedFolders.json"));
+    return false;
+  };
+  const hookRows = (): SetupAgent[] => {
+    const disabled = new Set(readUiState(options.userData).disabledAgents ?? []);
+    const hooks: Record<string, boolean | null> = {
+      "claude-code": claudeHooksInstalled(readJson(hookPath("claude-code", home)), hookCommand("claude")),
+      cursor: cursorHooksInstalled(readJson(hookPath("cursor", home)), hookCommand("cursor")),
+      codex: null,
+      gemini: null,
+    };
+    return (["claude-code", "cursor", "codex", "gemini"] as const).map((id) => ({
+      id,
+      installed: agentInstalled(id),
+      enabled: !disabled.has(id),
+      hooks: hooks[id] ?? null,
+    }));
+  };
+  const helperState = async (): Promise<HelperState> => {
+    if (!app.isPackaged) return "skipped";
+    if (!IS_MAC) return "stopped";
+    try {
+      const { stdout } = await exec("/bin/launchctl", ["print", "system/com.agenticleash.helper"]);
+      return stdout.includes("state = running") ? "running" : "stopped";
+    } catch {
+      return "stopped";
+    }
+  };
+  const currentSetup = async (): Promise<SetupStatus> => {
+    if (process.env.AGENTIC_LEASH_SKIP_SETUP) return { helper: "skipped", fda: true, agents: hookRows(), ready: true };
+    const helper = await helperState();
+    const fda = !IS_MAC || hasFullDiskAccess(join(homedir(), "Library/Application Support/com.apple.TCC/TCC.db"));
+    const agents = hookRows();
+    return { helper, fda, agents, ready: setupReady({ helper, fda, agents }) };
+  };
+  const installAgent = (agent: HookAgent) => {
+    const path = hookPath(agent, home);
+    const command = hookCommand(agent === "cursor" ? "cursor" : "claude");
+    const next = agent === "cursor" ? mergeCursorHooks(readJson(path), command) : mergeClaudeHooks(readJson(path), command);
+    writeHookFile(path, next);
+    pendingRestart.add(agent);
+  };
+  const uninstallAgent = (agent: HookAgent) => {
+    const path = hookPath(agent, home);
+    if (!existsSync(path)) return;
+    const next = agent === "cursor" ? removeCursorHooks(readJson(path)) : removeClaudeHooks(readJson(path));
+    writeHookFile(path, next);
+    pendingRestart.add(agent);
+  };
+  ipcMain.handle("hooks:status", () => hookRows().every((agent) => agent.hooks !== false));
+  ipcMain.handle("hooks:install", (_event, agent: HookAgent) => {
+    if (agent !== "claude-code" && agent !== "cursor") return;
+    installAgent(agent);
   });
-  ipcMain.handle("hooks:install", () => {
-    const cursorPath = join(home, ".cursor/hooks.json");
-    const claudePath = join(claudeRoot(), "settings.json");
-    writeWithBackup(cursorPath, `${JSON.stringify(mergeCursorHooks(readJson(cursorPath), hookCommand("cursor")), null, 2)}\n`);
-    writeWithBackup(claudePath, `${JSON.stringify(mergeClaudeHooks(readJson(claudePath), hookCommand("claude")), null, 2)}\n`);
-    pendingRestart.add("claude-code").add("cursor");
-    return true;
+  ipcMain.handle("hooks:uninstall", (_event, agent: HookAgent) => {
+    if (agent !== "claude-code" && agent !== "cursor") return;
+    uninstallAgent(agent);
   });
-  ipcMain.handle("hooks:uninstall", () => {
-    const cursorPath = join(home, ".cursor/hooks.json");
-    const claudePath = join(claudeRoot(), "settings.json");
-    writeWithBackup(cursorPath, `${JSON.stringify(removeCursorHooks(readJson(cursorPath)), null, 2)}\n`);
-    writeWithBackup(claudePath, `${JSON.stringify(removeClaudeHooks(readJson(claudePath)), null, 2)}\n`);
-    pendingRestart.add("claude-code").add("cursor");
+  ipcMain.handle("setup:get", () => currentSetup());
+  ipcMain.handle("agents:enabled", (_event, id: AgentId, enabled: boolean) => {
+    const state = readUiState(options.userData);
+    const disabled = new Set(state.disabledAgents ?? []);
+    if (enabled) disabled.delete(id);
+    else disabled.add(id);
+    writeUiState(options.userData, { ...state, disabledAgents: [...disabled] });
+    if (!enabled && (id === "claude-code" || id === "cursor")) uninstallAgent(id);
   });
   ipcMain.handle("diagnostics:get", async () => {
     const stats = percentiles(decisionDurations(db));
@@ -333,7 +400,7 @@ export function startRuntime(options: { userData: string; openApproval: () => vo
     return theme;
   });
   ipcMain.handle("fda:status", () => IS_MAC && hasFullDiskAccess(join(homedir(), "Library/Application Support/com.apple.TCC/TCC.db")));
-  ipcMain.handle("fda:open", () => (IS_MAC ? shell.openExternal(FULL_DISK_URL) : undefined));
+  ipcMain.handle("fda:open", () => (IS_MAC ? exec("/usr/bin/open", [FULL_DISK_URL]) : undefined));
   ipcMain.handle("tcc:reset", async (_event, service: string, bundleId: string) => {
     if (!IS_MAC) return;
     await exec("/usr/bin/tccutil", ["reset", service.replace(/^kTCCService/, ""), bundleId]);

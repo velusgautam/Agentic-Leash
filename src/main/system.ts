@@ -9,11 +9,12 @@ export interface PsRow {
 // Main executables only; Electron helpers live under Contents/Frameworks.
 const GUI = [
   { agent: "cursor", name: "Cursor", bundleId: "com.todesktop.230313mzl4w4u92", match: /\/Cursor\.app\/Contents\/MacOS\/Cursor(\s|$)/ },
+  { agent: "claude-code", name: "Claude", bundleId: "com.anthropic.claudefordesktop", match: /\/Claude\.app\/Contents\/MacOS\/Claude(\s|$)/ },
   { agent: "t3-code", name: "T3 Code", bundleId: "com.t3tools.t3code", match: /\/T3 Code\.app\/Contents\/MacOS\/[^/\s]+(\s|$)/ },
 ] as const;
 
 const CLI: Record<string, { agent: AgentId; name: string }> = {
-  claude: { agent: "claude-code", name: "Claude Code" },
+  claude: { agent: "claude-code", name: "Claude" },
   "cursor-agent": { agent: "cursor", name: "Cursor agent" },
   codex: { agent: "codex", name: "Codex" },
   gemini: { agent: "gemini", name: "Gemini CLI" },

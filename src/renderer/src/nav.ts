@@ -18,9 +18,8 @@ export const MAIN_NAV = [
 ] as const;
 
 export const AGENT_NAV = [
-  { id: "claude-code", label: "Claude Code" },
+  { id: "claude-code", label: "Claude" },
   { id: "cursor", label: "Cursor" },
-  { id: "t3-code", label: "T3 Code" },
   { id: "codex", label: "Codex" },
   { id: "gemini", label: "Gemini CLI" },
 ] as const;

@@ -7,13 +7,12 @@ describe("diagnosticsReport", () => {
   it("lists each agent hook and only current failures", () => {
     const report = diagnosticsReport({ ...base, claude: false, helperStatus: "not installed", lastDecision: { ts: 1, agent: "cursor", tool: "Read", verdict: "pass", reason: null } });
     expect(report.hooks.map((hook) => [hook.label, hook.status])).toEqual([
-      ["Claude Code", "missing"],
+      ["Claude", "missing"],
       ["Cursor", "installed"],
-      ["T3 Code", "none"],
       ["Codex", "none"],
       ["Gemini CLI", "none"],
     ]);
-    expect(report.errors).toEqual(["Claude Code hook is not installed.", "History helper is not installed."]);
+    expect(report.errors).toEqual(["Claude hook is not installed.", "History helper is not installed."]);
     expect(report.lastDecision?.verdict).toBe("pass");
   });
 

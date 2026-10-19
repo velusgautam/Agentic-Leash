@@ -1,19 +1,8 @@
-import { useEffect, useState } from "react";
-import { Button } from "~/components/ui/button";
+import { SetupButton } from "~/components/SetupButton";
+import { useSetup } from "~/components/useSetup";
 
 export function FullDiskControl() {
-  const [granted, setGranted] = useState<boolean | null>(null);
-  useEffect(() => {
-    const tick = () => void window.leash.fullDiskAccess().then(setGranted);
-    tick();
-    const timer = window.setInterval(tick, 2000);
-    return () => window.clearInterval(timer);
-  }, []);
+  const { status } = useSetup();
   if (window.leash.platform !== "darwin") return null;
-  return (
-    <span className="flex items-center gap-2">
-      <span className="text-xs whitespace-nowrap text-muted-foreground">{granted === null ? "Checking" : granted ? "Granted" : "Not granted"}</span>
-      <Button size="sm" onClick={() => void window.leash.openFullDiskAccess()}>Open Full Disk Access</Button>
-    </span>
-  );
+  return <SetupButton kind="fda" actionKey="fda" done={Boolean(status?.fda)} onClick={() => window.leash.openFullDiskAccess()} />;
 }

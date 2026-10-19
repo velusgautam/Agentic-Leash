@@ -72,8 +72,8 @@ export function AgentIcon({ agent, className }: { agent: string; className?: str
 }
 
 export const AGENT_LABELS: Record<string, string> = {
-  "claude-code": "Claude Code",
-  claude: "Claude Code",
+  "claude-code": "Claude",
+  claude: "Claude",
   cursor: "Cursor",
   "cursor-agent": "Cursor",
   codex: "Codex",

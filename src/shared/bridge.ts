@@ -1,4 +1,5 @@
 import type { AutoAllow } from "./autoAllow";
+import type { SetupStatus } from "./setup";
 import type { Access, AgentId, AgentSnapshot, DecisionRow, Diagnostics, Grant, HistoryRow, PendingRequest, ScheduledRevoke, ThemeSource } from "./types";
 
 export interface OpenAtLoginState {
@@ -32,8 +33,10 @@ export interface LeashBridge {
   restartAgents(): Promise<void>;
   dismissRestart(): Promise<void>;
   hooksInstalled(): Promise<boolean>;
-  installHooks(): Promise<boolean>;
-  uninstallHooks(): Promise<void>;
+  installHooks(agent: "claude-code" | "cursor"): Promise<void>;
+  uninstallHooks(agent: "claude-code" | "cursor"): Promise<void>;
+  setup(): Promise<SetupStatus>;
+  setAgentEnabled(id: AgentId, enabled: boolean): Promise<void>;
   diagnostics(): Promise<Diagnostics>;
   getTheme(): Promise<ThemeSource>;
   setTheme(theme: ThemeSource): Promise<ThemeSource>;

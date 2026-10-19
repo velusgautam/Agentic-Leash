@@ -91,6 +91,7 @@ interface HistorySql {
   id: number;
   ts: number;
   agent: string;
+  exe?: string;
   kind: string;
   path: string;
   dest_path: string | null;
@@ -104,6 +105,7 @@ function toRow(row: HistorySql, withText: boolean): HistoryRow {
     id: row.id,
     ts: row.ts,
     agent: row.agent,
+    exe: row.exe ?? "",
     kind: row.kind,
     path: row.path,
     destPath: row.dest_path,
@@ -125,7 +127,7 @@ export interface HistoryFilter {
   limit: number;
 }
 
-const LIST_COLS = "id, ts, agent, kind, path, dest_path, sensitive";
+const LIST_COLS = "id, ts, agent, exe, kind, path, dest_path, sensitive";
 
 export function listHistory(db: DatabaseSync, afterId = 0, limit = 200): HistoryRow[] {
   const rows = db.prepare(`SELECT ${LIST_COLS} FROM events WHERE id > ? ORDER BY id DESC LIMIT ?`).all(afterId, limit) as unknown as HistorySql[];

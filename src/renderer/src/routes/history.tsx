@@ -5,10 +5,11 @@ import type { Grant, HistoryRow } from "../../../shared/types";
 import { DetailSplit } from "~/components/DetailSplit";
 import { coveringGrant, EventDetail } from "~/components/EventDetail";
 import { EVENT_KINDS, EventRow } from "~/components/EventRow";
+import { HISTORY_AGENT, visibleAgent } from "../../../shared/setup";
 import { AGENT_LABELS, AgentIcon } from "~/components/Icons";
+import { useSetup } from "~/components/useSetup";
 import { cn } from "~/lib/utils";
 
-const AGENTS = ["claude", "cursor-agent", "codex", "gemini"];
 const PAGE = 200;
 const HOUR = 3_600_000;
 const RANGES = [
@@ -40,6 +41,8 @@ function localValue(ms: number | null): string {
 const control = "h-8 rounded-lg border border-border bg-background/60 text-sm shadow-xs/5 outline-none focus-visible:ring-2 focus-visible:ring-ring";
 
 export function HistoryPage() {
+  const { status } = useSetup();
+  const agentChoices = (status?.agents ?? []).filter(visibleAgent).map((item) => HISTORY_AGENT[item.id]).filter((id): id is string => Boolean(id));
   const [rows, setRows] = useState<HistoryRow[]>([]);
   const [total, setTotal] = useState(0);
   const [range, setRange] = useState<Range>("any");
@@ -113,7 +116,7 @@ export function HistoryPage() {
           <button type="button" aria-pressed={agents.length === 0} onClick={() => setAgents([])} className={cn("h-full rounded-md px-2.5 text-xs", agents.length === 0 ? "bg-background font-medium shadow-xs ring-1 ring-border" : "text-muted-foreground hover:text-foreground")}>
             All agents
           </button>
-          {AGENTS.map((agent) => (
+          {agentChoices.map((agent) => (
             <button key={agent} type="button" aria-pressed={agents.includes(agent)} onClick={() => toggleAgent(agent)} className={cn("flex h-full items-center gap-1.5 rounded-md px-2.5 text-xs", agents.includes(agent) ? "bg-background font-medium shadow-xs ring-1 ring-border" : "text-muted-foreground hover:text-foreground")}>
               <AgentIcon agent={agent} className="size-3.5" />
               {AGENT_LABELS[agent] ?? agent}

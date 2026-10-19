@@ -85,6 +85,7 @@ export interface HistoryRow {
   id: number;
   ts: number;
   agent: string;
+  exe: string;
   kind: string;
   path: string;
   destPath: string | null;
