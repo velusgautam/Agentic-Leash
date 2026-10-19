@@ -1,5 +1,6 @@
 import type { ReactNode } from "react";
 import { ArrowRightLeft, Eye, FilePlus2, Globe, Pencil, ShieldAlert, SquareTerminal, Trash2, type LucideIcon } from "lucide-react";
+import { claudeSurface } from "../../../shared/setup";
 import type { HistoryRow } from "../../../shared/types";
 import { AGENT_LABELS, AgentIcon } from "~/components/Icons";
 import { cn } from "~/lib/utils";
@@ -44,6 +45,7 @@ export function EventRow({ row, showDate, selected, onSelect }: { row: HistoryRo
       <span className="flex items-center gap-2 whitespace-nowrap" title={AGENT_LABELS[row.agent] ?? row.agent}>
         <AgentIcon agent={row.agent} />
         <span className="hidden @2xl/list:inline">{AGENT_LABELS[row.agent] ?? row.agent}</span>
+        {claudeSurface(row.exe) ? <span className="hidden text-xs text-muted-foreground @2xl/list:inline">{claudeSurface(row.exe)}</span> : null}
       </span>
       <KindBadge kind={row.kind} />
       <span className="flex min-w-0 items-start gap-2 font-mono text-xs break-all">

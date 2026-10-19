@@ -4,7 +4,9 @@ import type { Grant, HistoryRow } from "../../../shared/types";
 import { EVENT_KINDS, EventList, EventRow } from "~/components/EventRow";
 import { DetailSplit } from "~/components/DetailSplit";
 import { coveringGrant, EventDetail } from "~/components/EventDetail";
+import { HISTORY_AGENT, visibleAgent } from "../../../shared/setup";
 import { AGENT_LABELS } from "~/components/Icons";
+import { useSetup } from "~/components/useSetup";
 import { cn } from "~/lib/utils";
 
 const select = "rounded-lg border border-border bg-card/40 px-2.5 py-1.5 text-sm";
@@ -31,6 +33,8 @@ export function LivePage() {
   }, [selected?.id, selected?.kind]);
   const visible = rows.filter((row) => (agent === "all" || row.agent === agent) && (kind === "all" || row.kind === kind) && (!sensitiveOnly || row.sensitive));
   const sensitive = rows.filter((row) => row.sensitive).length;
+  const { status } = useSetup();
+  const agentOptions = (status?.agents ?? []).filter(visibleAgent).map((item) => HISTORY_AGENT[item.id]).filter((id): id is string => Boolean(id));
   const detail = selected ? (docked: boolean) => <EventDetail row={selected} text={text} grant={coveringGrant(selected, grants)} onRevoked={loadGrants} docked={docked} /> : null;
   return (
     <DetailSplit
@@ -47,7 +51,7 @@ export function LivePage() {
         <div className="flex flex-wrap items-center gap-2">
           <select aria-label="Agent" className={select} value={agent} onChange={(event) => setAgent(event.target.value)}>
             <option value="all">All agents</option>
-            {["claude", "cursor-agent", "codex", "gemini"].map((id) => <option key={id} value={id}>{AGENT_LABELS[id] ?? id}</option>)}
+            {agentOptions.map((id) => <option key={id} value={id}>{AGENT_LABELS[id] ?? id}</option>)}
           </select>
           <select aria-label="Kind" className={select} value={kind} onChange={(event) => setKind(event.target.value)}>
             <option value="all">All kinds</option>

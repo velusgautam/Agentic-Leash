@@ -31,7 +31,7 @@ test("History shows a selected write with its diff and the covering grant", asyn
   })).toBe(true);
   await win.getByText("/Users/someone/project/src/index.ts").click();
   const details = win.getByRole("complementary");
-  await expect(details.getByText("Allowed by Claude Code · Agentic Leash grant")).toBeVisible();
+  await expect(details.getByText("Allowed by Claude · Agentic Leash grant")).toBeVisible();
   await expect(details.getByText("/Users/someone/project/src", { exact: true })).toBeVisible();
   if (process.env.SCREENSHOT) {
     await win.waitForTimeout(500);

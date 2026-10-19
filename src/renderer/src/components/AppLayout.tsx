@@ -17,6 +17,9 @@ import {
   SidebarProvider,
   SidebarRail,
 } from "~/components/ui/sidebar";
+import { needsAgentBanner, visibleAgent } from "../../../shared/setup";
+import { SetupScreen } from "~/components/SetupScreen";
+import { SetupProvider, useSetup } from "~/components/useSetup";
 import { AGENT_NAV, MAIN_NAV, SETTINGS_SECTIONS } from "~/nav";
 
 function RevokeAll() {
@@ -48,7 +51,7 @@ function RevokeAll() {
   );
 }
 
-function MainNav({ pathname }: { pathname: string }) {
+function MainNav({ pathname, agents }: { pathname: string; agents: readonly { id: string; label: string }[] }) {
   return (
     <>
       <SidebarGroup className="pt-3 pb-2">
@@ -67,7 +70,7 @@ function MainNav({ pathname }: { pathname: string }) {
       <SidebarGroup className="pt-3 pb-2">
         <div className="px-2.5 pt-1 pb-2 text-[11px] font-medium tracking-wide text-muted-foreground">Agents</div>
         <SidebarMenu className="gap-1.5">
-          {AGENT_NAV.map(({ id, label }) => (
+          {agents.map(({ id, label }) => (
             <SidebarMenuItem key={id}>
               <SidebarMenuButton
                 className="h-9"
@@ -113,12 +116,22 @@ function SettingsNav({ pathname }: { pathname: string }) {
 }
 
 export function AppLayout() {
+  return (
+    <SetupProvider>
+      <AppShell />
+    </SetupProvider>
+  );
+}
+
+function AppShell() {
   const { pathname } = useLocation();
   const navigate = useNavigate();
   const [palette, setPalette] = useState(false);
   const [restart, setRestart] = useState<{ name: string; kind: "gui" | "cli"; count: number }[]>([]);
   const [path, setPath] = useState("");
+  const { status } = useSetup();
   const onSettings = pathname.startsWith("/settings");
+  const shownAgents = AGENT_NAV.filter((item) => status?.agents.some((agent) => agent.id === item.id && visibleAgent(agent)));
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
       if (event.metaKey && event.key.toLowerCase() === "k") {
@@ -134,6 +147,7 @@ export function AppLayout() {
     };
   }, []);
   if (pathname === "/approval") return <Outlet />;
+  if (!status?.ready) return <SetupScreen />;
   return (
     <SidebarProvider className="h-dvh! min-h-0!" defaultOpen>
       <Sidebar
@@ -150,7 +164,7 @@ export function AppLayout() {
             <span className="truncate">Agentic Leash</span>
           </div>
         </SidebarHeader>
-        <SidebarContent>{onSettings ? <SettingsNav pathname={pathname} /> : <MainNav pathname={pathname} />}</SidebarContent>
+        <SidebarContent>{onSettings ? <SettingsNav pathname={pathname} /> : <MainNav pathname={pathname} agents={shownAgents} />}</SidebarContent>
         {onSettings ? null : (
           <SidebarFooter className="border-t border-sidebar-border pt-2">
             <SidebarMenu className="gap-1.5">
@@ -167,6 +181,11 @@ export function AppLayout() {
       </Sidebar>
       <SidebarInset className="min-h-0 overflow-hidden">
         <div className="drag-region flex h-13 shrink-0 items-center justify-end gap-3 px-5">{onSettings ? null : <RevokeAll />}</div>
+        {status && needsAgentBanner(status.agents) ? (
+          <div role="status" className="mx-5 mb-2 rounded-lg border border-border bg-muted/50 px-3 py-2 text-sm">
+            Install Claude, Cursor, Codex, or Gemini to start tracking.
+          </div>
+        ) : null}
         {restart.length ? (
           <div role="status" className="mx-5 mb-2 flex items-center gap-3 rounded-lg border border-amber-500/30 bg-amber-500/10 py-1.5 pr-1.5 pl-3 text-sm">
             <RotateCw className="size-4 shrink-0 text-amber-500" aria-hidden />
@@ -180,7 +199,7 @@ export function AppLayout() {
               effects={restart.map((item) =>
                 item.kind === "gui"
                   ? `Quits ${item.name}. Open it again yourself.`
-                  : `Stops ${item.count} ${item.name} ${item.count === 1 ? "session" : "sessions"}. Start ${item.count === 1 ? "it" : "them"} again in the terminal${item.name === "Claude Code" ? " (claude --continue resumes)" : ""}.`,
+                  : `Stops ${item.count} ${item.name} ${item.count === 1 ? "session" : "sessions"}. Start ${item.count === 1 ? "it" : "them"} again in the terminal${item.name === "Claude" ? " (claude --continue resumes)" : ""}.`,
               )}
               confirmLabel="Restart"
               onConfirm={() => void window.leash.restartAgents().then(() => setRestart([]))}
@@ -209,7 +228,7 @@ export function AppLayout() {
             <div className="flex flex-col">
               <Button type="submit" variant="ghost" className="justify-start">Grant folder for 1 hour</Button>
               <Button type="button" variant="ghost" className="justify-start" onClick={() => { setPalette(false); void navigate({ to: "/grants" }); }}>Revoke a grant</Button>
-              <Button type="button" variant="ghost" className="justify-start" onClick={() => { setPalette(false); void navigate({ to: "/agents/$agentId", params: { agentId: "claude-code" } }); }}>Jump to Claude Code</Button>
+              <Button type="button" variant="ghost" className="justify-start" onClick={() => { setPalette(false); void navigate({ to: "/agents/$agentId", params: { agentId: "claude-code" } }); }}>Jump to Claude</Button>
               <ConfirmAction
                 trigger={<Button type="button" variant="ghost-destructive" className="justify-start">Revoke all</Button>}
                 title="Revoke all grants?"

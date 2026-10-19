@@ -66,7 +66,7 @@ export const REVOKE_ALL_EFFECTS = [
 
 export const TRUST_EFFECTS = [
   "Marks this folder as untrusted in ~/.claude.json. A .bak is written first.",
-  "Claude Code shows its trust prompt the next time it opens here.",
+  "Claude shows its trust prompt the next time it opens here.",
   "Sessions already running keep access until they restart.",
 ];
 

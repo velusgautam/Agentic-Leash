@@ -7,6 +7,8 @@ import { ConfirmAction, TRUST_EFFECTS } from "~/components/ConfirmAction";
 import { FullDiskControl } from "~/components/FullDiskControl";
 import { AGENT_LABELS, AgentIcon } from "~/components/Icons";
 import { PageContainer, SettingsSection } from "~/components/settings";
+import { SetupButton } from "~/components/SetupButton";
+import { useSetup } from "~/components/useSetup";
 import { Button } from "~/components/ui/button";
 import { cn } from "~/lib/utils";
 
@@ -112,6 +114,8 @@ export function AgentPage() {
     const timer = window.setInterval(load, 1000);
     return () => window.clearInterval(timer);
   }, [agentId]);
+  const { status } = useSetup();
+  const hook = status?.agents.find((item) => item.id === agentId);
   const name = agent?.name ?? AGENT_LABELS[agentId] ?? agentId;
   const enforcement = agent ? ENFORCEMENT[agent.enforcement] : null;
   return (
@@ -133,6 +137,12 @@ export function AgentPage() {
           {agent && !agent.installed ? <p className="text-sm text-muted-foreground">Not installed on this Mac.</p> : null}
         </div>
       </header>
+      {hook && hook.hooks === false && hook.installed ? (
+        <div role="status" className="mx-3 flex items-center justify-between gap-3 rounded-lg border border-border bg-muted/40 px-3 py-2 text-sm sm:mx-4">
+          <span>Install hooks so this agent is asked before it reads or writes.</span>
+          {agentId === "claude-code" || agentId === "cursor" ? <SetupButton kind="hook" actionKey={agentId} done={false} onClick={() => window.leash.installHooks(agentId)} /> : null}
+        </div>
+      ) : null}
       <SettingsSection title="Folders">
         {agent?.folders.length ? agent.folders.map((folder) => (
           <Row

@@ -23,7 +23,6 @@ export interface DiagnosticReport {
 }
 
 const PLAIN: DiagnosticHook[] = [
-  { agent: "t3-code", label: "T3 Code", status: "none" },
   { agent: "codex", label: "Codex", status: "none" },
   { agent: "gemini", label: "Gemini CLI", status: "none" },
 ];
@@ -38,7 +37,7 @@ export function diagnosticsReport(input: {
   lastDecision: DiagnosticDecision | null;
 }): DiagnosticReport {
   const hooks: DiagnosticHook[] = [
-    { agent: "claude-code", label: "Claude Code", status: input.claude ? "installed" : "missing" },
+    { agent: "claude-code", label: "Claude", status: input.claude ? "installed" : "missing" },
     { agent: "cursor", label: "Cursor", status: input.cursor ? "installed" : "missing" },
     ...PLAIN,
   ];
