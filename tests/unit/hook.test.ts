@@ -4,6 +4,7 @@ import { describe, expect, it } from "vitest";
 import { handlePayload } from "../../src/hook/handle";
 import { normaliseHook } from "../../src/hook/normalise";
 import { respond } from "../../src/hook/respond";
+import { codexHooksInstalled, geminiHooksInstalled, mergeCodexHooks, mergeGeminiHooks, removeCodexHooks, removeGeminiHooks } from "../../src/main/hookInstall";
 import { openGrantsDb } from "../../src/shared/db";
 
 const fixture = (name: string) => JSON.parse(readFileSync(join("tests/fixtures/hooks", name), "utf8"));
@@ -20,6 +21,56 @@ describe("normalise", () => {
     expect(normaliseHook(fixture("cursor-ide-via-claude-settings-preToolUse-read.json"), "claude")).toEqual({ kind: "ignore" });
     const shell = normaliseHook(fixture("cursor-beforeShellExecution.json"), "cursor");
     expect(shell.kind === "request" && shell.request.command).toBe("ls spikes");
+  });
+});
+
+describe("codex hooks", () => {
+  it("merges a Codex PreToolUse command and detects it", () => {
+    const command = 'ELECTRON_RUN_AS_NODE=1 "/App" "/leash-hook.js" codex';
+    const merged = mergeCodexHooks({ hooks: { PreToolUse: [{ matcher: "Bash", hooks: [{ command: "other" }] }] } }, command);
+    expect(codexHooksInstalled(merged, command)).toBe(true);
+    expect(codexHooksInstalled(removeCodexHooks(merged), command)).toBe(false);
+    const request = normaliseHook({ hook_event_name: "PreToolUse", tool_name: "Bash", tool_input: { command: "ls /tmp" }, cwd: "/tmp", turn_id: "t1" }, "codex");
+    expect(request.kind === "request" && request.request.agent).toBe("codex");
+    expect(JSON.parse(respond("codex", { kind: "deny", reason: "no" }).stdout).hookSpecificOutput.permissionDecision).toBe("deny");
+    expect(respond("codex", "timeout")).toEqual({ stdout: "", exitCode: 0 });
+  });
+});
+
+describe("gemini hooks", () => {
+  it("merges a Gemini BeforeTool command and denies with decision", () => {
+    const command = 'ELECTRON_RUN_AS_NODE=1 "/App" "/leash-hook.js" gemini';
+    const merged = mergeGeminiHooks({ mcpServers: { local: {} } }, command);
+    expect(merged.mcpServers).toEqual({ local: {} });
+    expect(geminiHooksInstalled(merged, command)).toBe(true);
+    expect(geminiHooksInstalled(removeGeminiHooks(merged), command)).toBe(false);
+    const request = normaliseHook({
+      hook_event_name: "BeforeTool",
+      tool_name: "run_shell_command",
+      tool_input: { command: "ls /tmp" },
+      cwd: "/tmp",
+    }, "gemini");
+    expect(request.kind === "request" && request.request.agent).toBe("gemini");
+    expect(request.kind === "request" && request.request.access).toBe("write");
+    const read = normaliseHook({ tool_name: "read_file", tool_input: { file_path: "/tmp/a.txt" }, cwd: "/tmp" }, "gemini");
+    expect(read.kind === "request" && read.request.access).toBe("read");
+    expect(JSON.parse(respond("gemini", { kind: "deny", reason: "no" }).stdout)).toEqual({ decision: "deny", reason: "no" });
+    expect(respond("gemini", "timeout")).toEqual({ stdout: "", exitCode: 0 });
+  });
+});
+
+describe("hermes hooks", () => {
+  it("treats a terminal call as a write and blocks on deny", () => {
+    const request = normaliseHook({
+      hook_event_name: "pre_tool_call",
+      tool_name: "terminal",
+      tool_input: { command: "ls /tmp" },
+      cwd: "/tmp",
+      session_id: "s1",
+    }, "hermes");
+    expect(request.kind === "request" && request.request.agent).toBe("hermes");
+    expect(JSON.parse(respond("hermes", { kind: "deny", reason: "no" }).stdout)).toEqual({ decision: "block", reason: "no" });
+    expect(JSON.parse(respond("hermes", "timeout").stdout)).toEqual({ action: "approve", message: "Agentic Leash is not answering" });
   });
 });
 

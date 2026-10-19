@@ -2,7 +2,7 @@ import type { ComponentProps, ReactNode } from "react";
 import { cn } from "~/lib/utils";
 
 export function PageContainer({ className, ...props }: ComponentProps<"div">) {
-  return <div {...props} className={cn("mx-auto flex w-full max-w-4xl flex-col gap-6 px-5 pt-6 pb-12 sm:px-6", className)} />;
+  return <div {...props} className={cn("mx-auto flex min-h-0 w-full max-w-4xl flex-1 flex-col gap-6 overflow-auto px-5 pt-6 pb-12 sm:px-6", className)} />;
 }
 
 export function SettingsSection({ title, children }: { title: string; children: ReactNode }) {

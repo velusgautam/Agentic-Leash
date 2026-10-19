@@ -1,7 +1,7 @@
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import { DatabaseSync } from "node:sqlite";
-import type { Access, AgentId, DecisionRow, Grant } from "./types";
+import type { Access, AgentId, DecisionRow, Grant, ScheduledRevoke } from "./types";
 
 const SCHEMA = `
 CREATE TABLE IF NOT EXISTS grants (
@@ -15,6 +15,10 @@ CREATE TABLE IF NOT EXISTS grants (
 );
 CREATE INDEX IF NOT EXISTS grants_live ON grants (agent, expires_at);
 CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS scheduled_revokes (
+  path TEXT PRIMARY KEY,
+  due_at INTEGER NOT NULL
+);
 CREATE TABLE IF NOT EXISTS decisions (
   id INTEGER PRIMARY KEY,
   ts INTEGER NOT NULL,
@@ -53,6 +57,7 @@ function toGrant(row: GrantSql): Grant {
 export function openGrantsDb(path: string): DatabaseSync {
   mkdirSync(dirname(path), { recursive: true });
   const db = new DatabaseSync(path);
+  db.exec("PRAGMA busy_timeout = 5000");
   db.exec("PRAGMA journal_mode = WAL");
   db.exec(SCHEMA);
   return db;
@@ -62,14 +67,55 @@ export function listGrants(db: DatabaseSync): Grant[] {
   return db.prepare("SELECT * FROM grants ORDER BY id").all().map((row) => toGrant(row as unknown as GrantSql));
 }
 
-export function insertGrant(
-  db: DatabaseSync,
-  grant: { agent: string; path: string; access: Access; source: "leash" | "config"; createdAt: number; expiresAt: number | null },
-): number {
+type GrantWrite = { agent: string; path: string; access: Access; source: "leash" | "config"; createdAt: number; expiresAt: number | null };
+
+export function insertGrant(db: DatabaseSync, grant: GrantWrite): number {
   const result = db
     .prepare("INSERT INTO grants (agent, path, access, source, created_at, expires_at) VALUES (?, ?, ?, ?, ?, ?)")
     .run(grant.agent, grant.path, grant.access, grant.source, grant.createdAt, grant.expiresAt);
   return Number(result.lastInsertRowid);
+}
+
+export function upsertGrant(db: DatabaseSync, grant: GrantWrite): number {
+  const existing = db
+    .prepare("SELECT id, created_at, expires_at FROM grants WHERE agent = ? AND path = ? AND access = ? AND source = ? ORDER BY id LIMIT 1")
+    .get(grant.agent, grant.path, grant.access, grant.source) as { id: number; created_at: number; expires_at: number | null } | undefined;
+  if (!existing) return insertGrant(db, grant);
+  const expiresAt = existing.expires_at === null || grant.expiresAt === null ? null : Math.max(existing.expires_at, grant.expiresAt);
+  if (expiresAt === existing.expires_at) return existing.id;
+  db.prepare("UPDATE grants SET created_at = ?, expires_at = ? WHERE id = ?").run(grant.createdAt, expiresAt, existing.id);
+  return existing.id;
+}
+
+export function collapseGrantDupes(db: DatabaseSync): void {
+  const groups = new Map<string, Grant[]>();
+  for (const grant of listGrants(db)) {
+    const key = `${grant.source}\0${grant.agent}\0${grant.access}\0${grant.path}`;
+    const group = groups.get(key);
+    if (group) group.push(grant);
+    else groups.set(key, [grant]);
+  }
+  const update = db.prepare("UPDATE grants SET expires_at = ? WHERE id = ?");
+  for (const group of groups.values()) {
+    if (group.length < 2) continue;
+    const keep = group.reduce((a, b) => (a.id < b.id ? a : b));
+    const expiresAt = group.some((grant) => grant.expiresAt === null) ? null : Math.max(...group.map((grant) => grant.expiresAt ?? 0));
+    if (keep.expiresAt !== expiresAt) update.run(expiresAt, keep.id);
+    for (const grant of group) if (grant.id !== keep.id) deleteGrant(db, grant.id);
+  }
+}
+
+export function listScheduled(db: DatabaseSync): ScheduledRevoke[] {
+  const rows = db.prepare("SELECT path, due_at FROM scheduled_revokes ORDER BY due_at").all() as unknown as { path: string; due_at: number }[];
+  return rows.map((row) => ({ path: row.path, dueAt: row.due_at }));
+}
+
+export function scheduleRevoke(db: DatabaseSync, path: string, dueAt: number): void {
+  db.prepare("INSERT INTO scheduled_revokes (path, due_at) VALUES (?, ?) ON CONFLICT(path) DO UPDATE SET due_at = excluded.due_at").run(path, dueAt);
+}
+
+export function cancelScheduled(db: DatabaseSync, path: string): void {
+  db.prepare("DELETE FROM scheduled_revokes WHERE path = ?").run(path);
 }
 
 export function deleteGrant(db: DatabaseSync, id: number): void {

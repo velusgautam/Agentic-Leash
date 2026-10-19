@@ -53,6 +53,7 @@ describe("content cache", () => {
     expect(readText(file)).toBe("local\n");
     writeFileSync(file, Buffer.alloc(1_000_001));
     expect(readText(file)).toBeNull();
+    expect(readText("/dev/tty")).toBeNull();
     writeFileSync(file, "local\n");
     execFileSync("git", ["init"], { cwd: dir });
     execFileSync("git", ["add", "note.txt"], { cwd: dir });

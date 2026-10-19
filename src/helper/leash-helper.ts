@@ -5,10 +5,13 @@ import { dirname, join } from "node:path";
 import { createInterface } from "node:readline";
 import { DatabaseSync } from "node:sqlite";
 import { grantsDbPath } from "../shared/constants";
+import { getSetting } from "../shared/db";
+import { eventBucket } from "../shared/noise";
 import { isUnder } from "../shared/paths";
+import { MAIN_RETENTION_DAYS, NOISE_RETENTION_DAYS, retentionDays } from "../shared/retention";
 import type { HistoryEvent } from "../shared/types";
 import { classify } from "./classify";
-import { insertEvents, openHistoryDb, pruneHistory } from "./historyDb";
+import { insertEvents, openHistoryDb, pruneHistory, splitHistory } from "./historyDb";
 import { lsofText, pollNet } from "./net";
 import { ProcTree, type EsEvent } from "./proctree";
 import { ContentCache, gitBaseline, readText } from "./snapshots";
@@ -59,6 +62,21 @@ export function startHelper(historyPath: string, eslogger = "/usr/bin/eslogger")
     granted: (file) => grants.some((root) => isUnder(file, root)),
   });
   const home = userHome();
+  const prune = () => {
+    let main = MAIN_RETENTION_DAYS;
+    let noise = NOISE_RETENTION_DAYS;
+    try {
+      const grantsDb = new DatabaseSync(grantsDbPath(home), { readOnly: true });
+      main = retentionDays(getSetting(grantsDb, "history_days", ""), MAIN_RETENTION_DAYS);
+      noise = retentionDays(getSetting(grantsDb, "noise_days", ""), NOISE_RETENTION_DAYS);
+      grantsDb.close();
+    } catch {
+      /* grants db is absent until the app has opened */
+    }
+    pruneHistory(db, Date.now(), main, noise);
+  };
+  splitHistory(db);
+  prune();
   const timer = setInterval(() => {
     if (!queue.length) return;
     insertEvents(db, queue.splice(0));
@@ -67,7 +85,7 @@ export function startHelper(historyPath: string, eslogger = "/usr/bin/eslogger")
     grants = grantPaths(Date.now());
     queue.push(...pollNet({ pids: tree.pids(), seen, now: Date.now(), agentFor: (pid) => tree.agent(pid) as HistoryEvent["agent"], lsof: lsofText }));
   }, 2000);
-  const daily = setInterval(() => pruneHistory(db, Date.now()), 24 * 60 * 60 * 1000);
+  const pruneTimer = setInterval(prune, 60_000);
   const log = createWriteStream(join(dirname(historyPath), "helper.log"), { flags: "a" });
   let stopping = false;
   let child: ReturnType<typeof spawn> | null = null;
@@ -81,7 +99,7 @@ export function startHelper(historyPath: string, eslogger = "/usr/bin/eslogger")
         const event = JSON.parse(line) as EsEvent;
         tree.apply(event);
         const classified = classify(event, tree, home);
-        if (classified) queue.push(cache.observe(classified));
+        if (classified && eventBucket(classified) !== "drop") queue.push(cache.observe(classified));
       } catch {
         /* eslogger sometimes emits a partial line */
       }
@@ -95,7 +113,7 @@ export function startHelper(historyPath: string, eslogger = "/usr/bin/eslogger")
     stopping = true;
     clearInterval(timer);
     clearInterval(netTimer);
-    clearInterval(daily);
+    clearInterval(pruneTimer);
     child?.kill("SIGKILL");
     if (queue.length) insertEvents(db, queue.splice(0));
     db.close();

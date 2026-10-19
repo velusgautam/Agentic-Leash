@@ -60,6 +60,22 @@ export function loadCodex(configPath: string): AgentSnapshot {
   };
 }
 
+export function loadHermes(dir: string): AgentSnapshot {
+  return {
+    id: "hermes",
+    name: "Hermes",
+    installed: existsSync(dir),
+    enforcement: "hook",
+    note: "",
+    folders: [],
+    mcpServers: [],
+    network: [],
+    children: [],
+    workers: [],
+    privacy: [],
+  };
+}
+
 export function loadGemini(dir: string): AgentSnapshot {
   const settingsPath = join(dir, "settings.json");
   const trustedPath = join(dir, "trustedFolders.json");

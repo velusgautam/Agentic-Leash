@@ -14,7 +14,7 @@ test("sidebar navigates pages, agents and settings", async () => {
   await win.getByRole("link", { name: "History", exact: true }).click();
   await expect(win.getByText("No history yet")).toBeVisible();
 
-  await win.getByRole("link", { name: "Claude Code", exact: true }).click();
+  await win.getByRole("link", { name: "Claude", exact: true }).click();
   await expect(win.getByText("Folders", { exact: true })).toBeVisible();
 
   await win.getByRole("link", { name: "Settings", exact: true }).click();
