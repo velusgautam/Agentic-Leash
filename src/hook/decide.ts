@@ -1,6 +1,6 @@
 import { autoAllowCovers } from "../shared/autoAllow";
 import { isSensitive, isUnder } from "../shared/paths";
-import type { DecideOptions, Grant, HookRequest, Verdict } from "../shared/types";
+import type { DecideOptions, Grant, HookRequest, PendingRequest, Verdict } from "../shared/types";
 
 export function decide(req: HookRequest, grants: Grant[], opts: DecideOptions): Verdict {
   if (opts.lockdown) return { kind: "deny", reason: "Agentic Leash lockdown is on" };
@@ -14,4 +14,8 @@ export function decide(req: HookRequest, grants: Grant[], opts: DecideOptions): 
     return req.access === "read" && !isSensitive(path, opts.home) && autoAllowCovers(req.agent, path, opts.autoAllowOff ?? []);
   });
   return covered ? { kind: "pass" } : { kind: "prompt" };
+}
+
+export function coveredPending(pending: PendingRequest[], grants: Grant[], opts: DecideOptions): string[] {
+  return pending.filter((item) => decide(item.request, grants, opts).kind === "pass").map((item) => item.id);
 }

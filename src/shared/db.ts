@@ -67,14 +67,42 @@ export function listGrants(db: DatabaseSync): Grant[] {
   return db.prepare("SELECT * FROM grants ORDER BY id").all().map((row) => toGrant(row as unknown as GrantSql));
 }
 
-export function insertGrant(
-  db: DatabaseSync,
-  grant: { agent: string; path: string; access: Access; source: "leash" | "config"; createdAt: number; expiresAt: number | null },
-): number {
+type GrantWrite = { agent: string; path: string; access: Access; source: "leash" | "config"; createdAt: number; expiresAt: number | null };
+
+export function insertGrant(db: DatabaseSync, grant: GrantWrite): number {
   const result = db
     .prepare("INSERT INTO grants (agent, path, access, source, created_at, expires_at) VALUES (?, ?, ?, ?, ?, ?)")
     .run(grant.agent, grant.path, grant.access, grant.source, grant.createdAt, grant.expiresAt);
   return Number(result.lastInsertRowid);
+}
+
+export function upsertGrant(db: DatabaseSync, grant: GrantWrite): number {
+  const existing = db
+    .prepare("SELECT id, created_at, expires_at FROM grants WHERE agent = ? AND path = ? AND access = ? AND source = ? ORDER BY id LIMIT 1")
+    .get(grant.agent, grant.path, grant.access, grant.source) as { id: number; created_at: number; expires_at: number | null } | undefined;
+  if (!existing) return insertGrant(db, grant);
+  const expiresAt = existing.expires_at === null || grant.expiresAt === null ? null : Math.max(existing.expires_at, grant.expiresAt);
+  if (expiresAt === existing.expires_at) return existing.id;
+  db.prepare("UPDATE grants SET created_at = ?, expires_at = ? WHERE id = ?").run(grant.createdAt, expiresAt, existing.id);
+  return existing.id;
+}
+
+export function collapseGrantDupes(db: DatabaseSync): void {
+  const groups = new Map<string, Grant[]>();
+  for (const grant of listGrants(db)) {
+    const key = `${grant.source}\0${grant.agent}\0${grant.access}\0${grant.path}`;
+    const group = groups.get(key);
+    if (group) group.push(grant);
+    else groups.set(key, [grant]);
+  }
+  const update = db.prepare("UPDATE grants SET expires_at = ? WHERE id = ?");
+  for (const group of groups.values()) {
+    if (group.length < 2) continue;
+    const keep = group.reduce((a, b) => (a.id < b.id ? a : b));
+    const expiresAt = group.some((grant) => grant.expiresAt === null) ? null : Math.max(...group.map((grant) => grant.expiresAt ?? 0));
+    if (keep.expiresAt !== expiresAt) update.run(expiresAt, keep.id);
+    for (const grant of group) if (grant.id !== keep.id) deleteGrant(db, grant.id);
+  }
 }
 
 export function listScheduled(db: DatabaseSync): ScheduledRevoke[] {
