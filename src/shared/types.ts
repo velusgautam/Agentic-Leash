@@ -1,4 +1,4 @@
-export type AgentId = "claude-code" | "cursor" | "t3-code" | "codex" | "gemini";
+export type AgentId = "claude-code" | "cursor" | "t3-code" | "codex" | "gemini" | "hermes";
 export type Access = "read" | "write";
 export type Enforcement = "hook" | "rules" | "monitor-only";
 export type ThemeSource = "system" | "light" | "dark";
@@ -13,8 +13,13 @@ export interface Grant {
   expiresAt: number | null;
 }
 
+export interface ScheduledRevoke {
+  path: string;
+  dueAt: number;
+}
+
 export interface HookRequest {
-  agent: "claude-code" | "cursor";
+  agent: "claude-code" | "cursor" | "codex" | "gemini" | "hermes";
   event: string;
   tool: string;
   access: Access;
@@ -31,6 +36,8 @@ export interface DecideOptions {
   now: number;
   lockdown: boolean;
   protectedRoots: string[];
+  home?: string;
+  autoAllowOff?: string[];
 }
 
 export interface HistoryEvent {
@@ -59,7 +66,7 @@ export interface AgentSnapshot {
   network: { rule: string; effect: "allow" | "deny"; source: string; locked: boolean }[];
   children: AgentId[];
   workers: string[];
-  privacy: { service: string; client: string; authValue: number; bundleId: string }[];
+  privacy: { service: string; client: string; authValue: number; bundleId: string; via?: string }[];
 }
 
 export interface DecisionRow {
@@ -78,6 +85,7 @@ export interface HistoryRow {
   id: number;
   ts: number;
   agent: string;
+  exe: string;
   kind: string;
   path: string;
   destPath: string | null;
@@ -92,10 +100,11 @@ export interface PendingRequest {
 }
 
 export interface Diagnostics {
-  hookP50Ms: number | null;
-  hookP95Ms: number | null;
+  hooks: { agent: string; label: string; status: "installed" | "missing" | "none" }[];
   helperStatus: string;
   lastSweep: string | null;
-  hooksInstalled: boolean;
-  gaps: string[];
+  hookP50Ms: number | null;
+  hookP95Ms: number | null;
+  lastDecision: { ts: number; agent: string; tool: string; verdict: string; reason: string | null } | null;
+  errors: string[];
 }

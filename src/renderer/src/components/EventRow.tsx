@@ -1,5 +1,6 @@
 import type { ReactNode } from "react";
 import { ArrowRightLeft, Eye, FilePlus2, Globe, Pencil, ShieldAlert, SquareTerminal, Trash2, type LucideIcon } from "lucide-react";
+import { claudeSurface } from "../../../shared/setup";
 import type { HistoryRow } from "../../../shared/types";
 import { AGENT_LABELS, AgentIcon } from "~/components/Icons";
 import { cn } from "~/lib/utils";
@@ -28,32 +29,35 @@ export function KindBadge({ kind }: { kind: string }) {
 
 export function EventList({ children }: { children: ReactNode }) {
   return (
-    <div className="overflow-x-auto rounded-xl border border-border/60 bg-card/40 shadow-xs/5">
-      <ul className="min-w-max divide-y divide-border/50">{children}</ul>
+    <div className="@container/list table-frame min-h-0 flex-1 overflow-y-auto rounded-xl border border-border/60 bg-card/40 shadow-xs/5">
+      <ul className="divide-y divide-border/50">{children}</ul>
     </div>
   );
 }
 
 export function EventRow({ row, showDate, selected, onSelect }: { row: HistoryRow; showDate?: boolean; selected?: boolean; onSelect?: () => void }) {
-  const time = showDate ? new Date(row.ts).toLocaleString() : new Date(row.ts).toLocaleTimeString();
+  const time = showDate
+    ? new Date(row.ts).toLocaleString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit", second: "2-digit" })
+    : new Date(row.ts).toLocaleTimeString();
   const body = (
     <>
-      <span className="font-mono text-xs text-muted-foreground tabular-nums">{time}</span>
-      <span className="flex items-center gap-2">
+      <span className="font-mono text-xs whitespace-nowrap text-muted-foreground tabular-nums">{time}</span>
+      <span className="flex items-center gap-2 whitespace-nowrap" title={AGENT_LABELS[row.agent] ?? row.agent}>
         <AgentIcon agent={row.agent} />
-        {AGENT_LABELS[row.agent] ?? row.agent}
+        <span className="hidden @2xl/list:inline">{AGENT_LABELS[row.agent] ?? row.agent}</span>
+        {claudeSurface(row.exe) ? <span className="hidden text-xs text-muted-foreground @2xl/list:inline">{claudeSurface(row.exe)}</span> : null}
       </span>
       <KindBadge kind={row.kind} />
-      <span className="flex items-center gap-2 font-mono text-xs">
-        {row.sensitive ? <ShieldAlert className="size-3.5 text-destructive" aria-label="Sensitive" /> : null}
+      <span className="flex min-w-0 items-start gap-2 font-mono text-xs break-all">
+        {row.sensitive ? <ShieldAlert className="mt-0.5 size-3.5 shrink-0 text-destructive" aria-label="Sensitive" /> : null}
         <span className={row.sensitive ? "text-destructive" : undefined}>{row.path}</span>
         {row.destPath ? <span className="text-muted-foreground">→ {row.destPath}</span> : null}
       </span>
     </>
   );
   const layout = cn(
-    "grid w-full items-center gap-4 px-4 py-2.5 text-left text-sm whitespace-nowrap",
-    showDate ? "grid-cols-[11rem_8.5rem_5.5rem_auto]" : "grid-cols-[5.5rem_8.5rem_5.5rem_auto]",
+    "grid w-full items-start gap-4 px-4 py-2.5 text-left text-sm",
+    showDate ? "grid-cols-[8.5rem_1rem_5.5rem_minmax(0,1fr)] @2xl/list:grid-cols-[8.5rem_8rem_5.5rem_minmax(0,1fr)]" : "grid-cols-[5.5rem_1rem_5.5rem_minmax(0,1fr)] @2xl/list:grid-cols-[5.5rem_8rem_5.5rem_minmax(0,1fr)]",
     row.sensitive && "bg-destructive/6 shadow-[inset_3px_0_0_var(--color-destructive)]",
     selected && "bg-accent",
   );

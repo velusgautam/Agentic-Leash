@@ -8,6 +8,7 @@ export interface UiState {
   theme?: ThemeSource;
   onboarded?: boolean;
   historySeen?: number;
+  disabledAgents?: string[];
 }
 
 export function readUiState(dir: string): UiState {

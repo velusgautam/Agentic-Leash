@@ -22,8 +22,12 @@ test("Command+Q hides instead of quitting", async () => {
   const app = await launch();
   await app.firstWindow();
   await expect.poll(() => visible(app)).toBe(true);
-  await app.evaluate(({ Menu }) => Menu.getApplicationMenu()!.getMenuItemById("hide-to-menu-bar")!.click());
+  await app.evaluate(({ app }) => {
+    app.emit("before-quit", { preventDefault() {} });
+  });
   await expect.poll(() => visible(app)).toBe(false);
+  await expect.poll(() => dockVisible(app)).toBe(false);
+  expect(await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().length)).toBe(1);
   await app.close();
 });
 

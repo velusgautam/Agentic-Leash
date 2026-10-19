@@ -5,16 +5,19 @@ import { handlePayload } from "./handle";
 import { POPUP_TIMEOUT_S } from "../shared/constants";
 import { grantsDbPath, homeDir, socketPath } from "../shared/constants";
 import { openGrantsDb, setSetting } from "../shared/db";
+import { applyDueClaudeTrust } from "../main/claudeTrust";
 import { publishClaudeRules } from "../main/rulesMode";
 import { loadClaude } from "../main/agents/claude";
 import { join } from "node:path";
 
 const invoked = process.argv[1]?.includes("leash-hook");
-const entry = process.argv[2] === "cursor" ? "cursor" : "claude";
+const named = process.argv[2];
+const entry = named === "cursor" || named === "codex" || named === "gemini" || named === "hermes" ? named : "claude";
 
 if (invoked && process.argv.includes("--sweep")) {
   const db = openGrantsDb(grantsDbPath());
   expireLeashGrants(db, Date.now());
+  applyDueClaudeTrust(db, join(homeDir(), ".claude.json"), Date.now());
   pruneOldDecisions(db, Date.now());
   setSetting(db, "last_sweep", new Date().toISOString());
   const claudeDir = process.env.CLAUDE_CONFIG_DIR || join(homeDir(), ".claude");

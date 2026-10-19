@@ -4,18 +4,40 @@ directories:
   output: dist
 files:
   - out/**
+  - resources/**
   - package.json
 asarUnpack:
-  - out/main/leash-hook.js
-  - out/main/leash-helper.js
+  - resources/**
+  - out/main/**
 mac:
   target:
     - target: dmg
       arch:
         - arm64
   icon: resources/icon.png
-  identity: Agentic Leash Dev
-  hardenedRuntime: false
+  identity: "Velu Gautam (W3M2JWPTNR)"
+  hardenedRuntime: true
+  notarize: true
   category: public.app-category.developer-tools
 dmg:
   title: Agentic Leash
+win:
+  target:
+    - target: nsis
+      arch:
+        - x64
+  icon: resources/icon.png
+  artifactName: ${productName}-${version}-win-${arch}.${ext}
+nsis:
+  oneClick: false
+  perMachine: false
+  allowToChangeInstallationDirectory: true
+linux:
+  target:
+    - target: AppImage
+      arch:
+        - x64
+  icon: resources/icon.png
+  category: Development
+  maintainer: Agentic Leash
+  artifactName: ${productName}-${version}-linux-${arch}.${ext}

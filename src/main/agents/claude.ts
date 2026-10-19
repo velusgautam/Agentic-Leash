@@ -17,6 +17,11 @@ type ClaudeJson = {
 };
 type ManagedFile = { source: string; settings: ClaudeSettings; mcp?: { serverUrl?: string }[] };
 
+const MANAGED_DIR =
+  process.platform === "win32" ? "C:\\Program Files\\ClaudeCode"
+  : process.platform === "linux" ? "/etc/claude-code"
+  : "/Library/Application Support/ClaudeCode";
+
 const PATH_TOOLS = new Set(["Read", "Edit", "Write", "NotebookEdit", "Glob", "Grep"]);
 const WRITE_TOOLS = new Set(["Edit", "Write", "NotebookEdit"]);
 
@@ -54,7 +59,7 @@ export function snapshotFromClaude(input: { settings: ClaudeSettings; settingsLo
   const company = managedSettings.some((settings) => settings.allowManagedHooksOnly === true);
   const snapshot: AgentSnapshot = {
     id: "claude-code",
-    name: "Claude Code",
+    name: "Claude",
     installed: input.installed,
     enforcement: blocked ? "rules" : "hook",
     note: blocked ? (company ? "Rules mode (fallback): company policy blocks hooks" : "Rules mode (fallback): hooks are disabled") : "Hook mode",
@@ -82,11 +87,11 @@ export function snapshotFromClaude(input: { settings: ClaudeSettings; settingsLo
   return snapshot;
 }
 
-export function claudeWatchPaths(root: string, managedDir = "/Library/Application Support/ClaudeCode"): string[] {
+export function claudeWatchPaths(root: string, managedDir = MANAGED_DIR): string[] {
   return [join(root, "settings.json"), join(root, "settings.local.json"), join(root, "remote-settings.json"), join(root, "..", ".claude.json"), join(managedDir, "managed-settings.json"), join(managedDir, "managed-settings.d")];
 }
 
-export function loadClaude(root: string, claudeJsonPath: string, managedDir = "/Library/Application Support/ClaudeCode"): AgentSnapshot {
+export function loadClaude(root: string, claudeJsonPath: string, managedDir = MANAGED_DIR): AgentSnapshot {
   const settings = readJson(join(root, "settings.json")) as ClaudeSettings;
   const settingsLocal = readJson(join(root, "settings.local.json")) as ClaudeSettings;
   const remote = readJson(join(root, "remote-settings.json")) as ClaudeSettings & { allowedMcpServers?: { serverUrl?: string }[] };

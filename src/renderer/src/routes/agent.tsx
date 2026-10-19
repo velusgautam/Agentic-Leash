@@ -1,9 +1,14 @@
 import { useEffect, useState, type ReactNode } from "react";
 import { useParams } from "@tanstack/react-router";
 import { FolderOpen, Globe, Lock, Plug, ShieldCheck, ShieldX } from "lucide-react";
-import type { AgentSnapshot, Enforcement } from "../../../shared/types";
+import { revokeDue, type RevokePreset } from "../../../shared/revokeWhen";
+import type { AgentId, AgentSnapshot, Enforcement, ScheduledRevoke } from "../../../shared/types";
+import { ConfirmAction, TRUST_EFFECTS } from "~/components/ConfirmAction";
+import { FullDiskControl } from "~/components/FullDiskControl";
 import { AGENT_LABELS, AgentIcon } from "~/components/Icons";
 import { PageContainer, SettingsSection } from "~/components/settings";
+import { SetupButton } from "~/components/SetupButton";
+import { useSetup } from "~/components/useSetup";
 import { Button } from "~/components/ui/button";
 import { cn } from "~/lib/utils";
 
@@ -24,8 +29,71 @@ function Row({ icon, locked, children, action }: { icon: ReactNode; locked: bool
     <div className="flex items-center gap-3 px-4 py-2.5 text-sm">
       <span className="text-muted-foreground">{icon}</span>
       <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2">{children}</div>
-      {locked ? <Lock className="size-3.5 text-muted-foreground" aria-label="Locked by company policy" /> : action}
+      {locked ? (
+        <span title="Set by your organization's managed policy. Can't be changed locally.">
+          <Pill tone="bg-muted text-muted-foreground"><Lock className="size-3" />Org locked</Pill>
+        </span>
+      ) : action}
     </div>
+  );
+}
+
+const MCP_FILES: Record<string, string> = { "claude-code": "~/.claude.json", cursor: "~/.cursor/mcp.json", gemini: "~/.gemini/settings.json" };
+
+const PRESETS: { preset: RevokePreset; label: string }[] = [
+  { preset: "hour", label: "In 1 hour" },
+  { preset: "tonight", label: "Tonight" },
+  { preset: "tomorrow", label: "Tomorrow" },
+];
+
+function TrustActions({ path, dueAt, onChange }: { path: string; dueAt?: number; onChange: () => void }) {
+  const [open, setOpen] = useState(false);
+  const [custom, setCustom] = useState("");
+  const done = () => {
+    setOpen(false);
+    onChange();
+  };
+  if (dueAt) {
+    return (
+      <span className="flex items-center gap-2">
+        <span className="text-xs whitespace-nowrap text-muted-foreground">Revokes {new Date(dueAt).toLocaleString()}</span>
+        <Button size="sm" variant="outline" onClick={() => void window.leash.cancelTrust(path).then(onChange)}>Cancel</Button>
+      </span>
+    );
+  }
+  return (
+    <span className="relative flex items-center gap-2">
+      <ConfirmAction
+        trigger={<Button size="sm" variant="destructive-outline">Revoke</Button>}
+        title="Revoke Claude's trust for this folder?"
+        description={path}
+        effects={TRUST_EFFECTS}
+        confirmLabel="Revoke"
+        onConfirm={() => void window.leash.revokeTrust(path).then(done)}
+      />
+      <Button size="sm" variant="outline" aria-expanded={open} onClick={() => setOpen((value) => !value)}>Revoke 🕰️</Button>
+      {open ? (
+        <span className="absolute top-9 right-0 z-20 flex w-56 flex-col gap-1 rounded-lg border border-border bg-popover p-1.5 text-popover-foreground shadow-md">
+          {PRESETS.map((item) => (
+            <Button key={item.preset} size="sm" variant="ghost" className="justify-start" onClick={() => void window.leash.scheduleTrust(path, revokeDue(item.preset)).then(done)}>
+              {item.label}
+            </Button>
+          ))}
+          <label className="px-2 py-1 text-xs text-muted-foreground">
+            Custom
+            <input aria-label="Revoke at" className="mt-1 w-full bg-transparent text-sm text-foreground" type="datetime-local" value={custom} onChange={(event) => setCustom(event.target.value)} />
+          </label>
+          <Button
+            size="sm"
+            variant="outline"
+            disabled={!custom || new Date(custom).getTime() <= Date.now()}
+            onClick={() => void window.leash.scheduleTrust(path, new Date(custom).getTime()).then(done)}
+          >
+            Set
+          </Button>
+        </span>
+      ) : null}
+    </span>
   );
 }
 
@@ -36,12 +104,18 @@ function Empty({ emoji, children }: { emoji: string; children: ReactNode }) {
 export function AgentPage() {
   const { agentId } = useParams({ from: "/agents/$agentId" });
   const [agent, setAgent] = useState<AgentSnapshot | null>(null);
+  const [scheduled, setScheduled] = useState<ScheduledRevoke[]>([]);
+  const load = () => {
+    void window.leash.listAgents().then((agents) => setAgent(agents.find((item) => item.id === agentId) ?? null));
+    void window.leash.scheduledRevokes().then(setScheduled);
+  };
   useEffect(() => {
-    const load = () => void window.leash.listAgents().then((agents) => setAgent(agents.find((item) => item.id === agentId) ?? null));
     load();
     const timer = window.setInterval(load, 1000);
     return () => window.clearInterval(timer);
   }, [agentId]);
+  const { status } = useSetup();
+  const hook = status?.agents.find((item) => item.id === agentId);
   const name = agent?.name ?? AGENT_LABELS[agentId] ?? agentId;
   const enforcement = agent ? ENFORCEMENT[agent.enforcement] : null;
   return (
@@ -63,9 +137,20 @@ export function AgentPage() {
           {agent && !agent.installed ? <p className="text-sm text-muted-foreground">Not installed on this Mac.</p> : null}
         </div>
       </header>
+      {hook && hook.hooks === false && hook.installed ? (
+        <div role="status" className="mx-3 flex items-center justify-between gap-3 rounded-lg border border-border bg-muted/40 px-3 py-2 text-sm sm:mx-4">
+          <span>Install hooks so this agent is asked before it reads or writes.</span>
+          {agentId === "claude-code" || agentId === "cursor" || agentId === "codex" || agentId === "gemini" || agentId === "hermes" ? <SetupButton kind="hook" actionKey={agentId} done={false} onClick={() => window.leash.installHooks(agentId)} /> : null}
+        </div>
+      ) : null}
       <SettingsSection title="Folders">
         {agent?.folders.length ? agent.folders.map((folder) => (
-          <Row key={`${folder.source}:${folder.path}`} icon={<FolderOpen className="size-4" />} locked={folder.locked}>
+          <Row
+            key={`${folder.source}:${folder.path}`}
+            icon={<FolderOpen className="size-4" />}
+            locked={folder.locked}
+            action={folder.source === "~/.claude.json" ? <TrustActions path={folder.path} dueAt={scheduled.find((item) => item.path === folder.path)?.dueAt} onChange={load} /> : undefined}
+          >
             <span className="font-mono text-xs">{folder.path}</span>
             <Pill tone={accessTone(folder.access)}>{folder.access}</Pill>
             <span className="text-xs text-muted-foreground">{folder.source}</span>
@@ -78,7 +163,16 @@ export function AgentPage() {
             key={`${server.source}:${server.name}`}
             icon={<Plug className="size-4" />}
             locked={server.locked}
-            action={<Button size="sm" variant="outline" onClick={() => void window.leash.removeMcp(server.source === "mcp.json" ? "~/.cursor/mcp.json" : "~/.claude.json", server.name)}>Remove</Button>}
+            action={agentId === "codex" ? undefined : (
+              <ConfirmAction
+                trigger={<Button size="sm" variant="outline">Remove</Button>}
+                title={`Remove the ${server.name} MCP server?`}
+                description={MCP_FILES[agentId] ?? server.source}
+                effects={["Deletes this server entry from the config file. A .bak is written first.", "New sessions no longer load its tools. If the agent is running, you'll be offered a restart."]}
+                confirmLabel="Remove"
+                onConfirm={() => void window.leash.removeMcp(agentId as AgentId, server.name).then(load)}
+              />
+            )}
           >
             <span className="font-medium">{server.name}</span>
             <span className="font-mono text-xs text-muted-foreground">{server.command || server.url || "stdio"}</span>
@@ -101,12 +195,27 @@ export function AgentPage() {
             key={`${row.bundleId}:${row.service}`}
             icon={row.authValue ? <ShieldCheck className="size-4 text-emerald-500" /> : <ShieldX className="size-4 text-red-500" />}
             locked={false}
-            action={<Button size="sm" variant="outline" onClick={() => void window.leash.resetTcc(row.service, row.bundleId)}>Reset</Button>}
+            action={row.bundleId.startsWith("/") ? undefined : (
+              <ConfirmAction
+                trigger={<Button size="sm" variant="outline">Reset</Button>}
+                title={`Reset ${row.service.replace(/^kTCCService/, "")} access?`}
+                description={row.via ?? row.bundleId}
+                effects={["Runs tccutil reset for this app and service.", "macOS asks for permission again the next time the app needs it."]}
+                confirmLabel="Reset"
+                onConfirm={() => void window.leash.resetTcc(row.service, row.bundleId).then(load)}
+              />
+            )}
           >
             <span>{row.service.replace(/^kTCCService/, "")}</span>
             <Pill tone={row.authValue ? "bg-emerald-500/10 text-emerald-700 dark:text-emerald-300" : "bg-red-500/10 text-red-700 dark:text-red-300"}>{row.authValue ? "granted" : "denied"}</Pill>
+            {row.via ? <span className="text-xs text-muted-foreground">{row.via}</span> : null}
           </Row>
-        )) : <Empty emoji="🔐">Privacy grants show up here once Full Disk Access is on.</Empty>}
+        )) : (
+          <div className="flex items-center justify-between gap-3 px-4 py-4">
+            <p className="text-sm text-muted-foreground"><span aria-hidden className="mr-2">🔐</span>Privacy grants show up here once Full Disk Access is on.</p>
+            <FullDiskControl />
+          </div>
+        )}
       </SettingsSection>
     </PageContainer>
   );
