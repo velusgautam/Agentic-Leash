@@ -15,8 +15,9 @@ mac:
       arch:
         - arm64
   icon: resources/icon.png
-  identity: Agentic Leash Dev
-  hardenedRuntime: false
+  identity: "Velu Gautam (W3M2JWPTNR)"
+  hardenedRuntime: true
+  notarize: true
   category: public.app-category.developer-tools
 dmg:
   title: Agentic Leash

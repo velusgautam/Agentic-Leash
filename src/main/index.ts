@@ -75,10 +75,12 @@ async function confirmRevokeAll(): Promise<void> {
 
 // app.hide() is how macOS hands focus back to the app that was frontmost before the popup.
 let returnFocus = false;
+let presentingApproval = false;
 
 function closeApproval(): void {
   if (approval && !approval.isDestroyed()) approval.hide();
   if (isMac && returnFocus) app.hide();
+  presentingApproval = false;
   returnFocus = false;
 }
 
@@ -86,6 +88,7 @@ const APPROVAL_WIDTH = 520;
 
 // A new window in a fullscreen app gets its own Space unless it is an auxiliary panel.
 function presentApproval(window: BrowserWindow): void {
+  presentingApproval = true;
   if (!BrowserWindow.getFocusedWindow()) returnFocus = true;
   if (window.isFullScreen()) window.setFullScreen(false);
   window.setFullScreenable(false);
@@ -94,6 +97,12 @@ function presentApproval(window: BrowserWindow): void {
   app.focus({ steal: true });
   window.show();
   window.focus();
+  if (!win?.isVisible()) {
+    app.dock?.hide();
+    setImmediate(() => {
+      if (presentingApproval && !win?.isVisible()) app.dock?.hide();
+    });
+  }
 }
 
 function openApproval(): void {
@@ -120,6 +129,7 @@ function openApproval(): void {
   presentApproval(approval);
   approval.on("closed", () => {
     approval = null;
+    presentingApproval = false;
   });
 }
 
@@ -182,7 +192,10 @@ if (!app.requestSingleInstanceLock()) {
   app.quit();
 } else {
   app.on("second-instance", showWindow);
-  app.on("activate", showWindow);
+  app.on("activate", () => {
+    if (presentingApproval || (approval && !approval.isDestroyed() && approval.isVisible())) return;
+    showWindow();
+  });
   app.on("before-quit", (event) => {
     if (quitting) return;
     event.preventDefault();
