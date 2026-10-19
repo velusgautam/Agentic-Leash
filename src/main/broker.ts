@@ -13,14 +13,14 @@ function samePrompt(a: HookRequest, b: HookRequest): boolean {
 }
 
 export class Broker {
-  private readonly pending = new Map<string, { request: HookRequest; waiters: ((decision: BrokerDecision) => void)[] }>();
+  private readonly pending = new Map<string, { request: HookRequest; askedAt: number; waiters: ((decision: BrokerDecision) => void)[] }>();
   private server: Server | null = null;
   private seq = 0;
 
   constructor(private readonly onChange: (pending: PendingRequest[]) => void) {}
 
   list(): PendingRequest[] {
-    return [...this.pending.entries()].map(([id, item]) => ({ id, request: item.request }));
+    return [...this.pending.entries()].map(([id, item]) => ({ id, request: item.request, askedAt: item.askedAt }));
   }
 
   offer(id: string, request: HookRequest): Promise<{ id: string; decision: string; ttlSeconds?: number }> {
@@ -31,7 +31,7 @@ export class Broker {
         item.waiters.push(deliver);
         return;
       }
-      this.pending.set(id, { request, waiters: [deliver] });
+      this.pending.set(id, { request, askedAt: Date.now(), waiters: [deliver] });
       this.onChange(this.list());
     });
   }

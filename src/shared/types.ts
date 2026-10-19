@@ -97,6 +97,7 @@ export interface HistoryRow {
 export interface PendingRequest {
   id: string;
   request: HookRequest;
+  askedAt: number;
 }
 
 export interface Diagnostics {

@@ -1,7 +1,8 @@
 import { useEffect, useState } from "react";
-import { FolderLock, History, Lock, LockOpen, ShieldOff, Timer, Users } from "lucide-react";
+import { ArrowDown, ArrowUp, FolderLock, History, Lock, LockOpen, ShieldOff, Timer, Users } from "lucide-react";
 import { viewGrants, type GrantSortKey, type SortDir } from "../../../shared/grantView";
-import type { DecisionRow, Grant } from "../../../shared/types";
+import { denyCountdown, pendingSecondsLeft, POPUP_TIMEOUT_S } from "../../../shared/pending";
+import type { DecisionRow, Grant, HookRequest, PendingRequest } from "../../../shared/types";
 import { ConfirmAction, grantEffects, REVOKE_ALL_EFFECTS } from "~/components/ConfirmAction";
 import { AGENT_LABELS, AgentIcon } from "~/components/Icons";
 import { PageContainer, SettingsSection } from "~/components/settings";
@@ -39,10 +40,56 @@ function Agent({ agent }: { agent: string }) {
   );
 }
 
+const ALLOW_FOR = [
+  { label: "15 min", seconds: 15 * 60 },
+  { label: "1 hour", seconds: 60 * 60 },
+  { label: "8 hours", seconds: 8 * 60 * 60 },
+  { label: "Always", seconds: null },
+] as const;
+
+function pendingTarget(request: HookRequest): string {
+  if (request.command) return request.command;
+  if (request.url) return request.url;
+  return request.paths.join("\n");
+}
+
+function PendingRow({ item, now, onDecide }: { item: PendingRequest; now: number; onDecide: () => void }) {
+  const [choice, setChoice] = useState(1);
+  const request = item.request;
+  const preset = ALLOW_FOR[choice] ?? ALLOW_FOR[1];
+  return (
+    <div className="flex flex-col gap-3 px-4 py-3 text-sm">
+      <div className="flex flex-wrap items-center gap-2">
+        <Agent agent={request.agent} />
+        <span className={cn(pill, request.access === "write" ? "bg-amber-500/12 text-amber-700 dark:text-amber-300" : "bg-sky-500/10 text-sky-700 dark:text-sky-300")}>{request.access}</span>
+        <span className="font-mono text-xs">{request.tool}</span>
+        <span className="ml-auto text-xs text-muted-foreground tabular-nums">{denyCountdown(pendingSecondsLeft(item.askedAt, now, POPUP_TIMEOUT_S))}</span>
+      </div>
+      <pre className="max-h-24 overflow-auto rounded-lg border border-border/60 bg-muted/40 px-3 py-2 font-mono text-xs leading-relaxed break-all whitespace-pre-wrap">{pendingTarget(request)}</pre>
+      <div className="flex flex-wrap items-center gap-2">
+        <div role="radiogroup" aria-label={`Allow ${request.tool} for`} className="inline-flex flex-wrap rounded-lg border border-border p-0.5">
+          {ALLOW_FOR.map((option, index) => (
+            <button key={option.label} type="button" role="radio" aria-checked={choice === index} onClick={() => setChoice(index)} className={cn("rounded-md px-2.5 py-1 text-xs", choice === index ? "bg-accent font-medium" : "text-muted-foreground")}>
+              {option.label}
+            </button>
+          ))}
+        </div>
+        <span className="ml-auto flex items-center gap-2">
+          <Button size="sm" variant="ghost" onClick={() => void window.leash.decidePending(item.id, "deny", null).then(onDecide)}>Deny</Button>
+          <Button size="sm" onClick={() => void window.leash.decidePending(item.id, "allow", preset.seconds).then(onDecide)}>Allow</Button>
+        </span>
+      </div>
+    </div>
+  );
+}
+
 function GrantList({ grants, agent, sort, dir, onAgent, onSort, onRevoke }: { grants: Grant[]; agent: string; sort: GrantSortKey; dir: SortDir; onAgent: (agent: string) => void; onSort: (sort: GrantSortKey) => void; onRevoke: (id: number) => void }) {
   const agents = [...new Set(grants.map((grant) => grant.agent))].sort((a, b) => agentName(a).localeCompare(agentName(b)));
   const rows = viewGrants(grants, { agent, sort, dir });
-  const sortLabel = (key: GrantSortKey, asc: string, desc: string) => (sort === key ? (dir === "desc" ? desc : asc) : key === "approved" ? "Approved" : "Expires");
+  const sorts = [
+    { key: "approved" as const, label: "Approved", asc: "oldest first", desc: "newest first" },
+    { key: "expires" as const, label: "Expires", asc: "soon first", desc: "last first" },
+  ];
   return (
     <>
       <div className="flex flex-wrap items-center gap-2 px-3">
@@ -54,12 +101,16 @@ function GrantList({ grants, agent, sort, dir, onAgent, onSort, onRevoke }: { gr
           ))}
         </div>
         <div className="inline-flex rounded-lg border border-border p-0.5">
-          <button type="button" aria-pressed={sort === "approved"} onClick={() => onSort("approved")} className={cn("rounded-md px-2.5 py-1 text-xs", sort === "approved" ? "bg-accent font-medium" : "text-muted-foreground")}>
-            {sortLabel("approved", "Oldest", "Newest")}
-          </button>
-          <button type="button" aria-pressed={sort === "expires"} onClick={() => onSort("expires")} className={cn("rounded-md px-2.5 py-1 text-xs", sort === "expires" ? "bg-accent font-medium" : "text-muted-foreground")}>
-            {sortLabel("expires", "Expires soon", "Expires last")}
-          </button>
+          {sorts.map((item) => {
+            const active = sort === item.key;
+            const Icon = dir === "desc" ? ArrowDown : ArrowUp;
+            return (
+              <button key={item.key} type="button" aria-pressed={active} aria-label={active ? `${item.label}, ${dir === "desc" ? item.desc : item.asc}` : item.label} onClick={() => onSort(item.key)} className={cn("inline-flex items-center gap-1 rounded-md px-2.5 py-1 text-xs", active ? "bg-accent font-medium" : "text-muted-foreground")}>
+                {item.label}
+                {active ? <Icon className="size-3" aria-hidden /> : null}
+              </button>
+            );
+          })}
         </div>
       </div>
       <SettingsSection title="Live grants">
@@ -100,6 +151,8 @@ export function GrantsPage() {
   const [sort, setSort] = useState<GrantSortKey>("approved");
   const [dir, setDir] = useState<SortDir>("desc");
   const [lockdown, setLockdown] = useState(false);
+  const [pending, setPending] = useState<PendingRequest[]>([]);
+  const [now, setNow] = useState(() => Date.now());
   const pickSort = (next: GrantSortKey) => {
     if (next === sort) setDir((value) => (value === "desc" ? "asc" : "desc"));
     else {
@@ -111,6 +164,8 @@ export function GrantsPage() {
     void window.leash.listGrants().then(setGrants);
     void window.leash.listDecisions().then(setDecisions);
     void window.leash.grantStatus().then((status) => setLockdown(status.lockdown));
+    void window.leash.listPending().then(setPending);
+    setNow(Date.now());
   };
   useEffect(() => {
     load();
@@ -126,6 +181,11 @@ export function GrantsPage() {
           {log ? "Show grants" : "Decision log"}
         </Button>
       </div>
+      {pending.length ? (
+        <SettingsSection title="Pending">
+          {pending.map((item) => <PendingRow key={item.id} item={item} now={now} onDecide={load} />)}
+        </SettingsSection>
+      ) : null}
       {log ? (
         <SettingsSection title="Decisions, last 30 days">
           {decisions.length === 0 ? <p className="px-4 py-4 text-sm text-muted-foreground"><span aria-hidden className="mr-2">🗒️</span>No decisions yet</p> : null}

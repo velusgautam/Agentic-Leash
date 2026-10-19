@@ -40,12 +40,12 @@ describe("decide", () => {
     expect(decide(first, [active], opts).kind).toBe("pass");
     expect(decide(again, [active], opts).kind).toBe("pass");
     expect(decide(shell("cat /etc/hosts"), [active], opts).kind).toBe("prompt");
-    expect(coveredPending([{ id: "exec", request: again }], [active], opts)).toEqual(["exec"]);
+    expect(coveredPending([{ id: "exec", request: again, askedAt: 0 }], [active], opts)).toEqual(["exec"]);
   });
   it("names queued requests a new grant already covers", () => {
     const pending = [
-      { id: "1", request: req({ paths: ["/a/b/c.txt"], access: "write" }) },
-      { id: "2", request: req({ paths: ["/other"], access: "write" }) },
+      { id: "1", request: req({ paths: ["/a/b/c.txt"], access: "write" }), askedAt: 0 },
+      { id: "2", request: req({ paths: ["/other"], access: "write" }), askedAt: 0 },
     ];
     expect(coveredPending(pending, [grant({ path: "/a/b", access: "write" })], opts)).toEqual(["1"]);
   });

@@ -18,6 +18,7 @@ let approval: BrowserWindow | null = null;
 let tray: Tray | null = null;
 let quitting = false;
 let pendingCount = 0;
+let pendingNav: string | null = null;
 let revokeAll = (): { revoked: number } => ({ revoked: 0 });
 
 function createWindow(visible: boolean): BrowserWindow {
@@ -55,6 +56,7 @@ function refreshTray(): void {
         open: showWindow,
         quit: () => app.quit(),
         pending: pendingCount,
+        review: showGrants,
         revokeAll: () => void confirmRevokeAll(),
       }),
     ),
@@ -140,6 +142,18 @@ function showWindow(): void {
   win.focus();
 }
 
+function showGrants(): void {
+  showWindow();
+  pendingNav = "/grants";
+  if (!win || win.isDestroyed()) return;
+  const send = () => {
+    if (!win || win.isDestroyed()) return;
+    win.webContents.send("nav:open");
+  };
+  if (win.webContents.isLoading()) win.webContents.once("did-finish-load", send);
+  else send();
+}
+
 function hideToMenuBar(): void {
   if (!win) return;
   win.hide();
@@ -165,6 +179,12 @@ const applyOpenAtLogin = (enabled: boolean) => (isMac ? setOpenAtLogin(enabled, 
 function loginItemState(): OpenAtLoginState {
   return { available: loginItemSupported(), enabled: loginItemSupported() && openAtLogin() };
 }
+
+ipcMain.handle("nav:take", () => {
+  const next = pendingNav;
+  pendingNav = null;
+  return next;
+});
 
 function registerLoginItem(): void {
   ipcMain.handle("login-item:get", () => loginItemState());
@@ -220,6 +240,15 @@ if (!app.requestSingleInstanceLock()) {
         refreshTray();
       },
       notify: (title, body) => new Notification({ title, body }).show(),
+      disableLoginItem: () => {
+        if (loginItemSupported()) applyOpenAtLogin(false);
+      },
+      finishUninstall: () => {
+        quitting = true;
+        const done = () => app.quit();
+        if (app.isPackaged && isMac) void shell.trashItem(appBundlePath()).catch(() => undefined).finally(done);
+        else done();
+      },
     }));
     const hidden = process.argv.includes("--hidden");
     win = createWindow(!hidden);

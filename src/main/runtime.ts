@@ -24,6 +24,8 @@ import { AUTO_ALLOWS, parseAutoAllowOff } from "../shared/autoAllow";
 import { MAIN_RETENTION_DAYS, NOISE_RETENTION_DAYS, parseRetentionDays, retentionDays } from "../shared/retention";
 import { coveredPending } from "../hook/decide";
 import { grantRoot, parentFolders } from "../shared/parents";
+import { helperInstallScript, helperUninstallScript, installSweepAgent, sweepAgentPath, sweepServiceTarget } from "./helperInstall";
+import { LOGIN_AGENT_LABEL, loginAgentPath } from "./loginItem";
 import { publishClaudeRules } from "./rulesMode";
 import { guiQuitScript, parsePs, percentiles, restartTargets } from "./system";
 import { readUiState, writeUiState } from "./uiState";
@@ -63,7 +65,6 @@ function hookCommand(kind: "claude" | "cursor" | "codex" | "gemini"): string {
 async function ensureSweepAgent(): Promise<void> {
   const script = hookScript();
   if (!IS_MAC || !existsSync(script)) return;
-  const { installSweepAgent, sweepServiceTarget } = await import("./helperInstall");
   const plist = installSweepAgent(process.execPath, script);
   const uid = process.getuid?.();
   if (uid === undefined) return;
@@ -86,13 +87,14 @@ async function psLines(): Promise<string[]> {
 
 const cursorStateDb = () => join(app.getPath("appData"), "Cursor/User/globalStorage/state.vscdb");
 
-export function startRuntime(options: { userData: string; openApproval: () => void; closeApproval: () => void; setPending: (count: number) => void; notify: (title: string, body: string) => void }): { revokeAll: () => { revoked: number } } {
+export function startRuntime(options: { userData: string; openApproval: () => void; closeApproval: () => void; setPending: (count: number) => void; notify: (title: string, body: string) => void; finishUninstall: () => void; disableLoginItem: () => void }): { revokeAll: () => { revoked: number } } {
   const db = openGrantsDb(grantsDbPath());
   collapseGrantDupes(db);
   const home = homeDir();
   let snapshots: AgentSnapshot[] = [];
   let history: HistoryRow[] = [];
   let historySeen = readUiState(options.userData).historySeen ?? 0;
+  let uninstalling = false;
   const timeouts = new Map<string, NodeJS.Timeout>();
 
   const broker = new Broker((pending) => {
@@ -111,6 +113,7 @@ export function startRuntime(options: { userData: string; openApproval: () => vo
   }
 
   const scan = async () => {
+    if (uninstalling) return;
     const workers = cursorWorkers(await psLines());
     snapshots = [
       loadClaude(claudeRoot(), join(home, ".claude.json")),
@@ -154,6 +157,7 @@ export function startRuntime(options: { userData: string; openApproval: () => vo
   }, 30_000);
 
   const pollHistory = () => {
+    if (uninstalling) return;
     try {
       const historyDb = openHistoryDb(join(process.env.AGENTIC_LEASH_HISTORY_DIR || HISTORY_DIR, "history.db"), true);
       const rows = listHistory(historyDb, 0, 300);
@@ -345,7 +349,7 @@ export function startRuntime(options: { userData: string; openApproval: () => vo
   const currentSetup = async (): Promise<SetupStatus> => {
     if (process.env.AGENTIC_LEASH_SKIP_SETUP) return { helper: "skipped", fda: true, agents: hookRows(), ready: true };
     const helper = await helperState();
-    const fda = !IS_MAC || hasFullDiskAccess(join(homedir(), "Library/Application Support/com.apple.TCC/TCC.db"));
+    const fda = !IS_MAC || helper === "skipped" || hasFullDiskAccess(join(homedir(), "Library/Application Support/com.apple.TCC/TCC.db"));
     const agents = hookRows();
     const state = readUiState(options.userData);
     const onboarded = rememberOnboarding(Boolean(state.onboarded), agents);
@@ -480,8 +484,25 @@ export function startRuntime(options: { userData: string; openApproval: () => vo
   });
   ipcMain.handle("helper:install", async () => {
     if (!IS_MAC) throw new Error("The activity helper is macOS-only.");
-    const { helperInstallScript } = await import("./helperInstall");
     await exec("/usr/bin/osascript", ["-e", helperInstallScript(process.execPath, hookScript().replace("leash-hook.js", "leash-helper.js"))]);
+  });
+  ipcMain.handle("app:uninstall", async () => {
+    if (IS_MAC && app.isPackaged) await exec("/usr/bin/osascript", ["-e", helperUninstallScript()]);
+    uninstalling = true;
+    for (const agent of ["claude-code", "cursor", "codex", "gemini", "hermes"] as const) uninstallAgent(agent);
+    publishClaudeRules(db, join(claudeRoot(), "settings.json"), home, false);
+    if (IS_MAC) {
+      const uid = process.getuid?.();
+      if (uid !== undefined) {
+        await exec("/bin/launchctl", ["bootout", sweepServiceTarget(uid)]).catch(() => undefined);
+        await exec("/bin/launchctl", ["bootout", `gui/${uid}/${LOGIN_AGENT_LABEL}`]).catch(() => undefined);
+      }
+      rmSync(sweepAgentPath(), { force: true });
+      rmSync(loginAgentPath(), { force: true });
+    } else options.disableLoginItem();
+    rmSync(leashDir(home), { recursive: true, force: true });
+    rmSync(options.userData, { recursive: true, force: true });
+    options.finishUninstall();
   });
 
   try {

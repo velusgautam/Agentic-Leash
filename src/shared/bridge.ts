@@ -50,6 +50,9 @@ export interface LeashBridge {
   onboardingDone(): Promise<boolean>;
   setOnboarding(done: boolean): Promise<void>;
   installHelper(): Promise<void>;
+  uninstallApp(): Promise<void>;
+  takeNav(): Promise<string | null>;
+  onNavigate(listener: () => void): () => void;
   fullDiskAccess(): Promise<boolean>;
   openFullDiskAccess(): Promise<void>;
 }

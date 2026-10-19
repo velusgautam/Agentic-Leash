@@ -1,5 +1,8 @@
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { POPUP_TIMEOUT_S } from "./pending";
+
+export { POPUP_TIMEOUT_S };
 
 export const APP_NAME = "Agentic Leash";
 export const HISTORY_DIR =
@@ -7,7 +10,6 @@ export const HISTORY_DIR =
   : process.platform === "linux" ? "/var/lib/agentic-leash"
   : "/Library/Application Support/AgenticLeash";
 export const IS_MAC = process.platform === "darwin";
-export const POPUP_TIMEOUT_S = 120;
 export const HOOK_TIMEOUT_S = 150;
 export const DEFAULT_TTL_S = 3600;
 export const DECISION_RETENTION_MS = 30 * 24 * 60 * 60 * 1000;

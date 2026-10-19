@@ -146,6 +146,14 @@ function AppShell() {
       window.clearInterval(timer);
     };
   }, []);
+  useEffect(() => {
+    if (pathname === "/approval") return;
+    const go = () => void window.leash.takeNav().then((to) => {
+      if (to === "/grants") void navigate({ to: "/grants" });
+    });
+    go();
+    return window.leash.onNavigate(go);
+  }, [navigate, pathname]);
   if (pathname === "/approval") return <Outlet />;
   if (!status?.ready) return <SetupScreen />;
   return (

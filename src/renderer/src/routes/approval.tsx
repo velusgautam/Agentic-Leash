@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { CheckCircle2, X } from "lucide-react";
 import { parentFolders } from "../../../shared/parents";
+import { denyCountdown, pendingSecondsLeft, POPUP_TIMEOUT_S } from "../../../shared/pending";
 import type { PendingRequest } from "../../../shared/types";
 import { AGENT_LABELS, AgentIcon } from "~/components/Icons";
 import { Button } from "~/components/ui/button";
@@ -32,9 +33,13 @@ function CloseButton() {
 
 export function ApprovalPage() {
   const [pending, setPending] = useState<PendingRequest[]>([]);
+  const [now, setNow] = useState(() => Date.now());
   const [choice, setChoice] = useState(1);
   const [scope, setScope] = useState<string | null>(null);
-  const load = () => void window.leash.listPending().then(setPending);
+  const load = () => {
+    setNow(Date.now());
+    void window.leash.listPending().then(setPending);
+  };
   useEffect(() => {
     load();
     const timer = window.setInterval(load, 300);
@@ -137,7 +142,8 @@ export function ApprovalPage() {
           </div>
         </div>
       </div>
-      <footer className="flex shrink-0 items-center justify-end gap-2 border-t border-border/60 bg-muted/50 px-4 py-2.5">
+      <footer className="flex shrink-0 items-center gap-2 border-t border-border/60 bg-muted/50 px-4 py-2.5">
+        <p className="mr-auto text-xs text-muted-foreground tabular-nums">{denyCountdown(pendingSecondsLeft(current.askedAt, now, POPUP_TIMEOUT_S))}</p>
         <Button size="sm" variant="ghost" className="h-8 text-sm" onClick={deny}>
           Deny <Kbd>esc</Kbd>
         </Button>

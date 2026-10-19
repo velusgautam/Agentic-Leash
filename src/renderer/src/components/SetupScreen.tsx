@@ -1,4 +1,5 @@
 import type { SetupAgent } from "../../../shared/setup";
+import { FullDiskControl } from "~/components/FullDiskControl";
 import { LeashMark } from "~/components/Icons";
 import { PageContainer, SettingsRow, SettingsSection } from "~/components/settings";
 import { SetupButton } from "~/components/SetupButton";
@@ -66,7 +67,7 @@ export function SetupScreen() {
           <SettingsRow
             title="Full Disk Access"
             description="Opens the Full Disk Access pane. If Agentic Leash is missing, click + and add Agentic Leash.app."
-            control={<SetupButton kind="fda" actionKey="fda" done={Boolean(status?.fda)} onClick={() => window.leash.openFullDiskAccess()} />}
+            control={<FullDiskControl />}
           />
         </SettingsSection>
       </PageContainer>
