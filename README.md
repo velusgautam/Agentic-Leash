@@ -4,11 +4,12 @@ See and control what AI coding agents can touch on your Mac.
 
 ![Agentic Leash](docs/screenshot.png)
 
-Claude Code, Cursor, Codex and Gemini keep working. Agentic Leash watches the files they read and write, asks before they reach a folder you have not allowed, and flags sensitive paths like `~/.ssh` the moment they are touched.
+Claude, Cursor, Codex, Gemini CLI and Hermes keep working. Agentic Leash watches the files they read and write, asks before they reach a folder you have not allowed, and flags sensitive paths like `~/.ssh` the moment they are touched.
 
-- **Live** activity from the agents on this Mac, with a red mark on sensitive files
+- **Setup** installs each agent's hooks, the file-history helper, and Full Disk Access
+- **Live** activity from the agents that are installed and turned on, with a red mark on sensitive files
 - **Grants** that expire, plus one shortcut to revoke everything and lock down
-- **Per-agent** folders, MCP servers, network rules and macOS privacy
+- **Per-agent** hook install, folders, MCP servers, network rules and macOS privacy
 - **Appearance** controls for theme, contrast, transparency and density
 - A menu-bar app: closing the window hides it, Quit is in the tray
 
@@ -23,4 +24,4 @@ pnpm dev
 
 `pnpm test` runs the unit tests. `pnpm test:e2e` launches the window. `pnpm dist` builds `dist/Agentic Leash-0.1.0-arm64.dmg`.
 
-File history needs the helper (Settings → Monitoring) and Full Disk Access for the app. The helper is a root LaunchDaemon, so macOS asks for an administrator password once.
+The first open stays on setup until the history helper is running and Full Disk Access is granted. In a dev build the helper step reads "Available in the installed app". Claude covers both the desktop app and the `claude` CLI. Turning an agent off in Settings hides it and removes its hooks. The helper is a root LaunchDaemon, so macOS asks for an administrator password once.
