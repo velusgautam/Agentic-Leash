@@ -11,7 +11,6 @@ export const POPUP_TIMEOUT_S = 120;
 export const HOOK_TIMEOUT_S = 150;
 export const DEFAULT_TTL_S = 3600;
 export const DECISION_RETENTION_MS = 30 * 24 * 60 * 60 * 1000;
-export const HISTORY_RETENTION_MS = 90 * 24 * 60 * 60 * 1000;
 export const CLAUDE_MATCHER = "Read|Edit|Write|MultiEdit|NotebookEdit|Glob|Grep|Bash|WebFetch|WebSearch|mcp__.*";
 
 export const TTL_PRESETS = [

@@ -12,6 +12,7 @@ import { Button } from "~/components/ui/button";
 import { Switch } from "~/components/ui/switch";
 import { cn } from "~/lib/utils";
 import { SETTINGS_SECTIONS } from "~/nav";
+import { parseRetentionDays } from "../../../shared/retention";
 import { DEFAULT_APPEARANCE, readAppearance, saveAppearance, type AppearancePrefs } from "../appearance";
 
 function General() {
@@ -83,10 +84,45 @@ function Agents() {
   );
 }
 
+function DayField({ label, value, onCommit }: { label: string; value: number; onCommit: (days: number) => void }) {
+  const [text, setText] = useState(String(value));
+  useEffect(() => setText(String(value)), [value]);
+  const commit = () => {
+    const days = parseRetentionDays(text.trim());
+    if (days === null) {
+      setText(String(value));
+      return;
+    }
+    if (days !== value) onCommit(days);
+  };
+  return (
+    <input
+      aria-label={label}
+      className="h-8 w-20 rounded-lg border border-border bg-background/60 px-2 text-right font-mono text-sm tabular-nums outline-none focus-visible:ring-2 focus-visible:ring-ring"
+      inputMode="numeric"
+      value={text}
+      onChange={(event) => setText(event.target.value)}
+      onBlur={commit}
+      onKeyDown={(event) => {
+        if (event.key === "Enter") event.currentTarget.blur();
+      }}
+    />
+  );
+}
+
 function Monitoring() {
+  const [days, setDays] = useState<{ main: number; noise: number } | null>(null);
+  useEffect(() => {
+    void window.leash.historyRetention().then(setDays);
+  }, []);
+  const save = (which: "main" | "noise", value: number) => {
+    void window.leash.setHistoryRetention(which, value).then(setDays);
+  };
   return (
     <SettingsSection title="Helper">
       <SettingsRow title="File history helper" description="Installs a root LaunchDaemon that runs eslogger. macOS will ask for an administrator password." control={<Button size="sm" onClick={() => void window.leash.installHelper()}>Install helper</Button>} />
+      <SettingsRow title="Main history" description="Days to keep project files, network, and sensitive paths. From 5 to 365." control={days ? <DayField label="Main history days" value={days.main} onCommit={(value) => save("main", value)} /> : null} />
+      <SettingsRow title="Noise history" description="Days to keep scratch-path writes, execs, and temporary reads. From 5 to 365." control={days ? <DayField label="Noise history days" value={days.noise} onCommit={(value) => save("noise", value)} /> : null} />
     </SettingsSection>
   );
 }
