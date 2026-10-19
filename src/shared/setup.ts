@@ -27,9 +27,19 @@ export const HISTORY_AGENT: Record<string, string> = {
   hermes: "hermes",
 };
 
-export function setupReady(status: { helper: HelperState; fda: boolean; agents: SetupAgent[] }): boolean {
+function turnedOn(agent: SetupAgent): boolean {
+  return HOOK_IDS.has(agent.id) && agent.installed && agent.enabled;
+}
+
+export function setupReady(status: { helper: HelperState; fda: boolean; agents: SetupAgent[] }, onboarded = false): boolean {
   if (status.helper === "stopped" || !status.fda) return false;
-  return status.agents.every((agent) => !HOOK_IDS.has(agent.id) || !agent.installed || !agent.enabled || agent.hooks === true);
+  const active = status.agents.filter(turnedOn);
+  if (active.length === 0 || active.some((agent) => agent.hooks === true)) return true;
+  return onboarded;
+}
+
+export function rememberOnboarding(already: boolean, agents: SetupAgent[]): boolean {
+  return already || agents.some((agent) => turnedOn(agent) && agent.hooks === true);
 }
 
 export function visibleAgent(agent: { installed: boolean; enabled: boolean }): boolean {

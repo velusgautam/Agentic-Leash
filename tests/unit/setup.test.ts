@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { actionLabel, actionState, claudeSurface, macAppPresent, needsAgentBanner, setupReady, visibleAgent } from "../../src/shared/setup";
+import { actionLabel, actionState, claudeSurface, macAppPresent, needsAgentBanner, rememberOnboarding, setupReady, visibleAgent } from "../../src/shared/setup";
 
 const agent = (id: string, installed: boolean, enabled: boolean, hooks: boolean | null) => ({ id, installed, enabled, hooks });
 
@@ -12,12 +12,46 @@ describe("setup gate", () => {
     })).toBe(true);
   });
 
-  it("stays on setup when a turned-on agent is missing hooks", () => {
+  it("opens the app when one turned-on agent has hooks and another does not", () => {
+    expect(setupReady({
+      helper: "running",
+      fda: true,
+      agents: [agent("claude-code", true, true, true), agent("cursor", true, true, false)],
+    })).toBe(true);
+  });
+
+  it("stays on setup when turned-on agents are installed and none have hooks", () => {
     expect(setupReady({
       helper: "running",
       fda: true,
       agents: [agent("claude-code", true, true, false)],
     })).toBe(false);
+    expect(setupReady({
+      helper: "running",
+      fda: true,
+      agents: [agent("claude-code", true, true, false), agent("cursor", true, true, false)],
+    })).toBe(false);
+  });
+
+  it("stays in the app after onboarding when a turned-on agent has no hooks", () => {
+    expect(setupReady({
+      helper: "running",
+      fda: true,
+      agents: [agent("claude-code", true, false, false), agent("cursor", true, true, false)],
+    }, true)).toBe(true);
+  });
+
+  it("still waits for the helper and Full Disk Access after onboarding", () => {
+    const agents = [agent("claude-code", true, true, true)];
+    expect(setupReady({ helper: "stopped", fda: true, agents }, true)).toBe(false);
+    expect(setupReady({ helper: "running", fda: false, agents }, true)).toBe(false);
+  });
+
+  it("remembers onboarding once one turned-on agent has hooks", () => {
+    expect(rememberOnboarding(false, [agent("claude-code", true, true, true), agent("cursor", true, true, false)])).toBe(true);
+    expect(rememberOnboarding(false, [agent("claude-code", true, true, false)])).toBe(false);
+    expect(rememberOnboarding(false, [agent("claude-code", true, false, true)])).toBe(false);
+    expect(rememberOnboarding(true, [agent("cursor", true, true, false)])).toBe(true);
   });
 
   it("lets setup finish when no hook agent is installed, and when an installed agent is turned off", () => {

@@ -1,5 +1,26 @@
 import { describe, expect, it } from "vitest";
-import { parentFolders } from "../../src/shared/parents";
+import { grantRoot, parentFolders } from "../../src/shared/parents";
+
+describe("grantRoot", () => {
+  const dirs = new Set(["/Users/velu.gautam", "/Users/velu.gautam/.cursor", "/Users/me/proj"]);
+  const isDir = (path: string) => dirs.has(path);
+
+  it("grants a dotted folder itself, not its parent", () => {
+    expect(grantRoot("/Users/velu.gautam", false, isDir)).toBe("/Users/velu.gautam");
+    expect(grantRoot("/Users/velu.gautam/.cursor", false, isDir)).toBe("/Users/velu.gautam/.cursor");
+  });
+
+  it("grants the folder holding a file", () => {
+    expect(grantRoot("/Users/me/proj/README.md", false, isDir)).toBe("/Users/me/proj");
+    expect(grantRoot("/Users/me/proj", false, isDir)).toBe("/Users/me/proj");
+  });
+
+  it("refuses / and /Users", () => {
+    expect(grantRoot("/", true, isDir)).toBe(null);
+    expect(grantRoot("/Users", true, isDir)).toBe(null);
+    expect(grantRoot("/Users/me.txt", false, isDir)).toBe(null);
+  });
+});
 
 describe("parentFolders", () => {
   it("lists parents up to the home folder, nearest first", () => {

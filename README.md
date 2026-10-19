@@ -2,7 +2,7 @@
 
 See and control what AI coding agents can touch on your Mac.
 
-[Download Agentic Leash 0.1.0 for Apple Silicon](https://github.com/velusgautam/Agentic-Leash/releases/download/v0.1.0/Agentic.Leash-0.1.0-arm64.dmg)
+[Download Agentic Leash 0.1.1 for Apple Silicon](https://github.com/velusgautam/Agentic-Leash/releases/download/v0.1.1/Agentic.Leash-0.1.1-arm64.dmg)
 
 ![Agentic Leash](docs/screenshot.png)
 
@@ -24,6 +24,6 @@ pnpm install
 pnpm dev
 ```
 
-`pnpm test` runs the unit tests. `pnpm test:e2e` launches the window. `pnpm dist` builds `dist/Agentic Leash-0.1.0-arm64.dmg`.
+`pnpm test` runs the unit tests. `pnpm test:e2e` launches the window. `pnpm dist` builds `dist/Agentic Leash-0.1.1-arm64.dmg`.
 
 The first open stays on setup until the history helper is running and Full Disk Access is granted. In a dev build the helper step reads "Available in the installed app". Claude covers both the desktop app and the `claude` CLI. Turning an agent off in Settings hides it and removes its hooks. The helper is a root LaunchDaemon, so macOS asks for an administrator password once.

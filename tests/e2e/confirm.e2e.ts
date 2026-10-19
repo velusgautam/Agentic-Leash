@@ -21,9 +21,28 @@ test("an approval request opens the popup with duration choices", async () => {
   if (process.env.SCREENSHOT) await popup.screenshot({ path: process.env.SCREENSHOT.replace(".png", "-approval.png") });
   const win = await app.firstWindow();
   await popup.getByRole("button", { name: "project", exact: true }).click();
+  await expect(popup.getByRole("button", { name: "project", exact: true })).toHaveAttribute("aria-pressed", "true");
+  await expect(popup.getByText("Cursor wants read access")).toBeVisible();
+  expect(await win.evaluate(`window.leash.listGrants().then((rows) => rows.length)`)).toBe(0);
+  await popup.getByRole("button", { name: /Allow project for 8 hours/ }).click();
   await expect.poll(() => win.evaluate(`window.leash.listGrants().then((rows) => rows.map((row) => row.path).join(","))`)).toBe("/Users/someone/project");
   await expect(popup.getByText("No requests waiting.")).toBeVisible();
   socket.destroy();
+  await app.close();
+});
+
+test("the lockdown button label follows revoke-all", async () => {
+  const app = await launch();
+  const win = await app.firstWindow();
+  await win.evaluate(`window.leash.createGrant({ agent: "*", path: "/tmp/leash-lock", access: "write", ttlSeconds: 3600 })`);
+  await win.getByRole("link", { name: "Grants", exact: true }).click();
+  await expect(win.getByRole("button", { name: "Lockdown off" })).toBeDisabled();
+  await win.getByRole("button", { name: "Revoke all and lock down" }).click();
+  await win.getByRole("alertdialog").getByRole("button", { name: "Revoke all" }).click();
+  const end = win.getByRole("button", { name: "End lockdown" });
+  await expect(end).toBeEnabled();
+  await end.click();
+  await expect(win.getByRole("button", { name: "Lockdown off" })).toBeDisabled();
   await app.close();
 });
 
