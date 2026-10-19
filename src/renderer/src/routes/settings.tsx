@@ -81,7 +81,7 @@ function Agents() {
     <SettingsSection title="Agents">
       {rows.map((agent) => {
         const name = AGENT_LABELS[agent.id] ?? agent.id;
-        const hookId = agent.id === "claude-code" || agent.id === "cursor" || agent.id === "codex" ? agent.id : null;
+        const hookId = agent.id === "claude-code" || agent.id === "cursor" || agent.id === "codex" || agent.id === "gemini" ? agent.id : null;
         const description = agent.id === "codex"
           ? "Off hides this agent and removes its hooks. After install, run /hooks in Codex and trust Agentic Leash."
           : hookId ? "Off hides this agent and removes its hooks." : "Off hides this agent. It has no hook install yet.";

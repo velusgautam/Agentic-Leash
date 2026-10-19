@@ -22,14 +22,11 @@ export interface DiagnosticReport {
   errors: string[];
 }
 
-const PLAIN: DiagnosticHook[] = [
-  { agent: "gemini", label: "Gemini CLI", status: "none" },
-];
-
 export function diagnosticsReport(input: {
   claude: boolean;
   cursor: boolean;
   codex: boolean;
+  gemini: boolean;
   helperStatus: string;
   lastSweep: string | null;
   hookP50Ms: number | null;
@@ -40,7 +37,7 @@ export function diagnosticsReport(input: {
     { agent: "claude-code", label: "Claude", status: input.claude ? "installed" : "missing" },
     { agent: "cursor", label: "Cursor", status: input.cursor ? "installed" : "missing" },
     { agent: "codex", label: "Codex", status: input.codex ? "installed" : "missing" },
-    ...PLAIN,
+    { agent: "gemini", label: "Gemini CLI", status: input.gemini ? "installed" : "missing" },
   ];
   const errors = [
     ...hooks.filter((hook) => hook.status === "missing").map((hook) => `${hook.label} hook is not installed.`),

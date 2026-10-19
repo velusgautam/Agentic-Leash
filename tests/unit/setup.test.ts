@@ -22,12 +22,19 @@ describe("setup gate", () => {
 
   it("lets setup finish when no hook agent is installed, and when an installed agent is turned off", () => {
     expect(setupReady({ helper: "running", fda: true, agents: [] })).toBe(true);
-    expect(setupReady({ helper: "running", fda: true, agents: [agent("gemini", true, true, null)] })).toBe(true);
     expect(setupReady({
       helper: "skipped",
       fda: true,
       agents: [agent("claude-code", true, false, false)],
     })).toBe(true);
+  });
+
+  it("waits for Gemini hooks when Gemini is installed and turned on", () => {
+    expect(setupReady({
+      helper: "running",
+      fda: true,
+      agents: [agent("gemini", true, true, false)],
+    })).toBe(false);
   });
 
   it("waits for Codex hooks when Codex is installed and turned on", () => {

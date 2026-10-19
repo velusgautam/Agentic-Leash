@@ -22,7 +22,7 @@ function request(partial: HookRequest): Normalised {
   return { kind: "request", request: partial };
 }
 
-export function normaliseHook(raw: unknown, entry: "claude" | "cursor" | "codex", home?: string): Normalised {
+export function normaliseHook(raw: unknown, entry: "claude" | "cursor" | "codex" | "gemini", home?: string): Normalised {
   const payload = asRecord(raw);
   if (entry === "claude" && typeof payload.cursor_version === "string") return { kind: "ignore" };
 
@@ -30,7 +30,18 @@ export function normaliseHook(raw: unknown, entry: "claude" | "cursor" | "codex"
   const cwd = str(payload.cwd) || str(input.cwd) || "/";
   const event = str(payload.hook_event_name);
   const sessionId = str(payload.session_id) || str(payload.turn_id) || undefined;
-  const agent = entry === "cursor" ? "cursor" : entry === "codex" ? "codex" : "claude-code";
+  const agent = entry === "claude" ? "claude-code" : entry;
+
+  if (entry === "gemini") {
+    const tool = str(payload.tool_name) || "unknown";
+    if (tool === "run_shell_command" || tool === "Shell") {
+      const command = str(input.command) || str(payload.command);
+      return request({ agent, event, tool, access: "write", paths: extractShellPaths(command, cwd, home), cwd, command, sessionId });
+    }
+    const rawPaths = [input.file_path, input.path].filter((value): value is string => typeof value === "string" && value.length > 0);
+    const access: Access = tool === "write_file" || tool === "replace" ? "write" : "read";
+    return request({ agent, event, tool, access, paths: rawPaths.map((path) => resolveOne(path, cwd, home)), cwd, sessionId });
+  }
 
   if (entry === "cursor" && event === "beforeReadFile") {
     const file = str(payload.file_path);

@@ -5,10 +5,11 @@ import { SetupButton } from "~/components/SetupButton";
 import { Button } from "~/components/ui/button";
 import { useSetup } from "~/components/useSetup";
 
-const HOOKS: Record<string, { title: string; id: "claude-code" | "cursor" | "codex" }> = {
+const HOOKS: Record<string, { title: string; id: "claude-code" | "cursor" | "codex" | "gemini" }> = {
   "claude-code": { title: "Claude hooks", id: "claude-code" },
   cursor: { title: "Cursor hooks", id: "cursor" },
   codex: { title: "Codex hooks", id: "codex" },
+  gemini: { title: "Gemini CLI hooks", id: "gemini" },
 };
 
 function HookRows({ agents }: { agents: SetupAgent[] }) {

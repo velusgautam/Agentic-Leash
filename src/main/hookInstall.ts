@@ -73,3 +73,26 @@ export function codexHooksInstalled(file: unknown, command: string): boolean {
   const groups = ((file ?? {}) as CodexFile).hooks?.PreToolUse ?? [];
   return groups.some((group) => (group.hooks ?? []).some((hook) => hook.command === command));
 }
+
+type GeminiHook = { type?: string; name?: string; command?: string; timeout?: number };
+type GeminiFile = { hooks?: { BeforeTool?: { matcher?: string; hooks?: GeminiHook[] }[] } } & Record<string, unknown>;
+
+function geminiGroups(file: GeminiFile): { matcher?: string; hooks?: GeminiHook[] }[] {
+  return (file.hooks?.BeforeTool ?? []).map((group) => ({ ...group, hooks: (group.hooks ?? []).filter((hook) => !isOurs(hook.command, "leash-hook")) }));
+}
+
+export function mergeGeminiHooks(existing: unknown, command: string): GeminiFile {
+  const file = (existing && typeof existing === "object" ? existing : {}) as GeminiFile;
+  const ours = { matcher: ".*", hooks: [{ type: "command", name: "agentic-leash", command, timeout: 150000 }] };
+  return { ...file, hooks: { ...file.hooks, BeforeTool: [...geminiGroups(file).filter((group) => (group.hooks ?? []).length > 0), ours] } };
+}
+
+export function removeGeminiHooks(existing: unknown): GeminiFile {
+  const file = (existing && typeof existing === "object" ? existing : {}) as GeminiFile;
+  return { ...file, hooks: { ...file.hooks, BeforeTool: geminiGroups(file).filter((group) => (group.hooks ?? []).length > 0) } };
+}
+
+export function geminiHooksInstalled(file: unknown, command: string): boolean {
+  const groups = ((file ?? {}) as GeminiFile).hooks?.BeforeTool ?? [];
+  return groups.some((group) => (group.hooks ?? []).some((hook) => hook.command === command));
+}
