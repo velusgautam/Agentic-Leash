@@ -183,7 +183,7 @@ function AppShell() {
         <div className="drag-region flex h-13 shrink-0 items-center justify-end gap-3 px-5">{onSettings ? null : <RevokeAll />}</div>
         {status && needsAgentBanner(status.agents) ? (
           <div role="status" className="mx-5 mb-2 rounded-lg border border-border bg-muted/50 px-3 py-2 text-sm">
-            Install Claude, Cursor, Codex, or Gemini to start tracking.
+            Install Claude, Cursor, Codex, Gemini, or Hermes to start tracking.
           </div>
         ) : null}
         {restart.length ? (

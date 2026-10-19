@@ -27,6 +27,7 @@ export function diagnosticsReport(input: {
   cursor: boolean;
   codex: boolean;
   gemini: boolean;
+  hermes: boolean;
   helperStatus: string;
   lastSweep: string | null;
   hookP50Ms: number | null;
@@ -38,6 +39,7 @@ export function diagnosticsReport(input: {
     { agent: "cursor", label: "Cursor", status: input.cursor ? "installed" : "missing" },
     { agent: "codex", label: "Codex", status: input.codex ? "installed" : "missing" },
     { agent: "gemini", label: "Gemini CLI", status: input.gemini ? "installed" : "missing" },
+    { agent: "hermes", label: "Hermes", status: input.hermes ? "installed" : "missing" },
   ];
   const errors = [
     ...hooks.filter((hook) => hook.status === "missing").map((hook) => `${hook.label} hook is not installed.`),

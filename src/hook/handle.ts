@@ -10,7 +10,7 @@ import type { HookRequest, Verdict } from "../shared/types";
 export type HookAnswer = "allow" | "deny" | "timeout";
 
 export async function handlePayload(options: {
-  entry: "claude" | "cursor" | "codex" | "gemini";
+  entry: "claude" | "cursor" | "codex" | "gemini" | "hermes";
   raw: unknown;
   db: DatabaseSync;
   now: number;

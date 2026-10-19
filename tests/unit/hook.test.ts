@@ -59,6 +59,21 @@ describe("gemini hooks", () => {
   });
 });
 
+describe("hermes hooks", () => {
+  it("treats a terminal call as a write and blocks on deny", () => {
+    const request = normaliseHook({
+      hook_event_name: "pre_tool_call",
+      tool_name: "terminal",
+      tool_input: { command: "ls /tmp" },
+      cwd: "/tmp",
+      session_id: "s1",
+    }, "hermes");
+    expect(request.kind === "request" && request.request.agent).toBe("hermes");
+    expect(JSON.parse(respond("hermes", { kind: "deny", reason: "no" }).stdout)).toEqual({ decision: "block", reason: "no" });
+    expect(JSON.parse(respond("hermes", "timeout").stdout)).toEqual({ action: "approve", message: "Agentic Leash is not answering" });
+  });
+});
+
 describe("respond", () => {
   it("gives no opinion on pass and denies with a reason", () => {
     expect(respond("claude", { kind: "pass" })).toEqual({ stdout: "", exitCode: 0 });

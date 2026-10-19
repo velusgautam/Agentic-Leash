@@ -16,14 +16,15 @@ export interface SetupStatus {
   ready: boolean;
 }
 
-const HOOK_IDS = new Set(["claude-code", "cursor", "codex", "gemini"]);
-const BANNER_IDS = new Set(["claude-code", "cursor", "codex", "gemini"]);
+const HOOK_IDS = new Set(["claude-code", "cursor", "codex", "gemini", "hermes"]);
+const BANNER_IDS = new Set(["claude-code", "cursor", "codex", "gemini", "hermes"]);
 
 export const HISTORY_AGENT: Record<string, string> = {
   "claude-code": "claude",
   cursor: "cursor-agent",
   codex: "codex",
   gemini: "gemini",
+  hermes: "hermes",
 };
 
 export function setupReady(status: { helper: HelperState; fda: boolean; agents: SetupAgent[] }): boolean {

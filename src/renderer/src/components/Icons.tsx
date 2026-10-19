@@ -78,5 +78,6 @@ export const AGENT_LABELS: Record<string, string> = {
   "cursor-agent": "Cursor",
   codex: "Codex",
   gemini: "Gemini CLI",
+  hermes: "Hermes",
   "t3-code": "T3 Code",
 };

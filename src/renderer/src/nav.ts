@@ -22,6 +22,7 @@ export const AGENT_NAV = [
   { id: "cursor", label: "Cursor" },
   { id: "codex", label: "Codex" },
   { id: "gemini", label: "Gemini CLI" },
+  { id: "hermes", label: "Hermes" },
 ] as const;
 
 export const SETTINGS_SECTIONS = [

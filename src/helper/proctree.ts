@@ -1,4 +1,4 @@
-const ROOTS = new Set(["claude", "cursor-agent", "codex", "gemini", "opencode"]);
+const ROOTS = new Set(["claude", "cursor-agent", "codex", "gemini", "hermes", "opencode"]);
 
 // cursor-agent is a bash wrapper that execs a bundled node from its versions dir.
 function rootOf(path: string): string | undefined {
