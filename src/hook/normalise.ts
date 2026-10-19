@@ -22,15 +22,15 @@ function request(partial: HookRequest): Normalised {
   return { kind: "request", request: partial };
 }
 
-export function normaliseHook(raw: unknown, entry: "claude" | "cursor", home?: string): Normalised {
+export function normaliseHook(raw: unknown, entry: "claude" | "cursor" | "codex", home?: string): Normalised {
   const payload = asRecord(raw);
   if (entry === "claude" && typeof payload.cursor_version === "string") return { kind: "ignore" };
 
   const input = asRecord(payload.tool_input);
   const cwd = str(payload.cwd) || str(input.cwd) || "/";
   const event = str(payload.hook_event_name);
-  const sessionId = str(payload.session_id) || undefined;
-  const agent = entry === "cursor" ? "cursor" : "claude-code";
+  const sessionId = str(payload.session_id) || str(payload.turn_id) || undefined;
+  const agent = entry === "cursor" ? "cursor" : entry === "codex" ? "codex" : "claude-code";
 
   if (entry === "cursor" && event === "beforeReadFile") {
     const file = str(payload.file_path);

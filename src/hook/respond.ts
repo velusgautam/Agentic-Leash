@@ -1,7 +1,8 @@
 import type { Verdict } from "../shared/types";
 
-export function respond(entry: "claude" | "cursor", verdict: Verdict | "timeout"): { stdout: string; exitCode: number } {
+export function respond(entry: "claude" | "cursor" | "codex", verdict: Verdict | "timeout"): { stdout: string; exitCode: number } {
   if (verdict === "timeout") {
+    if (entry === "codex") return { stdout: "", exitCode: 0 };
     if (entry === "claude") {
       return {
         stdout: JSON.stringify({
@@ -13,10 +14,10 @@ export function respond(entry: "claude" | "cursor", verdict: Verdict | "timeout"
     return { stdout: JSON.stringify({ permission: "allow" }), exitCode: 0 };
   }
   if (verdict.kind === "pass") {
-    return entry === "claude" ? { stdout: "", exitCode: 0 } : { stdout: JSON.stringify({ permission: "allow" }), exitCode: 0 };
+    return entry === "cursor" ? { stdout: JSON.stringify({ permission: "allow" }), exitCode: 0 } : { stdout: "", exitCode: 0 };
   }
   if (verdict.kind === "deny") {
-    if (entry === "claude") {
+    if (entry === "claude" || entry === "codex") {
       return {
         stdout: JSON.stringify({
           hookSpecificOutput: { hookEventName: "PreToolUse", permissionDecision: "deny", permissionDecisionReason: verdict.reason },
