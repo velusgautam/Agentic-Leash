@@ -32,4 +32,16 @@ describe("Broker", () => {
     void broker.offer("b", request({ command: "rm notes.txt" }));
     expect(broker.list()).toHaveLength(2);
   });
+
+  it("records when the prompt was asked and keeps it when a second request joins", () => {
+    const broker = new Broker(() => {});
+    const before = Date.now();
+    void broker.offer("a", request());
+    const askedAt = broker.list()[0]?.askedAt ?? 0;
+    expect(askedAt).toBeGreaterThanOrEqual(before);
+    expect(askedAt).toBeLessThanOrEqual(Date.now());
+    void broker.offer("b", request());
+    expect(broker.list()).toHaveLength(1);
+    expect(broker.list()[0]?.askedAt).toBe(askedAt);
+  });
 });

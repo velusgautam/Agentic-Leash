@@ -43,6 +43,12 @@ export function helperInstallScript(execPath: string, scriptPath: string): strin
   return `do shell script "/bin/mkdir -p '/Library/Application Support/AgenticLeash' && /bin/echo ${body} | /usr/bin/base64 -d > '${plist}' && /usr/sbin/chown root:wheel '${plist}' '/Library/Application Support/AgenticLeash' && /bin/chmod 644 '${plist}' && /bin/chmod 755 '/Library/Application Support/AgenticLeash' && (/bin/launchctl bootout system '${plist}' || true) && /bin/launchctl bootstrap system '${plist}'" with administrator privileges`;
 }
 
+export function helperUninstallScript(): string {
+  const plist = "/Library/LaunchDaemons/com.agenticleash.helper.plist";
+  const dir = "/Library/Application Support/AgenticLeash";
+  return `do shell script "/bin/launchctl bootout system '${plist}' || true; /bin/rm -f '${plist}'; /bin/rm -rf '${dir}'" with administrator privileges`;
+}
+
 export function sweepAgentPath(home = homedir()): string {
   return join(home, "Library", "LaunchAgents", "com.agenticleash.sweep.plist");
 }

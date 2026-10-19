@@ -5,6 +5,7 @@ import licenses from "../../../../THIRD_PARTY_LICENSES.md?raw";
 import type { AutoAllow } from "../../../shared/autoAllow";
 import type { OpenAtLoginState } from "../../../shared/bridge";
 import type { AgentId, Diagnostics, ThemeSource } from "../../../shared/types";
+import { ConfirmAction } from "~/components/ConfirmAction";
 import { AGENT_LABELS } from "~/components/Icons";
 import { PageContainer, SettingsRow, SettingsSection } from "~/components/settings";
 import { FullDiskControl } from "~/components/FullDiskControl";
@@ -37,6 +38,44 @@ function General() {
             checked={login?.enabled ?? false}
             disabled={!login?.available}
             onCheckedChange={(enabled) => void window.leash.setOpenAtLogin(enabled).then(setLogin)}
+          />
+        }
+      />
+    </SettingsSection>
+  );
+}
+
+const UNINSTALL_EFFECTS = [
+  "Removes this app's hooks from Claude, Cursor, Codex, Gemini, and Hermes.",
+  "Removes the login item and the sweep agent.",
+  "In the installed app, removes the history helper. macOS asks for your password.",
+  "Deletes grants and settings for this app.",
+  "In the installed app, moves Agentic Leash to the Trash and quits.",
+];
+
+function UninstallApp() {
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  return (
+    <SettingsSection title="Uninstall">
+      <SettingsRow
+        title="Uninstall Agentic Leash"
+        description={error ?? "Removes hooks, the helper, and this app's data, then quits."}
+        control={
+          <ConfirmAction
+            trigger={<Button size="sm" variant="destructive" disabled={busy}>Uninstall</Button>}
+            title="Uninstall Agentic Leash?"
+            description="This app's hooks and data are removed. Your other hook settings stay."
+            effects={UNINSTALL_EFFECTS}
+            confirmLabel="Uninstall"
+            onConfirm={() => {
+              setBusy(true);
+              setError(null);
+              void window.leash.uninstallApp().catch((caught: unknown) => {
+                setBusy(false);
+                setError(caught instanceof Error ? caught.message : "Uninstall stopped.");
+              });
+            }}
           />
         }
       />
@@ -290,7 +329,7 @@ export function SettingsPage() {
   return (
     <PageContainer>
       <h1 className="px-3 text-lg font-medium sm:px-4">{entry.label}</h1>
-      {entry.id === "general" ? <><General /><AutomaticAllows /></> : entry.id === "agents" ? <Agents /> : entry.id === "monitoring" ? <Monitoring /> : entry.id === "appearance" ? <Appearance /> : entry.id === "keybindings" ? <Keybindings /> : entry.id === "diagnostics" ? <Diagnostics /> : <Licenses />}
+      {entry.id === "general" ? <><General /><UninstallApp /><AutomaticAllows /></> : entry.id === "agents" ? <Agents /> : entry.id === "monitoring" ? <Monitoring /> : entry.id === "appearance" ? <Appearance /> : entry.id === "keybindings" ? <Keybindings /> : entry.id === "diagnostics" ? <Diagnostics /> : <Licenses />}
     </PageContainer>
   );
 }

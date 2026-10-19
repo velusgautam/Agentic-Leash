@@ -23,7 +23,7 @@ describe("appMenuTemplate", () => {
 
 describe("trayMenuTemplate", () => {
   it("opens from Open and quits only from Quit", () => {
-    const actions = { open: vi.fn(), quit: vi.fn() };
+    const actions = { open: vi.fn(), quit: vi.fn(), review: vi.fn() };
     const items = trayMenuTemplate(actions);
     click(items.find((i) => i.id === "open"));
     expect(actions.open).toHaveBeenCalledOnce();
@@ -32,5 +32,15 @@ describe("trayMenuTemplate", () => {
     expect(quit?.label).toBe("Quit Agentic Leash");
     click(quit);
     expect(actions.quit).toHaveBeenCalledOnce();
+  });
+
+  it("opens the review target from Pending requests", () => {
+    const actions = { open: vi.fn(), quit: vi.fn(), review: vi.fn() };
+    const pending = trayMenuTemplate({ ...actions, pending: 2 }).find((item) => item.id === "pending");
+    expect(pending?.enabled).toBe(true);
+    expect(pending?.label).toBe("Pending requests (2)");
+    click(pending);
+    expect(actions.review).toHaveBeenCalledOnce();
+    expect(actions.open).not.toHaveBeenCalled();
   });
 });

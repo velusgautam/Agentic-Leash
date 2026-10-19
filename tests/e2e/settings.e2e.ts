@@ -8,5 +8,9 @@ test("General shows Open at login, disabled outside the installed app", async ()
   await expect(win.getByText("Open at login")).toBeVisible();
   await expect(win.getByText("Available in the installed app.")).toBeVisible();
   await expect(win.getByRole("switch", { name: "Open at login" })).toBeDisabled();
+  await expect(win.getByRole("button", { name: "Uninstall" })).toBeVisible();
+  await win.getByRole("link", { name: "Monitoring" }).click();
+  await expect(win.getByRole("button", { name: "Available in the installed app" })).toHaveCount(2);
+  await expect(win.getByRole("button", { name: "Granted" })).toHaveCount(0);
   await app.close();
 });
