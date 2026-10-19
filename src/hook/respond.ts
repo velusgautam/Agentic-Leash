@@ -1,6 +1,10 @@
 import type { Verdict } from "../shared/types";
 
-export function respond(entry: "claude" | "cursor" | "codex", verdict: Verdict | "timeout"): { stdout: string; exitCode: number } {
+export function respond(entry: "claude" | "cursor" | "codex" | "gemini", verdict: Verdict | "timeout"): { stdout: string; exitCode: number } {
+  if (entry === "gemini") {
+    if (verdict !== "timeout" && verdict.kind === "deny") return { stdout: JSON.stringify({ decision: "deny", reason: verdict.reason }), exitCode: 0 };
+    return { stdout: "", exitCode: 0 };
+  }
   if (verdict === "timeout") {
     if (entry === "codex") return { stdout: "", exitCode: 0 };
     if (entry === "claude") {

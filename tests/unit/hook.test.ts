@@ -4,7 +4,7 @@ import { describe, expect, it } from "vitest";
 import { handlePayload } from "../../src/hook/handle";
 import { normaliseHook } from "../../src/hook/normalise";
 import { respond } from "../../src/hook/respond";
-import { codexHooksInstalled, mergeCodexHooks, removeCodexHooks } from "../../src/main/hookInstall";
+import { codexHooksInstalled, geminiHooksInstalled, mergeCodexHooks, mergeGeminiHooks, removeCodexHooks, removeGeminiHooks } from "../../src/main/hookInstall";
 import { openGrantsDb } from "../../src/shared/db";
 
 const fixture = (name: string) => JSON.parse(readFileSync(join("tests/fixtures/hooks", name), "utf8"));
@@ -34,6 +34,28 @@ describe("codex hooks", () => {
     expect(request.kind === "request" && request.request.agent).toBe("codex");
     expect(JSON.parse(respond("codex", { kind: "deny", reason: "no" }).stdout).hookSpecificOutput.permissionDecision).toBe("deny");
     expect(respond("codex", "timeout")).toEqual({ stdout: "", exitCode: 0 });
+  });
+});
+
+describe("gemini hooks", () => {
+  it("merges a Gemini BeforeTool command and denies with decision", () => {
+    const command = 'ELECTRON_RUN_AS_NODE=1 "/App" "/leash-hook.js" gemini';
+    const merged = mergeGeminiHooks({ mcpServers: { local: {} } }, command);
+    expect(merged.mcpServers).toEqual({ local: {} });
+    expect(geminiHooksInstalled(merged, command)).toBe(true);
+    expect(geminiHooksInstalled(removeGeminiHooks(merged), command)).toBe(false);
+    const request = normaliseHook({
+      hook_event_name: "BeforeTool",
+      tool_name: "run_shell_command",
+      tool_input: { command: "ls /tmp" },
+      cwd: "/tmp",
+    }, "gemini");
+    expect(request.kind === "request" && request.request.agent).toBe("gemini");
+    expect(request.kind === "request" && request.request.access).toBe("write");
+    const read = normaliseHook({ tool_name: "read_file", tool_input: { file_path: "/tmp/a.txt" }, cwd: "/tmp" }, "gemini");
+    expect(read.kind === "request" && read.request.access).toBe("read");
+    expect(JSON.parse(respond("gemini", { kind: "deny", reason: "no" }).stdout)).toEqual({ decision: "deny", reason: "no" });
+    expect(respond("gemini", "timeout")).toEqual({ stdout: "", exitCode: 0 });
   });
 });
 

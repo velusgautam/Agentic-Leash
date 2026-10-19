@@ -14,7 +14,7 @@ import { cursorWatchPaths, cursorWorkers, loadCursor } from "./agents/cursor";
 import { mirrorConfigGrants } from "./agents/mirror";
 import { loadCodex, loadGemini, loadT3 } from "./agents/others";
 import { Broker } from "./broker";
-import { claudeHooksInstalled, codexHooksInstalled, cursorHooksInstalled, mergeClaudeHooks, mergeCodexHooks, mergeCursorHooks, removeClaudeHooks, removeCodexHooks, removeCursorHooks } from "./hookInstall";
+import { claudeHooksInstalled, codexHooksInstalled, cursorHooksInstalled, geminiHooksInstalled, mergeClaudeHooks, mergeCodexHooks, mergeCursorHooks, mergeGeminiHooks, removeClaudeHooks, removeCodexHooks, removeCursorHooks, removeGeminiHooks } from "./hookInstall";
 import { readJson } from "./agents/fs";
 import { writeWithBackup } from "./backup";
 import { applyDueClaudeTrust, revokeClaudeTrust } from "./claudeTrust";
@@ -37,11 +37,12 @@ function claudeRoot(): string {
   return process.env.CLAUDE_CONFIG_DIR || join(homeDir(), ".claude");
 }
 
-type HookAgent = "claude-code" | "cursor" | "codex";
+type HookAgent = "claude-code" | "cursor" | "codex" | "gemini";
 
 function hookPath(agent: HookAgent, home: string): string {
   if (agent === "cursor") return join(home, ".cursor/hooks.json");
   if (agent === "codex") return join(home, ".codex/hooks.json");
+  if (agent === "gemini") return join(home, ".gemini/settings.json");
   return join(claudeRoot(), "settings.json");
 }
 
@@ -54,7 +55,7 @@ function hookScript(): string {
   return app.isPackaged ? join(process.resourcesPath, "app.asar.unpacked/out/main/leash-hook.js") : join(app.getAppPath(), "out/main/leash-hook.js");
 }
 
-function hookCommand(kind: "claude" | "cursor" | "codex"): string {
+function hookCommand(kind: "claude" | "cursor" | "codex" | "gemini"): string {
   return `ELECTRON_RUN_AS_NODE=1 "${process.execPath}" "${hookScript()}" ${kind}`;
 }
 
@@ -316,7 +317,7 @@ export function startRuntime(options: { userData: string; openApproval: () => vo
       "claude-code": claudeHooksInstalled(readJson(hookPath("claude-code", home)), hookCommand("claude")),
       cursor: cursorHooksInstalled(readJson(hookPath("cursor", home)), hookCommand("cursor")),
       codex: codexHooksInstalled(readJson(hookPath("codex", home)), hookCommand("codex")),
-      gemini: null,
+      gemini: geminiHooksInstalled(readJson(hookPath("gemini", home)), hookCommand("gemini")),
     };
     return (["claude-code", "cursor", "codex", "gemini"] as const).map((id) => ({
       id,
@@ -344,10 +345,10 @@ export function startRuntime(options: { userData: string; openApproval: () => vo
   };
   const installAgent = (agent: HookAgent) => {
     const path = hookPath(agent, home);
-    const kind = agent === "cursor" ? "cursor" : agent === "codex" ? "codex" : "claude";
+    const kind = agent === "claude-code" ? "claude" : agent;
     const command = hookCommand(kind);
     const existing = readJson(path);
-    const next = agent === "cursor" ? mergeCursorHooks(existing, command) : agent === "codex" ? mergeCodexHooks(existing, command) : mergeClaudeHooks(existing, command);
+    const next = agent === "cursor" ? mergeCursorHooks(existing, command) : agent === "codex" ? mergeCodexHooks(existing, command) : agent === "gemini" ? mergeGeminiHooks(existing, command) : mergeClaudeHooks(existing, command);
     writeHookFile(path, next);
     pendingRestart.add(agent);
   };
@@ -355,17 +356,17 @@ export function startRuntime(options: { userData: string; openApproval: () => vo
     const path = hookPath(agent, home);
     if (!existsSync(path)) return;
     const existing = readJson(path);
-    const next = agent === "cursor" ? removeCursorHooks(existing) : agent === "codex" ? removeCodexHooks(existing) : removeClaudeHooks(existing);
+    const next = agent === "cursor" ? removeCursorHooks(existing) : agent === "codex" ? removeCodexHooks(existing) : agent === "gemini" ? removeGeminiHooks(existing) : removeClaudeHooks(existing);
     writeHookFile(path, next);
     pendingRestart.add(agent);
   };
   ipcMain.handle("hooks:status", () => hookRows().every((agent) => agent.hooks !== false));
   ipcMain.handle("hooks:install", (_event, agent: HookAgent) => {
-    if (agent !== "claude-code" && agent !== "cursor" && agent !== "codex") return;
+    if (agent !== "claude-code" && agent !== "cursor" && agent !== "codex" && agent !== "gemini") return;
     installAgent(agent);
   });
   ipcMain.handle("hooks:uninstall", (_event, agent: HookAgent) => {
-    if (agent !== "claude-code" && agent !== "cursor" && agent !== "codex") return;
+    if (agent !== "claude-code" && agent !== "cursor" && agent !== "codex" && agent !== "gemini") return;
     uninstallAgent(agent);
   });
   ipcMain.handle("setup:get", () => currentSetup());
@@ -375,7 +376,7 @@ export function startRuntime(options: { userData: string; openApproval: () => vo
     if (enabled) disabled.delete(id);
     else disabled.add(id);
     writeUiState(options.userData, { ...state, disabledAgents: [...disabled] });
-    if (!enabled && (id === "claude-code" || id === "cursor" || id === "codex")) uninstallAgent(id);
+    if (!enabled && (id === "claude-code" || id === "cursor" || id === "codex" || id === "gemini")) uninstallAgent(id);
   });
   ipcMain.handle("diagnostics:get", async () => {
     const stats = percentiles(decisionDurations(db));
@@ -391,6 +392,7 @@ export function startRuntime(options: { userData: string; openApproval: () => vo
       claude: claudeHooksInstalled(readJson(join(claudeRoot(), "settings.json")), hookCommand("claude")),
       cursor: cursorHooksInstalled(readJson(join(home, ".cursor/hooks.json")), hookCommand("cursor")),
       codex: codexHooksInstalled(readJson(join(home, ".codex/hooks.json")), hookCommand("codex")),
+      gemini: geminiHooksInstalled(readJson(join(home, ".gemini/settings.json")), hookCommand("gemini")),
       helperStatus,
       lastSweep: getSetting(db, "last_sweep", "") || null,
       hookP50Ms: stats.p50,
