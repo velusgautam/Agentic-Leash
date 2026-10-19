@@ -11,7 +11,7 @@ import { loadClaude } from "../main/agents/claude";
 import { join } from "node:path";
 
 const invoked = process.argv[1]?.includes("leash-hook");
-const entry = process.argv[2] === "cursor" ? "cursor" : "claude";
+const entry = process.argv[2] === "cursor" ? "cursor" : process.argv[2] === "codex" ? "codex" : "claude";
 
 if (invoked && process.argv.includes("--sweep")) {
   const db = openGrantsDb(grantsDbPath());

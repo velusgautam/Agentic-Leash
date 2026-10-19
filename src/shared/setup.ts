@@ -16,7 +16,7 @@ export interface SetupStatus {
   ready: boolean;
 }
 
-const HOOK_IDS = new Set(["claude-code", "cursor"]);
+const HOOK_IDS = new Set(["claude-code", "cursor", "codex"]);
 const BANNER_IDS = new Set(["claude-code", "cursor", "codex", "gemini"]);
 
 export const HISTORY_AGENT: Record<string, string> = {

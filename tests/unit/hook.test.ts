@@ -4,6 +4,7 @@ import { describe, expect, it } from "vitest";
 import { handlePayload } from "../../src/hook/handle";
 import { normaliseHook } from "../../src/hook/normalise";
 import { respond } from "../../src/hook/respond";
+import { codexHooksInstalled, mergeCodexHooks, removeCodexHooks } from "../../src/main/hookInstall";
 import { openGrantsDb } from "../../src/shared/db";
 
 const fixture = (name: string) => JSON.parse(readFileSync(join("tests/fixtures/hooks", name), "utf8"));
@@ -20,6 +21,19 @@ describe("normalise", () => {
     expect(normaliseHook(fixture("cursor-ide-via-claude-settings-preToolUse-read.json"), "claude")).toEqual({ kind: "ignore" });
     const shell = normaliseHook(fixture("cursor-beforeShellExecution.json"), "cursor");
     expect(shell.kind === "request" && shell.request.command).toBe("ls spikes");
+  });
+});
+
+describe("codex hooks", () => {
+  it("merges a Codex PreToolUse command and detects it", () => {
+    const command = 'ELECTRON_RUN_AS_NODE=1 "/App" "/leash-hook.js" codex';
+    const merged = mergeCodexHooks({ hooks: { PreToolUse: [{ matcher: "Bash", hooks: [{ command: "other" }] }] } }, command);
+    expect(codexHooksInstalled(merged, command)).toBe(true);
+    expect(codexHooksInstalled(removeCodexHooks(merged), command)).toBe(false);
+    const request = normaliseHook({ hook_event_name: "PreToolUse", tool_name: "Bash", tool_input: { command: "ls /tmp" }, cwd: "/tmp", turn_id: "t1" }, "codex");
+    expect(request.kind === "request" && request.request.agent).toBe("codex");
+    expect(JSON.parse(respond("codex", { kind: "deny", reason: "no" }).stdout).hookSpecificOutput.permissionDecision).toBe("deny");
+    expect(respond("codex", "timeout")).toEqual({ stdout: "", exitCode: 0 });
   });
 });
 

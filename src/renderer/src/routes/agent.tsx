@@ -140,7 +140,7 @@ export function AgentPage() {
       {hook && hook.hooks === false && hook.installed ? (
         <div role="status" className="mx-3 flex items-center justify-between gap-3 rounded-lg border border-border bg-muted/40 px-3 py-2 text-sm sm:mx-4">
           <span>Install hooks so this agent is asked before it reads or writes.</span>
-          {agentId === "claude-code" || agentId === "cursor" ? <SetupButton kind="hook" actionKey={agentId} done={false} onClick={() => window.leash.installHooks(agentId)} /> : null}
+          {agentId === "claude-code" || agentId === "cursor" || agentId === "codex" ? <SetupButton kind="hook" actionKey={agentId} done={false} onClick={() => window.leash.installHooks(agentId)} /> : null}
         </div>
       ) : null}
       <SettingsSection title="Folders">

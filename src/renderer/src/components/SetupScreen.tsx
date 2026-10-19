@@ -5,9 +5,10 @@ import { SetupButton } from "~/components/SetupButton";
 import { Button } from "~/components/ui/button";
 import { useSetup } from "~/components/useSetup";
 
-const HOOKS: Record<string, { title: string; id: "claude-code" | "cursor" }> = {
+const HOOKS: Record<string, { title: string; id: "claude-code" | "cursor" | "codex" }> = {
   "claude-code": { title: "Claude hooks", id: "claude-code" },
   cursor: { title: "Cursor hooks", id: "cursor" },
+  codex: { title: "Codex hooks", id: "codex" },
 };
 
 function HookRows({ agents }: { agents: SetupAgent[] }) {

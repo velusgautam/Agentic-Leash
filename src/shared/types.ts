@@ -19,7 +19,7 @@ export interface ScheduledRevoke {
 }
 
 export interface HookRequest {
-  agent: "claude-code" | "cursor";
+  agent: "claude-code" | "cursor" | "codex";
   event: string;
   tool: string;
   access: Access;
