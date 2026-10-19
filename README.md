@@ -2,7 +2,7 @@
 
 See and control what AI coding agents can touch on your Mac.
 
-[Download Agentic Leash 0.1.0 for Apple Silicon](https://github.com/velusgautam/Agentic-Leash/releases/download/v0.1.0/Agentic%20Leash-0.1.0-arm64.dmg)
+[Download Agentic Leash 0.1.0 for Apple Silicon](https://github.com/velusgautam/Agentic-Leash/releases/download/v0.1.0/Agentic.Leash-0.1.0-arm64.dmg)
 
 ![Agentic Leash](docs/screenshot.png)
 
