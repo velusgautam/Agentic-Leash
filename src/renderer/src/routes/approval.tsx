@@ -33,6 +33,7 @@ function CloseButton() {
 export function ApprovalPage() {
   const [pending, setPending] = useState<PendingRequest[]>([]);
   const [choice, setChoice] = useState(1);
+  const [scope, setScope] = useState<string | null>(null);
   const load = () => void window.leash.listPending().then(setPending);
   useEffect(() => {
     load();
@@ -40,8 +41,11 @@ export function ApprovalPage() {
     return () => window.clearInterval(timer);
   }, []);
   const current = pending[0];
-  useEffect(() => setChoice(1), [current?.id]);
-  const allow = (scopePath?: string) => current && void window.leash.decidePending(current.id, "allow", PRESETS[choice]!.seconds, scopePath);
+  useEffect(() => {
+    setChoice(1);
+    setScope(null);
+  }, [current?.id]);
+  const allow = () => current && void window.leash.decidePending(current.id, "allow", PRESETS[choice]!.seconds, scope ?? undefined);
   const deny = () => current && void window.leash.decidePending(current.id, "deny", null);
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
@@ -97,7 +101,14 @@ export function ApprovalPage() {
             <div className="mb-1 text-[11px] font-medium text-muted-foreground">Or allow this whole folder</div>
             <div className="flex max-h-16 flex-wrap gap-1 overflow-auto">
               {folders.map((folder) => (
-                <button key={folder} type="button" title={folder} onClick={() => allow(folder)} className="rounded-md border border-border bg-background px-2 py-1 font-mono text-xs hover:bg-accent">
+                <button
+                  key={folder}
+                  type="button"
+                  title={folder}
+                  aria-pressed={scope === folder}
+                  onClick={() => setScope((value) => (value === folder ? null : folder))}
+                  className={cn("rounded-md border px-2 py-1 font-mono text-xs", scope === folder ? "border-primary bg-primary/10 font-medium ring-1 ring-primary/30" : "border-border bg-background hover:bg-accent")}
+                >
                   {folderLabel(folder)}
                 </button>
               ))}
@@ -131,7 +142,7 @@ export function ApprovalPage() {
           Deny <Kbd>esc</Kbd>
         </Button>
         <Button size="sm" className="h-8 text-sm" onClick={() => allow()}>
-          Allow {PRESETS[choice]!.seconds === null ? "always" : `for ${PRESETS[choice]!.label}`} <Kbd>↵</Kbd>
+          Allow {scope ? `${folderLabel(scope)} ` : ""}{PRESETS[choice]!.seconds === null ? "always" : `for ${PRESETS[choice]!.label}`} <Kbd>↵</Kbd>
         </Button>
       </footer>
     </div>

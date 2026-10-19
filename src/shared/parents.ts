@@ -10,6 +10,11 @@ function ancestors(file: string): string[] {
   return out;
 }
 
+export function grantRoot(path: string, exact: boolean, isDir: (path: string) => boolean): string | null {
+  const root = exact || isDir(path) ? path : path.slice(0, path.lastIndexOf("/")) || "/";
+  return root === "/" || root === "/Users" ? null : root;
+}
+
 /** Parent folders shared by every path, nearest first. */
 export function parentFolders(paths: string[]): string[] {
   const lists = paths.filter((path) => path.startsWith("/")).map(ancestors);

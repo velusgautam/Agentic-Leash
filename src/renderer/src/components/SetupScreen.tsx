@@ -41,14 +41,16 @@ export function SetupScreen() {
   const helperSkipped = status?.helper === "skipped";
   return (
     <div className="flex h-dvh flex-col bg-background">
-      <div className="drag-region flex h-13 items-center gap-3 px-5">
-        <LeashMark className="h-7 w-auto" />
+      {/* Traffic lights sit in this strip and hide in fullscreen, so the brand stays left. */}
+      <div className="drag-region h-13 shrink-0" />
+      <div className="drag-region flex items-center gap-3 border-b border-border px-5 py-3">
+        <LeashMark className="h-7 w-auto shrink-0" />
         <span className="text-base font-semibold tracking-tight">Agentic Leash</span>
       </div>
       <PageContainer>
         <div className="px-3 sm:px-4">
           <h1 className="text-lg font-medium">Set up this Mac</h1>
-          <p className="mt-1 text-sm text-muted-foreground">Hooks, the history helper, and Full Disk Access. The app opens when these checks pass.</p>
+          <p className="mt-1 text-sm text-muted-foreground">Install hooks for one agent, plus the history helper and Full Disk Access. The other agents can wait.</p>
         </div>
         <SettingsSection title="1. Hooks">
           <HookRows agents={status?.agents ?? []} />

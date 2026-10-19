@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { FolderLock, History, LockOpen, ShieldOff, Timer, Users } from "lucide-react";
+import { FolderLock, History, Lock, LockOpen, ShieldOff, Timer, Users } from "lucide-react";
 import { viewGrants, type GrantSortKey, type SortDir } from "../../../shared/grantView";
 import type { DecisionRow, Grant } from "../../../shared/types";
 import { ConfirmAction, grantEffects, REVOKE_ALL_EFFECTS } from "~/components/ConfirmAction";
@@ -99,6 +99,7 @@ export function GrantsPage() {
   const [agent, setAgent] = useState("all");
   const [sort, setSort] = useState<GrantSortKey>("approved");
   const [dir, setDir] = useState<SortDir>("desc");
+  const [lockdown, setLockdown] = useState(false);
   const pickSort = (next: GrantSortKey) => {
     if (next === sort) setDir((value) => (value === "desc" ? "asc" : "desc"));
     else {
@@ -109,6 +110,7 @@ export function GrantsPage() {
   const load = () => {
     void window.leash.listGrants().then(setGrants);
     void window.leash.listDecisions().then(setDecisions);
+    void window.leash.grantStatus().then((status) => setLockdown(status.lockdown));
   };
   useEffect(() => {
     load();
@@ -145,7 +147,7 @@ export function GrantsPage() {
       ) : (
         <GrantList grants={grants} agent={agent} sort={sort} dir={dir} onAgent={setAgent} onSort={pickSort} onRevoke={(id) => void window.leash.revokeGrant(id).then(load)} />
       )}
-      <div className="flex gap-2 px-3">
+      <div className="flex flex-wrap items-center gap-2 px-3">
         <ConfirmAction
           trigger={<Button variant="destructive" disabled={grants.length === 0}><ShieldOff />{grants.length === 0 ? "Nothing to revoke" : "Revoke all and lock down"}</Button>}
           title={`Revoke all ${grants.length} grants?`}
@@ -154,7 +156,16 @@ export function GrantsPage() {
           confirmLabel="Revoke all"
           onConfirm={() => void window.leash.revokeAll().then(load)}
         />
-        <Button variant="outline" onClick={() => void window.leash.unlock()}><LockOpen />End lockdown</Button>
+        <Button
+          variant={lockdown ? "destructive" : "outline"}
+          disabled={!lockdown}
+          aria-pressed={lockdown}
+          className={lockdown ? undefined : "text-muted-foreground disabled:opacity-100"}
+          onClick={() => void window.leash.unlock().then(load)}
+        >
+          {lockdown ? <Lock /> : <LockOpen />}
+          {lockdown ? "End lockdown" : "Lockdown off"}
+        </Button>
       </div>
     </PageContainer>
   );

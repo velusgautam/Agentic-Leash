@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, watch, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, statSync, watch, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { promisify } from "node:util";
@@ -23,12 +23,12 @@ import { revokeStoredGrant } from "./revokeConfig";
 import { AUTO_ALLOWS, parseAutoAllowOff } from "../shared/autoAllow";
 import { MAIN_RETENTION_DAYS, NOISE_RETENTION_DAYS, parseRetentionDays, retentionDays } from "../shared/retention";
 import { coveredPending } from "../hook/decide";
-import { parentFolders } from "../shared/parents";
+import { grantRoot, parentFolders } from "../shared/parents";
 import { publishClaudeRules } from "./rulesMode";
 import { guiQuitScript, parsePs, percentiles, restartTargets } from "./system";
 import { readUiState, writeUiState } from "./uiState";
 import { FULL_DISK_URL, hasFullDiskAccess } from "./fullDisk";
-import { macAppPresent, setupReady, type HelperState, type SetupAgent, type SetupStatus } from "../shared/setup";
+import { macAppPresent, rememberOnboarding, setupReady, type HelperState, type SetupAgent, type SetupStatus } from "../shared/setup";
 import { readTcc } from "./tcc";
 
 const exec = promisify(execFile);
@@ -177,9 +177,8 @@ export function startRuntime(options: { userData: string; openApproval: () => vo
   const allow = (paths: string[], agent: AgentId | "*", access: Access, ttlSeconds: number | null, exact = false) => {
     const expiresAt = ttlSeconds === null ? null : Date.now() + ttlSeconds * 1000;
     for (const path of paths) {
-      const root = exact || !path.split("/").pop()?.includes(".") ? path : dirname(path);
-      if (root === "/" || root === "/Users") continue;
-      upsertGrant(db, { agent, path: root, access, source: "leash", createdAt: Date.now(), expiresAt });
+      const root = grantRoot(path, exact, (item) => statSync(item, { throwIfNoEntry: false })?.isDirectory() ?? false);
+      if (root) upsertGrant(db, { agent, path: root, access, source: "leash", createdAt: Date.now(), expiresAt });
     }
     const claude = snapshots.find((snapshot) => snapshot.id === "claude-code");
     publishClaudeRules(db, join(claudeRoot(), "settings.json"), home, claude?.enforcement === "rules");
@@ -214,9 +213,12 @@ export function startRuntime(options: { userData: string; openApproval: () => vo
   });
   ipcMain.handle("grants:revoke-all", () => revokeAll());
   ipcMain.handle("grants:create", (_event, input: { agent: AgentId | "*"; path: string; access: Access; ttlSeconds: number | null }) => {
-    allow([input.path], input.agent, input.access, input.ttlSeconds);
+    allow([input.path], input.agent, input.access, input.ttlSeconds, true);
   });
-  ipcMain.handle("grants:unlock", () => setSetting(db, "lockdown", "0"));
+  ipcMain.handle("grants:unlock", () => {
+    setSetting(db, "lockdown", "0");
+    publishClaudeRules(db, join(claudeRoot(), "settings.json"), home, snapshots.find((snapshot) => snapshot.id === "claude-code")?.enforcement === "rules");
+  });
   const autoAllowRows = () => {
     const off = new Set(parseAutoAllowOff(getSetting(db, "auto_allow_off", "[]")));
     return AUTO_ALLOWS.map((rule) => ({ ...rule, enabled: !off.has(rule.id) }));
@@ -345,7 +347,10 @@ export function startRuntime(options: { userData: string; openApproval: () => vo
     const helper = await helperState();
     const fda = !IS_MAC || hasFullDiskAccess(join(homedir(), "Library/Application Support/com.apple.TCC/TCC.db"));
     const agents = hookRows();
-    return { helper, fda, agents, ready: setupReady({ helper, fda, agents }) };
+    const state = readUiState(options.userData);
+    const onboarded = rememberOnboarding(Boolean(state.onboarded), agents);
+    if (onboarded && !state.onboarded) writeUiState(options.userData, { ...state, onboarded: true });
+    return { helper, fda, agents, ready: setupReady({ helper, fda, agents }, onboarded) };
   };
   const installHermes = () => {
     const scriptPath = join(home, ".hermes/agent-hooks/agentic-leash.sh");
