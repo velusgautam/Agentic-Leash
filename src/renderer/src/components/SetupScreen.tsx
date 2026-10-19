@@ -5,17 +5,18 @@ import { SetupButton } from "~/components/SetupButton";
 import { Button } from "~/components/ui/button";
 import { useSetup } from "~/components/useSetup";
 
-const HOOKS: Record<string, { title: string; id: "claude-code" | "cursor" | "codex" | "gemini" }> = {
+const HOOKS: Record<string, { title: string; id: "claude-code" | "cursor" | "codex" | "gemini" | "hermes" }> = {
   "claude-code": { title: "Claude hooks", id: "claude-code" },
   cursor: { title: "Cursor hooks", id: "cursor" },
   codex: { title: "Codex hooks", id: "codex" },
   gemini: { title: "Gemini CLI hooks", id: "gemini" },
+  hermes: { title: "Hermes hooks", id: "hermes" },
 };
 
 function HookRows({ agents }: { agents: SetupAgent[] }) {
   const { run } = useSetup();
   const rows = agents.filter((agent) => agent.hooks !== null && agent.installed && agent.enabled);
-  if (!rows.length) return <SettingsRow title="Hooks" description="Claude and Cursor are not on this Mac yet. This step can wait." />;
+  if (!rows.length) return <SettingsRow title="Hooks" description="Claude, Cursor, Codex, Gemini, and Hermes are not on this Mac yet. This step can wait." />;
   return rows.map((agent) => {
     const hook = HOOKS[agent.id];
     if (!hook) return null;

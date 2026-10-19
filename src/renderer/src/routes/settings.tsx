@@ -76,15 +76,17 @@ function AutomaticAllows() {
 function Agents() {
   const { status, run } = useSetup();
   const rows = (status?.agents ?? []).filter((agent) => agent.installed);
-  if (!rows.length) return <SettingsSection title="Agents"><SettingsRow title="No agents on this Mac" description="Claude, Cursor, Codex, or Gemini shows up here once it is installed." /></SettingsSection>;
+  if (!rows.length) return <SettingsSection title="Agents"><SettingsRow title="No agents on this Mac" description="Claude, Cursor, Codex, Gemini, or Hermes shows up here once it is installed." /></SettingsSection>;
   return (
     <SettingsSection title="Agents">
       {rows.map((agent) => {
         const name = AGENT_LABELS[agent.id] ?? agent.id;
-        const hookId = agent.id === "claude-code" || agent.id === "cursor" || agent.id === "codex" || agent.id === "gemini" ? agent.id : null;
+        const hookId = agent.id === "claude-code" || agent.id === "cursor" || agent.id === "codex" || agent.id === "gemini" || agent.id === "hermes" ? agent.id : null;
         const description = agent.id === "codex"
           ? "Off hides this agent and removes its hooks. After install, run /hooks in Codex and trust Agentic Leash."
-          : hookId ? "Off hides this agent and removes its hooks." : "Off hides this agent. It has no hook install yet.";
+          : agent.id === "hermes"
+            ? "Off hides this agent and removes its hooks. Hermes asks once to allow this hook."
+            : hookId ? "Off hides this agent and removes its hooks." : "Off hides this agent. It has no hook install yet.";
         return (
           <SettingsRow
             key={agent.id}

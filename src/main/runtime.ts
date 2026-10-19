@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import { existsSync, mkdirSync, watch } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, watch, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { promisify } from "node:util";
@@ -12,10 +12,11 @@ import type { Access, AgentId, AgentSnapshot, HistoryRow, ThemeSource } from "..
 import { loadClaude } from "./agents/claude";
 import { cursorWatchPaths, cursorWorkers, loadCursor } from "./agents/cursor";
 import { mirrorConfigGrants } from "./agents/mirror";
-import { loadCodex, loadGemini, loadT3 } from "./agents/others";
+import { loadCodex, loadGemini, loadHermes, loadT3 } from "./agents/others";
 import { Broker } from "./broker";
 import { claudeHooksInstalled, codexHooksInstalled, cursorHooksInstalled, geminiHooksInstalled, mergeClaudeHooks, mergeCodexHooks, mergeCursorHooks, mergeGeminiHooks, removeClaudeHooks, removeCodexHooks, removeCursorHooks, removeGeminiHooks } from "./hookInstall";
 import { readJson } from "./agents/fs";
+import { hermesHooksInstalled, hermesScript, mergeHermesConfig, removeHermesConfig } from "./hermesHooks";
 import { writeWithBackup } from "./backup";
 import { applyDueClaudeTrust, revokeClaudeTrust } from "./claudeTrust";
 import { revokeStoredGrant } from "./revokeConfig";
@@ -37,7 +38,7 @@ function claudeRoot(): string {
   return process.env.CLAUDE_CONFIG_DIR || join(homeDir(), ".claude");
 }
 
-type HookAgent = "claude-code" | "cursor" | "codex" | "gemini";
+type HookAgent = "claude-code" | "cursor" | "codex" | "gemini" | "hermes";
 
 function hookPath(agent: HookAgent, home: string): string {
   if (agent === "cursor") return join(home, ".cursor/hooks.json");
@@ -117,6 +118,7 @@ export function startRuntime(options: { userData: string; openApproval: () => vo
       loadT3(join(home, ".t3/userdata/settings.json")),
       loadCodex(join(home, ".codex/config.toml")),
       loadGemini(join(home, ".gemini")),
+      loadHermes(join(home, ".hermes")),
     ];
     for (const [id, appName] of [["claude-code", "Claude"], ["cursor", "Cursor"]] as const) {
       const snapshot = snapshots.find((item) => item.id === id);
@@ -309,6 +311,7 @@ export function startRuntime(options: { userData: string; openApproval: () => vo
     if (id === "cursor") return existsSync(join(home, ".cursor")) || macAppPresent("Cursor", home, existsSync);
     if (id === "codex") return existsSync(join(home, ".codex/config.toml"));
     if (id === "gemini") return existsSync(join(home, ".gemini/settings.json")) || existsSync(join(home, ".gemini/trustedFolders.json"));
+    if (id === "hermes") return existsSync(join(home, ".hermes"));
     return false;
   };
   const hookRows = (): SetupAgent[] => {
@@ -318,8 +321,9 @@ export function startRuntime(options: { userData: string; openApproval: () => vo
       cursor: cursorHooksInstalled(readJson(hookPath("cursor", home)), hookCommand("cursor")),
       codex: codexHooksInstalled(readJson(hookPath("codex", home)), hookCommand("codex")),
       gemini: geminiHooksInstalled(readJson(hookPath("gemini", home)), hookCommand("gemini")),
+      hermes: hermesHooksInstalled(existsSync(join(home, ".hermes/config.yaml")) ? readFileSync(join(home, ".hermes/config.yaml"), "utf8") : "", join(home, ".hermes/agent-hooks/agentic-leash.sh")),
     };
-    return (["claude-code", "cursor", "codex", "gemini"] as const).map((id) => ({
+    return (["claude-code", "cursor", "codex", "gemini", "hermes"] as const).map((id) => ({
       id,
       installed: agentInstalled(id),
       enabled: !disabled.has(id),
@@ -343,7 +347,28 @@ export function startRuntime(options: { userData: string; openApproval: () => vo
     const agents = hookRows();
     return { helper, fda, agents, ready: setupReady({ helper, fda, agents }) };
   };
+  const installHermes = () => {
+    const scriptPath = join(home, ".hermes/agent-hooks/agentic-leash.sh");
+    mkdirSync(dirname(scriptPath), { recursive: true });
+    writeFileSync(scriptPath, hermesScript(process.execPath, hookScript()));
+    chmodSync(scriptPath, 0o755);
+    const config = join(home, ".hermes/config.yaml");
+    const text = existsSync(config) ? readFileSync(config, "utf8") : "";
+    mkdirSync(dirname(config), { recursive: true });
+    writeWithBackup(config, mergeHermesConfig(text, scriptPath));
+  };
+  const uninstallHermes = () => {
+    const config = join(home, ".hermes/config.yaml");
+    if (existsSync(config)) writeWithBackup(config, removeHermesConfig(readFileSync(config, "utf8")));
+    const scriptPath = join(home, ".hermes/agent-hooks/agentic-leash.sh");
+    if (existsSync(scriptPath)) rmSync(scriptPath);
+  };
   const installAgent = (agent: HookAgent) => {
+    if (agent === "hermes") {
+      installHermes();
+      pendingRestart.add("hermes");
+      return;
+    }
     const path = hookPath(agent, home);
     const kind = agent === "claude-code" ? "claude" : agent;
     const command = hookCommand(kind);
@@ -353,6 +378,11 @@ export function startRuntime(options: { userData: string; openApproval: () => vo
     pendingRestart.add(agent);
   };
   const uninstallAgent = (agent: HookAgent) => {
+    if (agent === "hermes") {
+      uninstallHermes();
+      pendingRestart.add("hermes");
+      return;
+    }
     const path = hookPath(agent, home);
     if (!existsSync(path)) return;
     const existing = readJson(path);
@@ -362,11 +392,11 @@ export function startRuntime(options: { userData: string; openApproval: () => vo
   };
   ipcMain.handle("hooks:status", () => hookRows().every((agent) => agent.hooks !== false));
   ipcMain.handle("hooks:install", (_event, agent: HookAgent) => {
-    if (agent !== "claude-code" && agent !== "cursor" && agent !== "codex" && agent !== "gemini") return;
+    if (agent !== "claude-code" && agent !== "cursor" && agent !== "codex" && agent !== "gemini" && agent !== "hermes") return;
     installAgent(agent);
   });
   ipcMain.handle("hooks:uninstall", (_event, agent: HookAgent) => {
-    if (agent !== "claude-code" && agent !== "cursor" && agent !== "codex" && agent !== "gemini") return;
+    if (agent !== "claude-code" && agent !== "cursor" && agent !== "codex" && agent !== "gemini" && agent !== "hermes") return;
     uninstallAgent(agent);
   });
   ipcMain.handle("setup:get", () => currentSetup());
@@ -376,7 +406,7 @@ export function startRuntime(options: { userData: string; openApproval: () => vo
     if (enabled) disabled.delete(id);
     else disabled.add(id);
     writeUiState(options.userData, { ...state, disabledAgents: [...disabled] });
-    if (!enabled && (id === "claude-code" || id === "cursor" || id === "codex" || id === "gemini")) uninstallAgent(id);
+    if (!enabled && (id === "claude-code" || id === "cursor" || id === "codex" || id === "gemini" || id === "hermes")) uninstallAgent(id);
   });
   ipcMain.handle("diagnostics:get", async () => {
     const stats = percentiles(decisionDurations(db));
@@ -393,6 +423,7 @@ export function startRuntime(options: { userData: string; openApproval: () => vo
       cursor: cursorHooksInstalled(readJson(join(home, ".cursor/hooks.json")), hookCommand("cursor")),
       codex: codexHooksInstalled(readJson(join(home, ".codex/hooks.json")), hookCommand("codex")),
       gemini: geminiHooksInstalled(readJson(join(home, ".gemini/settings.json")), hookCommand("gemini")),
+      hermes: hermesHooksInstalled(existsSync(join(home, ".hermes/config.yaml")) ? readFileSync(join(home, ".hermes/config.yaml"), "utf8") : "", join(home, ".hermes/agent-hooks/agentic-leash.sh")),
       helperStatus,
       lastSweep: getSetting(db, "last_sweep", "") || null,
       hookP50Ms: stats.p50,

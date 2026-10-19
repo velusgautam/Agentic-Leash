@@ -1,4 +1,4 @@
-export type AgentId = "claude-code" | "cursor" | "t3-code" | "codex" | "gemini";
+export type AgentId = "claude-code" | "cursor" | "t3-code" | "codex" | "gemini" | "hermes";
 export type Access = "read" | "write";
 export type Enforcement = "hook" | "rules" | "monitor-only";
 export type ThemeSource = "system" | "light" | "dark";
@@ -19,7 +19,7 @@ export interface ScheduledRevoke {
 }
 
 export interface HookRequest {
-  agent: "claude-code" | "cursor" | "codex" | "gemini";
+  agent: "claude-code" | "cursor" | "codex" | "gemini" | "hermes";
   event: string;
   tool: string;
   access: Access;

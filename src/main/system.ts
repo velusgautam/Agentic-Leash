@@ -18,6 +18,7 @@ const CLI: Record<string, { agent: AgentId; name: string }> = {
   "cursor-agent": { agent: "cursor", name: "Cursor agent" },
   codex: { agent: "codex", name: "Codex" },
   gemini: { agent: "gemini", name: "Gemini CLI" },
+  hermes: { agent: "hermes", name: "Hermes" },
 };
 
 export function parsePs(text: string): PsRow[] {

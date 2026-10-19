@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { diagnosticsReport } from "../../src/shared/diagnostics";
 
-const base = { claude: true, cursor: true, codex: true, gemini: true, helperStatus: "running", lastSweep: null, hookP50Ms: null, hookP95Ms: null, lastDecision: null };
+const base = { claude: true, cursor: true, codex: true, gemini: true, hermes: true, helperStatus: "running", lastSweep: null, hookP50Ms: null, hookP95Ms: null, lastDecision: null };
 
 describe("diagnosticsReport", () => {
   it("lists each agent hook and only current failures", () => {
@@ -11,6 +11,7 @@ describe("diagnosticsReport", () => {
       ["Cursor", "installed"],
       ["Codex", "installed"],
       ["Gemini CLI", "installed"],
+      ["Hermes", "installed"],
     ]);
     expect(report.errors).toEqual(["Claude hook is not installed.", "History helper is not installed."]);
     expect(report.lastDecision?.verdict).toBe("pass");

@@ -29,6 +29,14 @@ describe("setup gate", () => {
     })).toBe(true);
   });
 
+  it("waits for Hermes hooks when Hermes is installed and turned on", () => {
+    expect(setupReady({
+      helper: "running",
+      fda: true,
+      agents: [agent("hermes", true, true, false)],
+    })).toBe(false);
+  });
+
   it("waits for Gemini hooks when Gemini is installed and turned on", () => {
     expect(setupReady({
       helper: "running",
@@ -58,7 +66,7 @@ describe("agent visibility", () => {
     expect(visibleAgent({ installed: false, enabled: true })).toBe(false);
   });
 
-  it("asks for an agent only when Claude, Cursor, Codex, and Gemini are all absent", () => {
+  it("asks for an agent only when Claude, Cursor, Codex, Gemini, and Hermes are all absent", () => {
     expect(needsAgentBanner([agent("claude-code", false, true, null), agent("codex", false, true, null)])).toBe(true);
     expect(needsAgentBanner([agent("gemini", true, false, null)])).toBe(false);
   });
