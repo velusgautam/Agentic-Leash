@@ -1,0 +1,88 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>Agentic Leash stills</title>
+<style>
+  html, body { margin: 0; background: #07080a; }
+  .backdrop {
+    position: relative;
+    overflow: hidden;
+    color: #f4f4f5;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    background:
+      radial-gradient(880px 480px at 12% -10%, rgba(229, 72, 77, 0.22), transparent 60%),
+      radial-gradient(720px 420px at 110% 120%, rgba(56, 189, 248, 0.08), transparent 55%),
+      #07080a;
+  }
+  #banner { width: 1600px; height: 520px; display: none; align-items: center; justify-content: center; gap: 44px; }
+  #banner .mark { width: 168px; height: 168px; border-radius: 40px; }
+  #banner h1 { margin: 0; font-size: 92px; line-height: 0.95; letter-spacing: -0.045em; font-weight: 650; }
+  #banner .tag { margin: 16px 0 0; font-size: 34px; color: #d4d4d8; letter-spacing: -0.02em; }
+  #banner .agents { display: flex; gap: 10px; margin-top: 26px; }
+  #banner .agents span {
+    border: 1px solid rgba(255,255,255,0.14);
+    background: rgba(255,255,255,0.04);
+    border-radius: 999px;
+    padding: 8px 14px;
+    font-size: 18px;
+    color: #e4e4e7;
+  }
+  #shot { width: 1536px; height: 996px; display: none; align-items: center; justify-content: center; }
+  #win {
+    position: relative;
+    width: 1440px;
+    height: 900px;
+    overflow: hidden;
+    border-radius: 16px;
+    border: 1px solid rgba(255,255,255,0.1);
+    box-shadow: 0 28px 70px rgba(0,0,0,0.5);
+  }
+  #plate { position: absolute; inset: 0; width: 100%; height: 100%; }
+  #pop { position: absolute; left: 460px; top: 245px; width: 520px; height: 410px; border-radius: 12px; box-shadow: 0 28px 70px rgba(0,0,0,0.55); }
+  #dim { position: absolute; border: 2px solid #ff8a5c; border-radius: 12px; }
+</style>
+</head>
+<body>
+<div class="backdrop" id="banner">
+  <img class="mark" src="../../../resources/icon.png" alt="" />
+  <div>
+    <h1>Agentic Leash</h1>
+    <p class="tag">Your AI agents. On a leash.</p>
+    <div class="agents"><span>Claude</span><span>Cursor</span><span>Codex</span><span>Gemini CLI</span><span>Hermes</span></div>
+  </div>
+</div>
+<div class="backdrop" id="shot">
+  <div id="win">
+    <img id="plate" alt="" />
+    <img id="pop" alt="" />
+    <div id="dim"></div>
+  </div>
+</div>
+<script>
+  const load = (img, src) => new Promise((resolve) => {
+    if (!src) { img.style.display = "none"; return resolve(); }
+    img.style.display = "block";
+    img.onload = img.onerror = resolve;
+    img.src = src;
+  });
+  window.showBanner = () => {
+    document.getElementById("banner").style.display = "flex";
+    document.getElementById("shot").style.display = "none";
+  };
+  window.showShot = async ({ plate, popup, focus, dim }) => {
+    document.getElementById("banner").style.display = "none";
+    document.getElementById("shot").style.display = "flex";
+    const plateEl = document.getElementById("plate");
+    plateEl.style.filter = popup ? "brightness(0.4)" : "none";
+    await load(plateEl, `../walkthrough/${plate}`);
+    await load(document.getElementById("pop"), popup && `../walkthrough/${popup}`);
+    const box = document.getElementById("dim");
+    Object.assign(box.style, { left: `${focus.x}px`, top: `${focus.y}px`, width: `${focus.w}px`, height: `${focus.h}px` });
+    box.style.boxShadow = dim
+      ? "0 0 0 4000px rgba(0,0,0,0.58), 0 0 28px rgba(255,138,92,0.45)"
+      : "0 0 0 2px rgba(255,138,92,0.2), 0 0 28px rgba(255,138,92,0.45)";
+  };
+</script>
+</body>
+</html>
