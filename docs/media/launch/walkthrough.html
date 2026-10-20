@@ -1,0 +1,525 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>Agentic Leash walkthrough</title>
+<style>
+  html, body { margin: 0; background: #07080a; }
+  #stage {
+    width: 1920px;
+    height: 1080px;
+    position: relative;
+    overflow: hidden;
+    color: #f4f4f5;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    background:
+      radial-gradient(880px 480px at 12% -10%, rgba(229, 72, 77, 0.22), transparent 60%),
+      radial-gradient(720px 420px at 110% 120%, rgba(56, 189, 248, 0.08), transparent 55%),
+      #07080a;
+  }
+  .card {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    text-align: center;
+    opacity: 0;
+  }
+  .mark { width: 132px; height: 132px; border-radius: 32px; }
+  h1 { margin: 26px 0 0; font-size: 84px; line-height: 0.95; letter-spacing: -0.045em; font-weight: 650; }
+  .tag { margin: 16px 0 0; font-size: 32px; color: #d4d4d8; letter-spacing: -0.02em; }
+  .agents { display: flex; gap: 10px; margin-top: 26px; }
+  .agents span {
+    border: 1px solid rgba(255,255,255,0.14);
+    background: rgba(255,255,255,0.04);
+    border-radius: 999px;
+    padding: 8px 14px;
+    font-size: 18px;
+    color: #e4e4e7;
+  }
+  #view {
+    position: absolute;
+    overflow: hidden;
+    border-radius: 16px;
+    border: 1px solid rgba(255,255,255,0.1);
+    background: #0c0d10;
+    box-shadow: 0 28px 70px rgba(0,0,0,0.5);
+  }
+  #cam { position: absolute; left: 0; top: 0; }
+  .plate, .pop { position: absolute; display: block; }
+  .plate { inset: 0; width: 100%; height: 100%; }
+  .pop { border-radius: 12px; box-shadow: 0 28px 70px rgba(0,0,0,0.55); }
+  #dim {
+    position: absolute;
+    pointer-events: none;
+    border: 2px solid #ff8a5c;
+    box-shadow: 0 0 0 4000px rgba(0,0,0,0.58), 0 0 28px rgba(255,138,92,0.45);
+  }
+  #cursor, #ripple { position: absolute; pointer-events: none; }
+  #cursor { width: 26px; height: 26px; }
+  #ripple {
+    width: 16px;
+    height: 16px;
+    margin: -8px 0 0 -8px;
+    border: 2px solid #ff8a5c;
+    border-radius: 50%;
+    opacity: 0;
+  }
+  #lower {
+    position: absolute;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    height: 116px;
+    display: flex;
+    align-items: center;
+    gap: 22px;
+    box-sizing: border-box;
+  }
+  .step {
+    flex: none;
+    font-variant-numeric: tabular-nums;
+    font-size: 15px;
+    letter-spacing: 0.16em;
+    font-weight: 700;
+    color: #ff8a5c;
+    border: 1px solid rgba(255,138,92,0.45);
+    border-radius: 999px;
+    padding: 7px 12px;
+  }
+  #headline { margin: 0; font-size: 34px; line-height: 1.05; letter-spacing: -0.03em; font-weight: 640; }
+  #sub { margin: 6px 0 0; font-size: 20px; line-height: 1.3; color: #a1a1aa; letter-spacing: -0.01em; }
+  #progress { position: absolute; left: 0; bottom: 0; height: 4px; width: 0; background: linear-gradient(90deg, #ff8a5c, #e5484d); }
+</style>
+</head>
+<body>
+<div id="stage">
+  <section class="card" id="title">
+    <img class="mark" src="../../../resources/icon.png" alt="" />
+    <h1>Agentic Leash</h1>
+    <p class="tag">Your AI agents. On a leash.</p>
+    <div class="agents"><span>Claude</span><span>Cursor</span><span>Codex</span><span>Gemini CLI</span><span>Hermes</span></div>
+  </section>
+  <div id="view">
+    <div id="cam">
+      <img class="plate" id="plateA" alt="" />
+      <img class="plate" id="plateB" alt="" />
+      <img class="pop" id="popA" alt="" />
+      <img class="pop" id="popB" alt="" />
+      <div id="dim"></div>
+    </div>
+    <div id="ripple"></div>
+    <svg id="cursor" viewBox="0 0 28 28">
+      <path d="M5 3 L5 22.5 L10.2 17.4 L14.6 25.2 L17.8 23.7 L13.3 15.8 L20.5 15.4 Z" fill="#111" stroke="#fff" stroke-width="1.6" stroke-linejoin="round" />
+    </svg>
+  </div>
+  <div id="lower">
+    <div class="step" id="step"></div>
+    <div>
+      <h2 id="headline"></h2>
+      <p id="sub"></p>
+    </div>
+  </div>
+  <section class="card" id="end">
+    <img class="mark" src="../../../resources/icon.png" alt="" style="width:108px;height:108px" />
+    <h1 style="font-size:68px">Your AI agents. On a leash.</h1>
+    <p class="tag">github.com/velusgautam/Agentic-Leash</p>
+  </section>
+  <div id="progress"></div>
+</div>
+<script>
+  const STAGE_W = 1920;
+  const STAGE_H = 1080;
+  const BAR = 116;
+  const TOP = 28;
+  const WIN = { w: 1440, h: 900 };
+  const POPUP = { w: 520, h: 410, x: (1440 - 520) / 2, y: (900 - 410) / 2 };
+  const availW = STAGE_W - 72;
+  const availH = STAGE_H - BAR - TOP - 18;
+  const fit = Math.min(availW / WIN.w, availH / WIN.h);
+  const viewW = WIN.w * fit;
+  const viewH = WIN.h * fit;
+  const viewX = (STAGE_W - viewW) / 2;
+  const viewY = TOP;
+
+  const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+  const ramp = (local, a, b) => {
+    const t = clamp((local - a) / (b - a), 0, 1);
+    return t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
+  };
+  const boxRect = (name, pad = 0) => {
+    const b = window.BOXES[name];
+    if (!b) throw new Error(`missing box ${name}`);
+    return { x: b.x - pad, y: b.y - pad, w: b.width + pad * 2, h: b.height + pad * 2 };
+  };
+  const popupBox = (name, pad = 0) => {
+    const b = boxRect(name, pad);
+    return { x: POPUP.x + b.x, y: POPUP.y + b.y, w: b.w, h: b.h };
+  };
+  const union = (a, b) => {
+    const x = Math.min(a.x, b.x);
+    const y = Math.min(a.y, b.y);
+    return { x, y, w: Math.max(a.x + a.w, b.x + b.w) - x, h: Math.max(a.y + a.h, b.y + b.h) - y };
+  };
+  const lerpRect = (a, b, u) => ({
+    x: a.x + (b.x - a.x) * u,
+    y: a.y + (b.y - a.y) * u,
+    w: a.w + (b.w - a.w) * u,
+    h: a.h + (b.h - a.h) * u,
+  });
+  const center = (r) => ({ x: r.x + r.w / 2, y: r.y + r.h / 2 });
+  const zoomFor = (focus) => {
+    const need = Math.max((focus.w + 48) / WIN.w, (focus.h + 48) / WIN.h);
+    return Math.min(1.6, 1 / need);
+  };
+  const src = (file) => `../walkthrough/${file}`;
+  const standardZoom = (hold, zoomIn, zoomOut, dur) => (local) => {
+    if (local < hold) return 0;
+    if (local < hold + zoomIn) return ramp(local, hold, hold + zoomIn);
+    if (local > dur - zoomOut) return 1 - ramp(local, dur - zoomOut, dur);
+    return 1;
+  };
+  const hourRect = () => {
+    const ttl = boxRect("popupTtl");
+    const pad = 2;
+    const gap = 4;
+    const col = (ttl.w - pad * 2 - gap * 3) / 4;
+    return {
+      x: POPUP.x + ttl.x + pad + col + gap,
+      y: POPUP.y + ttl.y + pad,
+      w: col,
+      h: ttl.h - pad * 2,
+    };
+  };
+
+  const raw = [
+    { card: "title", dur: 1400 },
+    {
+      dur: 3800,
+      step: "1 / 8",
+      headline: "Install the hooks.",
+      sub: "One install per agent. Claude, Cursor, Codex, Gemini CLI, Hermes.",
+      zoom: standardZoom(1000, 620, 520, 3800),
+      focus: () => boxRect("setupHooks", 10),
+      layers: [{ src: src("01-setup.png"), at: 0 }],
+      clicks: [{ at: 2100, rect: () => boxRect("setupInstall") }],
+    },
+    {
+      dur: 4200,
+      step: "2 / 8",
+      headline: "See every file they touch.",
+      sub: "Reads, writes, and commands show up as they happen.",
+      zoom: standardZoom(1500, 640, 520, 4200),
+      focus: () => {
+        const list = boxRect("liveList");
+        return { x: list.x, y: list.y, w: 900, h: 280 };
+      },
+      layers: [
+        { src: src("02-live-a.png"), at: 0 },
+        { src: src("03-live-b.png"), at: 800 },
+      ],
+      clicks: [{
+        at: 2500,
+        ripple: false,
+        rect: () => {
+          const list = boxRect("liveList");
+          return { x: list.x + 120, y: list.y + 78, w: 20, h: 20 };
+        },
+      }],
+    },
+    {
+      dur: 5200,
+      step: "3 / 8",
+      headline: "Approve it for one hour.",
+      sub: "Cursor wants a folder it doesn’t have. You pick the scope and the timer.",
+      zoom: standardZoom(1200, 640, 560, 5200),
+      dim: false,
+      focus: () => ({ x: POPUP.x - 16, y: POPUP.y - 16, w: POPUP.w + 32, h: POPUP.h + 32 }),
+      layers: [{ src: src("03-live-b.png"), at: 0 }],
+      popup: [
+        { src: src("04-approval.png"), at: 0 },
+        { src: src("05-approval-scope.png"), at: 2300 },
+      ],
+      clicks: [
+        { at: 2100, rect: () => popupBox("popupScope") },
+        { at: 2850, rect: hourRect },
+        { at: 3550, rect: () => popupBox("popupAllow") },
+      ],
+    },
+    {
+      dur: 4400,
+      step: "4 / 8",
+      headline: "The grant is live.",
+      sub: "Filter by agent. Sort by when it expires.",
+      zoom: standardZoom(1000, 640, 520, 4400),
+      focus: (local) => {
+        const row = boxRect("grantNew", 8);
+        const sorted = union(boxRect("grantControls", 6), boxRect("grantList", 8));
+        if (local < 2000) return row;
+        if (local < 2750) return lerpRect(row, sorted, ramp(local, 2000, 2750));
+        return sorted;
+      },
+      layers: [
+        { src: src("06-grants.png"), at: 0 },
+        { src: src("07-grants-sorted.png"), at: 2400 },
+      ],
+      clicks: [{ at: 2150, rect: () => boxRect("sortExpires") }],
+    },
+    {
+      dur: 3600,
+      step: "5 / 8",
+      headline: "Review the write later.",
+      sub: "The diff stays, next to the grant that allowed it.",
+      zoom: standardZoom(1000, 640, 520, 3600),
+      focus: () => {
+        const row = boxRect("historyRow", 10);
+        const detail = boxRect("historyDetail");
+        return union(row, { x: detail.x, y: detail.y, w: detail.w, h: Math.min(500, detail.h) });
+      },
+      layers: [{ src: src("08-history.png"), at: 0 }],
+      clicks: [{ at: 1900, rect: () => boxRect("historyRow", 6) }],
+    },
+    {
+      dur: 3400,
+      step: "6 / 8",
+      headline: "Secret paths turn red.",
+      sub: "~/.ssh lights up the moment it’s read.",
+      zoom: standardZoom(1000, 600, 500, 3400),
+      focus: () => boxRect("sensitiveRow", 6),
+      layers: [{ src: src("09-sensitive.png"), at: 0 }],
+      clicks: [{ at: 1900, rect: () => boxRect("sensitiveRow") }],
+    },
+    {
+      dur: 5900,
+      step: "7 / 8",
+      headline: "Revoke all and lock down.",
+      sub: "Every grant is gone. The next tool call is blocked.",
+      zoom: (local) => {
+        if (local < 900) return 0;
+        if (local < 1500) return ramp(local, 900, 1500);
+        if (local < 2700) return 1;
+        if (local < 3300) return 1 - ramp(local, 2700, 3300);
+        if (local < 4300) return 0;
+        if (local < 4900) return ramp(local, 4300, 4900);
+        if (local < 5400) return 1;
+        return 1 - ramp(local, 5400, 5900);
+      },
+      focus: (local) => {
+        const button = boxRect("revokeButton", 12);
+        const dialog = boxRect("revokeDialog", 8);
+        const lock = boxRect("lockdown", 16);
+        if (local < 1750) return button;
+        if (local < 2500) return lerpRect(button, dialog, ramp(local, 1750, 2500));
+        if (local < 4200) return dialog;
+        if (local < 5000) return lerpRect(dialog, lock, ramp(local, 4200, 5000));
+        return lock;
+      },
+      layers: [
+        { src: src("07-grants-sorted.png"), at: 0 },
+        { src: src("10-revoke.png"), at: 2000 },
+        { src: src("11-lockdown.png"), at: 3360, fade: 0 },
+      ],
+      clicks: [
+        { at: 1650, rect: () => boxRect("revokeButton") },
+        { at: 2550, rect: () => boxRect("revokeConfirm") },
+        { at: 5050, ripple: false, rect: () => {
+          const row = boxRect("lockdown");
+          return { x: row.x + 210, y: row.y, w: 36, h: row.h };
+        } },
+      ],
+    },
+    {
+      dur: 3600,
+      step: "8 / 8",
+      headline: "Make it yours.",
+      sub: "Theme, contrast, transparency, and density.",
+      zoom: standardZoom(1000, 650, 520, 3600),
+      focus: () => {
+        const body = union(boxRect("appearanceTheme", 8), boxRect("appearanceInterface", 8));
+        return { x: body.x, y: body.y - 56, w: body.w, h: body.h + 56 };
+      },
+      layers: [{ src: src("12-appearance.png"), at: 0 }],
+      clicks: [{ at: 2000, rect: () => boxRect("appearanceDark") }],
+    },
+    { card: "end", dur: 2300 },
+  ];
+
+  let clock = 0;
+  const BEATS = raw.map((beat) => {
+    const start = clock;
+    clock += beat.dur;
+    return { ...beat, start, end: clock };
+  });
+  window.DURATION = clock;
+
+  const files = ["01-setup.png", "02-live-a.png", "03-live-b.png", "04-approval.png", "05-approval-scope.png", "06-grants.png", "07-grants-sorted.png", "08-history.png", "09-sensitive.png", "10-revoke.png", "11-lockdown.png", "12-appearance.png"];
+  let pending = files.length;
+  for (const file of files) {
+    const img = new Image();
+    img.onload = img.onerror = () => { if (--pending === 0) window.mediaReady = true; };
+    img.src = src(file);
+  }
+
+  const view = document.getElementById("view");
+  const cam = document.getElementById("cam");
+  const plateA = document.getElementById("plateA");
+  const plateB = document.getElementById("plateB");
+  const popA = document.getElementById("popA");
+  const popB = document.getElementById("popB");
+  const dim = document.getElementById("dim");
+  const cursor = document.getElementById("cursor");
+  const ripple = document.getElementById("ripple");
+  const lower = document.getElementById("lower");
+  view.style.left = `${viewX}px`;
+  view.style.top = `${viewY}px`;
+  view.style.width = `${viewW}px`;
+  view.style.height = `${viewH}px`;
+  cam.style.width = `${viewW}px`;
+  cam.style.height = `${viewH}px`;
+  lower.style.paddingLeft = `${viewX}px`;
+  lower.style.paddingRight = `${viewX}px`;
+  popA.style.left = popB.style.left = `${POPUP.x * fit}px`;
+  popA.style.top = popB.style.top = `${POPUP.y * fit}px`;
+  popA.style.width = popB.style.width = `${POPUP.w * fit}px`;
+  popA.style.height = popB.style.height = `${POPUP.h * fit}px`;
+  popA.style.transformOrigin = popB.style.transformOrigin = "center";
+
+  const plates = (layers, local) => {
+    let i = 0;
+    for (let n = 0; n < layers.length; n++) if (local >= layers[n].at) i = n;
+    const next = layers[i + 1];
+    if (!next) return [{ src: layers[i].src, opacity: 1 }, null];
+    const fade = next.fade ?? 220;
+    if (fade <= 0) return [{ src: layers[i].src, opacity: 1 }, null];
+    const u = clamp((local - (next.at - fade)) / fade, 0, 1);
+    if (u <= 0) return [{ src: layers[i].src, opacity: 1 }, null];
+    if (u >= 1) return [{ src: next.src, opacity: 1 }, null];
+    return [{ src: layers[i].src, opacity: 1 - u }, { src: next.src, opacity: u }];
+  };
+  const paint = (el, layer) => {
+    if (!layer || layer.opacity <= 0) {
+      el.style.opacity = "0";
+      return;
+    }
+    if (el.dataset.src !== layer.src) {
+      el.src = layer.src;
+      el.dataset.src = layer.src;
+    }
+    el.style.opacity = String(layer.opacity);
+  };
+  const cameraFor = (focus, z) => {
+    const cx = focus.x + focus.w / 2;
+    const cy = focus.y + focus.h / 2;
+    let tx = viewW / 2 - cx * fit * z;
+    let ty = viewH / 2 - cy * fit * z;
+    const minX = viewW * (1 - z);
+    const minY = viewH * (1 - z);
+    const fitInside = (origin, size, limit, min) => {
+      let next = origin;
+      const a = (focusEdge, extent) => focusEdge * fit * z + next;
+      if (a(size === "x" ? focus.x : focus.y, 0) < 10) next += 10 - a(size === "x" ? focus.x : focus.y, 0);
+      const end = size === "x" ? focus.x + focus.w : focus.y + focus.h;
+      if (a(end, 0) > limit - 10) next -= a(end, 0) - (limit - 10);
+      return clamp(next, min, 0);
+    };
+    tx = clamp(tx, minX, 0);
+    ty = clamp(ty, minY, 0);
+    tx = fitInside(tx, "x", viewW, minX);
+    ty = fitInside(ty, "y", viewH, minY);
+    return { tx, ty };
+  };
+
+  const cursorState = (clicks, local, zoomAmt) => {
+    if (!clicks?.length || zoomAmt <= 0) return null;
+    for (let i = clicks.length - 1; i >= 0; i--) {
+      const target = clicks[i];
+      const start = target.at - 440;
+      const end = target.at + 500;
+      if (local < start || local > end) continue;
+      const dest = center(target.rect());
+      const earlier = i > 0 ? center(clicks[i - 1].rect()) : null;
+      const prev = earlier && target.at - clicks[i - 1].at < 1200 ? earlier : { x: dest.x + 78, y: dest.y + 42 };
+      const u = ramp(local, start, target.at);
+      const pos = { x: prev.x + (dest.x - prev.x) * u, y: prev.y + (dest.y - prev.y) * u };
+      const age = local - target.at;
+      const showRipple = target.ripple !== false && age >= 0 && age < 460;
+      const fade = local > end - 140 ? (end - local) / 140 : 1;
+      return { pos, opacity: clamp(zoomAmt * 4, 0, 1) * fade, ripple: showRipple ? age / 460 : -1 };
+    }
+    return null;
+  };
+
+  window.renderFrame = (t) => {
+    const beat = BEATS.find((item) => t >= item.start && t < item.end) ?? BEATS[BEATS.length - 1];
+    const local = t - beat.start;
+    for (const id of ["title", "end"]) {
+      const node = document.getElementById(id);
+      const card = BEATS.find((item) => item.card === id);
+      const edge = 240;
+      let opacity = 0;
+      if (t >= card.start && t < card.end) {
+        const inn = card.start === 0 ? 1 : Math.min(1, (t - card.start) / edge);
+        opacity = Math.min(inn, (card.end - t) / edge);
+      }
+      node.style.opacity = String(opacity);
+    }
+    const shot = !beat.card;
+    view.style.opacity = shot ? "1" : "0";
+    lower.style.opacity = shot ? String(Math.min(1, local / 180, (beat.dur - local) / 180)) : "0";
+    if (shot) {
+      document.getElementById("step").textContent = beat.step;
+      document.getElementById("headline").textContent = beat.headline;
+      document.getElementById("sub").textContent = beat.sub;
+      const amount = beat.zoom(local);
+      const focus = beat.focus(local);
+      const zMax = zoomFor(focus);
+      const z = 1 + (zMax - 1) * amount;
+      const camPos = cameraFor(focus, z);
+      cam.style.transformOrigin = "0 0";
+      cam.style.transform = `translate(${camPos.tx}px, ${camPos.ty}px) scale(${z})`;
+      const shown = plates(beat.layers, local);
+      const bg = beat.popup ? "brightness(0.4)" : "none";
+      plateA.style.filter = plateB.style.filter = bg;
+      paint(plateA, shown[0]);
+      paint(plateB, shown[1]);
+      const intro = beat.popup ? ramp(local, 80, 460) : 0;
+      const pops = beat.popup ? plates(beat.popup, local) : [null, null];
+      for (const [el, layer] of [[popA, pops[0]], [popB, pops[1]]]) {
+        paint(el, layer ? { ...layer, opacity: layer.opacity * intro } : null);
+        el.style.transform = `scale(${0.94 + 0.06 * intro})`;
+      }
+      dim.style.opacity = String(amount);
+      dim.style.left = `${focus.x * fit}px`;
+      dim.style.top = `${focus.y * fit}px`;
+      dim.style.width = `${focus.w * fit}px`;
+      dim.style.height = `${focus.h * fit}px`;
+      dim.style.borderRadius = "12px";
+      dim.style.boxShadow = beat.dim === false
+        ? "0 0 0 2px rgba(255,138,92,0.2), 0 0 28px rgba(255,138,92,0.45)"
+        : "0 0 0 4000px rgba(0,0,0,0.58), 0 0 28px rgba(255,138,92,0.45)";
+      const point = cursorState(beat.clicks, local, amount);
+      if (!point) {
+        cursor.style.opacity = "0";
+        ripple.style.opacity = "0";
+      } else {
+        const sx = point.pos.x * fit * z + camPos.tx;
+        const sy = point.pos.y * fit * z + camPos.ty;
+        cursor.style.opacity = String(point.opacity);
+        cursor.style.left = `${sx - 5}px`;
+        cursor.style.top = `${sy - 3}px`;
+        if (point.ripple < 0) ripple.style.opacity = "0";
+        else {
+          ripple.style.opacity = String((1 - point.ripple) * 0.85);
+          ripple.style.left = `${sx}px`;
+          ripple.style.top = `${sy}px`;
+          ripple.style.transform = `scale(${0.4 + point.ripple * 2.4})`;
+        }
+      }
+    }
+    document.getElementById("progress").style.width = `${(Math.min(t, window.DURATION) / window.DURATION) * 100}%`;
+  };
+</script>
+</body>
+</html>
