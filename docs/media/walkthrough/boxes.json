@@ -1,0 +1,170 @@
+{
+  "setupHooks": {
+    "x": 296,
+    "y": 205,
+    "width": 848,
+    "height": 374
+  },
+  "setupInstall": {
+    "x": 1067.5234375,
+    "y": 263,
+    "width": 59.4765625,
+    "height": 28
+  },
+  "navLive": {
+    "x": 8,
+    "y": 117,
+    "width": 239,
+    "height": 36
+  },
+  "navGrants": {
+    "x": 8,
+    "y": 159,
+    "width": 239,
+    "height": 36
+  },
+  "navHistory": {
+    "x": 8,
+    "y": 201,
+    "width": 239,
+    "height": 36
+  },
+  "liveList": {
+    "x": 276,
+    "y": 102,
+    "width": 1144,
+    "height": 782
+  },
+  "sidebarAgents": {
+    "x": 0,
+    "y": 246,
+    "width": 255,
+    "height": 252.5
+  },
+  "popupPath": {
+    "x": 16,
+    "y": 93.5,
+    "width": 488,
+    "height": 37.5
+  },
+  "popupScope": {
+    "x": 16,
+    "y": 163.5,
+    "width": 68.578125,
+    "height": 26
+  },
+  "popupTtl": {
+    "x": 16,
+    "y": 222,
+    "width": 488,
+    "height": 32
+  },
+  "popupAllow": {
+    "x": 301.4375,
+    "y": 368,
+    "width": 202.5625,
+    "height": 32
+  },
+  "grantNew": {
+    "x": 425,
+    "y": 221,
+    "width": 846,
+    "height": 64
+  },
+  "grantTtl": {
+    "x": 780.59375,
+    "y": 253,
+    "width": 54.1171875,
+    "height": 20
+  },
+  "sortExpires": {
+    "x": 828.7890625,
+    "y": 131,
+    "width": 61.265625,
+    "height": 24
+  },
+  "grantControls": {
+    "x": 424,
+    "y": 128,
+    "width": 848,
+    "height": 30
+  },
+  "grantList": {
+    "x": 424,
+    "y": 182,
+    "width": 848,
+    "height": 299
+  },
+  "historyRow": {
+    "x": 693,
+    "y": 155,
+    "width": 274.5390625,
+    "height": 16
+  },
+  "historyDetail": {
+    "x": 1013.765625,
+    "y": 52,
+    "width": 426.234375,
+    "height": 848
+  },
+  "historyGrant": {
+    "x": 1030.765625,
+    "y": 167.5,
+    "width": 393.234375,
+    "height": 50
+  },
+  "sensitiveRow": {
+    "x": 277,
+    "y": 103,
+    "width": 1142,
+    "height": 41
+  },
+  "sensitiveToggle": {
+    "x": 1301.6875,
+    "y": 56,
+    "width": 118.3125,
+    "height": 34
+  },
+  "revokeButton": {
+    "x": 436,
+    "y": 505,
+    "width": 209.203125,
+    "height": 32
+  },
+  "revokeDialog": {
+    "x": 500.47998046875,
+    "y": 274.0899963378906,
+    "width": 439.0400390625,
+    "height": 351.8200378417969
+  },
+  "revokeConfirm": {
+    "x": 830.403076171875,
+    "y": 583.77001953125,
+    "width": 84.616943359375,
+    "height": 27.43994140625
+  },
+  "lockdown": {
+    "x": 424,
+    "y": 314,
+    "width": 848,
+    "height": 32
+  },
+  "appearanceTheme": {
+    "x": 424,
+    "y": 128,
+    "width": 848,
+    "height": 174
+  },
+  "appearanceInterface": {
+    "x": 424,
+    "y": 326,
+    "width": 848,
+    "height": 307
+  },
+  "appearanceDark": {
+    "x": 991.6640625,
+    "y": 183,
+    "width": 263.3359375,
+    "height": 102
+  }
+}
