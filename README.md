@@ -1,14 +1,10 @@
+![Agentic Leash. Your AI agents. On a leash.](docs/media/banner.png)
+
 # Agentic Leash
 
 See and control what AI coding agents can touch on your Mac.
 
 [Download Agentic Leash 0.1.2 for Apple Silicon](https://github.com/velusgautam/Agentic-Leash/releases/download/v0.1.2/Agentic.Leash-0.1.2-arm64.dmg)
-
-![Agentic Leash launch](docs/media/launch.gif)
-
-[Launch video, 1920×1080 MP4](docs/media/launch.mp4)
-
-[Watch the walkthrough](docs/media/launch-walkthrough.mp4)
 
 Claude, Cursor, Codex, Gemini CLI and Hermes keep working. Agentic Leash watches the files they read and write, asks before they reach a folder you have not allowed, and flags sensitive paths like `~/.ssh` the moment they are touched.
 
@@ -40,7 +36,7 @@ Reads of `~/.ssh`, `~/.aws` and other secret paths are marked in red on Live and
 
 ### Ask before a new folder
 
-![Approval popup for a write to ~/.ssh/config](docs/media/approval.png)
+![Approval popup for a Cursor write to a new folder](docs/media/approval.png)
 
 A tool call outside an existing grant opens this popup. Allow it for 15 minutes, 1 hour, 8 hours or always, or deny it. The same choices are on the Grants page while a request is waiting.
 
@@ -128,4 +124,4 @@ pnpm dev
 
 The first open stays on setup until the history helper is running and Full Disk Access is granted. In a dev build the helper step reads "Available in the installed app". Claude covers both the desktop app and the `claude` CLI. Turning an agent off in Settings hides it and removes its hooks. The helper is a root LaunchDaemon, so macOS asks for an administrator password once.
 
-`SCREENSHOTS=1 pnpm exec playwright test tests/e2e/marketing.e2e.ts` refreshes the feature images. `node docs/media/launch/record.mjs` rebuilds the short MP4 and GIF. `node docs/media/launch/record-walkthrough.mjs` rebuilds the walkthrough.
+`SCREENSHOTS=1 pnpm exec playwright test tests/e2e/marketing.e2e.ts -g walkthrough` captures the app frames. `node docs/media/launch/record-stills.mjs` turns them into the banner and feature images.
