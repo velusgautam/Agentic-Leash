@@ -1,0 +1,107 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>Agentic Leash</title>
+<style>
+  html, body { margin: 0; background: #07080a; }
+  #stage {
+    width: 1920px;
+    height: 1080px;
+    position: relative;
+    overflow: hidden;
+    color: #f4f4f5;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    background:
+      radial-gradient(880px 480px at 12% -10%, rgba(229, 72, 77, 0.22), transparent 60%),
+      radial-gradient(720px 420px at 110% 110%, rgba(56, 189, 248, 0.08), transparent 55%),
+      #07080a;
+  }
+  .scene { position: absolute; inset: 0; display: flex; flex-direction: column; padding: 56px 72px 40px; opacity: 0; }
+  .center { align-items: center; justify-content: center; text-align: center; padding-bottom: 72px; }
+  .mark { width: 148px; height: 148px; border-radius: 34px; }
+  h1 { margin: 28px 0 0; font-size: 92px; line-height: 0.95; letter-spacing: -0.045em; font-weight: 650; }
+  .tag { margin: 18px 0 0; font-size: 34px; color: #d4d4d8; letter-spacing: -0.02em; }
+  .agents { display: flex; gap: 10px; margin-top: 28px; }
+  .agents span { border: 1px solid rgba(255,255,255,0.14); background: rgba(255,255,255,0.04); border-radius: 999px; padding: 8px 14px; font-size: 18px; color: #e4e4e7; }
+  .kicker { margin: 0; font-size: 15px; letter-spacing: 0.2em; font-weight: 650; color: #ff8a5c; }
+  h2 { margin: 10px 0 0; font-size: 54px; line-height: 1.02; letter-spacing: -0.04em; font-weight: 640; }
+  .sub { margin: 8px 0 0; font-size: 28px; color: #a1a1aa; letter-spacing: -0.02em; }
+  .frame { flex: 1; min-height: 0; margin-top: 28px; overflow: hidden; border-radius: 18px; border: 1px solid rgba(255,255,255,0.08); background: #0c0d10; box-shadow: 0 28px 70px rgba(0,0,0,0.45); }
+  .frame img { width: 100%; height: 100%; object-fit: contain; object-position: center; }
+  #progress { position: absolute; left: 0; bottom: 0; height: 4px; width: 0; background: linear-gradient(90deg, #ff8a5c, #e5484d); }
+</style>
+</head>
+<body>
+<div id="stage">
+  <section class="scene center" id="title">
+    <img class="mark" src="../../../resources/icon.png" alt="" />
+    <h1>Agentic Leash</h1>
+    <p class="tag">Your AI agents. On a leash.</p>
+    <div class="agents"><span>Claude</span><span>Cursor</span><span>Codex</span><span>Gemini CLI</span><span>Hermes</span></div>
+  </section>
+  <section class="scene" id="grants">
+    <p class="kicker">GRANTS</p>
+    <h2>Grants on a timer.</h2>
+    <p class="sub">Filter by agent. Sort by expiry.</p>
+    <div class="frame"><img class="shot" src="../grants.png" alt="" /></div>
+  </section>
+  <section class="scene" id="revoke">
+    <p class="kicker">REVOKE</p>
+    <h2>Revoke one grant, or all of them.</h2>
+    <p class="sub">Lockdown blocks the next tool call.</p>
+    <div class="frame"><img class="shot" src="../revoke.png" alt="" /></div>
+  </section>
+  <section class="scene" id="diff">
+    <p class="kicker">HISTORY</p>
+    <h2>Every write keeps its diff.</h2>
+    <p class="sub">Open it later. The grant is still there.</p>
+    <div class="frame"><img class="shot" src="../history-diff.png" alt="" /></div>
+  </section>
+  <section class="scene" id="sensitive">
+    <p class="kicker">SENSITIVE</p>
+    <h2>Secret paths turn red.</h2>
+    <p class="sub">~/.ssh and ~/.aws, the moment they’re read.</p>
+    <div class="frame"><img class="shot" src="../live-sensitive.png" alt="" /></div>
+  </section>
+  <section class="scene center" id="end">
+    <img class="mark" src="../../../resources/icon.png" alt="" style="width:112px;height:112px" />
+    <h1 style="font-size:72px">Your AI agents. On a leash.</h1>
+    <p class="tag">github.com/velusgautam/Agentic-Leash</p>
+  </section>
+  <div id="progress"></div>
+</div>
+<script>
+  const SCENES = [
+    { id: "title", start: 0, end: 1300 },
+    { id: "grants", start: 1300, end: 3200, origin: "68% 38%" },
+    { id: "revoke", start: 3200, end: 4700, origin: "50% 46%" },
+    { id: "diff", start: 4700, end: 6600, origin: "82% 55%" },
+    { id: "sensitive", start: 6600, end: 8100, origin: "62% 22%" },
+    { id: "end", start: 8100, end: 9000 },
+  ];
+
+  function fade(t, start, end) {
+    const edge = 160;
+    if (t < start || t >= end) return 0;
+    return Math.min(1, (t - start) / edge, (end - t) / edge);
+  }
+
+  window.renderFrame = (t) => {
+    for (const scene of SCENES) {
+      const node = document.getElementById(scene.id);
+      const opacity = fade(t, scene.start, scene.end);
+      node.style.opacity = String(opacity);
+      const img = node.querySelector("img.shot");
+      if (!img) continue;
+      const p = Math.min(1, Math.max(0, (t - scene.start) / (scene.end - scene.start)));
+      const eased = 1 - Math.pow(1 - p, 3);
+      img.style.transformOrigin = scene.origin;
+      img.style.transform = `scale(${0.96 + 0.04 * eased})`;
+    }
+    document.getElementById("progress").style.width = `${(Math.min(t, 9000) / 9000) * 100}%`;
+  };
+  window.renderFrame(0);
+</script>
+</body>
+</html>
