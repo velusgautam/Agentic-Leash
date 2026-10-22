@@ -9,8 +9,17 @@ export interface Grant {
   path: string;
   access: Access;
   source: "leash" | "config";
+  command: string | null;
   createdAt: number;
   expiresAt: number | null;
+}
+
+export interface AllowRule {
+  id: number;
+  kind: "folder" | "command";
+  agent: "claude-code" | "cursor" | "codex" | "gemini" | "hermes" | "*";
+  value: string;
+  createdAt: number;
 }
 
 export interface ScheduledRevoke {
@@ -38,6 +47,7 @@ export interface DecideOptions {
   protectedRoots: string[];
   home?: string;
   autoAllowOff?: string[];
+  rules?: AllowRule[];
 }
 
 export interface HistoryEvent {

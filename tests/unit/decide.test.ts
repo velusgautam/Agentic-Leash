@@ -5,7 +5,7 @@ import { extractShellPaths, isUnder } from "../../src/shared/paths";
 import type { Grant, HookRequest } from "../../src/shared/types";
 
 const req = (over: Partial<HookRequest>): HookRequest => ({ agent: "cursor", event: "preToolUse", tool: "Read", access: "read", paths: ["/a/b/c"], cwd: "/a/b", ...over });
-const grant = (over: Partial<Grant>): Grant => ({ id: 1, agent: "cursor", path: "/a/b", access: "read", source: "leash", createdAt: 0, expiresAt: null, ...over });
+const grant = (over: Partial<Grant>): Grant => ({ id: 1, agent: "cursor", path: "/a/b", access: "read", source: "leash", command: null, createdAt: 0, expiresAt: null, ...over });
 const opts = { now: 1_000, lockdown: false, protectedRoots: ["/secret"] };
 
 describe("decide", () => {

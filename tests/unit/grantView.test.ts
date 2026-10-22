@@ -8,6 +8,7 @@ const grant = (id: number, agent: Grant["agent"], createdAt: number, expiresAt: 
   path: `/p/${id}`,
   access: "read",
   source: "leash",
+  command: null,
   createdAt,
   expiresAt,
 });

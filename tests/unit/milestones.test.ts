@@ -13,7 +13,7 @@ import { parseLsof, parsePs, percentiles, restartTargets } from "../../src/main/
 
 describe("rules and hooks", () => {
   it("writes rules for live grants and removes them again", () => {
-    const next = rulesForGrants([{ id: 1, agent: "claude-code", path: "/Users/me/Desktop", access: "write", source: "leash", createdAt: 0, expiresAt: null }], false, "/Users/me");
+    const next = rulesForGrants([{ id: 1, agent: "claude-code", path: "/Users/me/Desktop", access: "write", source: "leash", command: null, createdAt: 0, expiresAt: null }], false, "/Users/me");
     const withRules = applyRules({ permissions: { deny: ["Read(./.env)"] } }, next, { additionalDirectories: [], deny: [] });
     expect(withRules.permissions?.additionalDirectories).toContain("/Users/me/Desktop");
     const cleared = applyRules(withRules, { additionalDirectories: [], deny: [] }, next);
