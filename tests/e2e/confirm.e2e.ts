@@ -39,9 +39,11 @@ test("the lockdown button label follows revoke-all", async () => {
   await expect(win.getByRole("button", { name: "Lockdown off" })).toBeDisabled();
   await win.getByRole("button", { name: "Revoke all and lock down" }).click();
   await win.getByRole("alertdialog").getByRole("button", { name: "Revoke all" }).click();
-  const end = win.getByRole("button", { name: "End lockdown" });
+  await expect(win.getByRole("status").filter({ hasText: "Lockdown is on" })).toBeVisible();
+  const end = win.getByRole("button", { name: "End lockdown", pressed: true });
   await expect(end).toBeEnabled();
   await end.click();
+  await expect(win.getByRole("status").filter({ hasText: "Lockdown is on" })).toHaveCount(0);
   await expect(win.getByRole("button", { name: "Lockdown off" })).toBeDisabled();
   await app.close();
 });

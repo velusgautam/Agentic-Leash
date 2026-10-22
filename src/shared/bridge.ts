@@ -50,6 +50,7 @@ export interface LeashBridge {
   getTheme(): Promise<ThemeSource>;
   setTheme(theme: ThemeSource): Promise<ThemeSource>;
   onTheme(listener: (theme: ThemeSource) => void): () => void;
+  onGrantStatus(listener: (status: { count: number; lockdown: boolean }) => void): () => void;
   resetTcc(service: string, bundleId: string): Promise<void>;
   removeMcp(agent: AgentId, name: string): Promise<void>;
   scheduledRevokes(): Promise<ScheduledRevoke[]>;

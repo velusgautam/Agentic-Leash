@@ -48,6 +48,11 @@ const leash: LeashBridge = {
     ipcRenderer.on("theme:changed", wrapped);
     return () => ipcRenderer.removeListener("theme:changed", wrapped);
   },
+  onGrantStatus: (listener) => {
+    const wrapped = (_event: unknown, status: { count: number; lockdown: boolean }) => listener(status);
+    ipcRenderer.on("grants:status-changed", wrapped);
+    return () => ipcRenderer.removeListener("grants:status-changed", wrapped);
+  },
   resetTcc: (service, bundleId) => ipcRenderer.invoke("tcc:reset", service, bundleId),
   removeMcp: (agent, name) => ipcRenderer.invoke("agents:remove-mcp", agent, name),
   scheduledRevokes: () => ipcRenderer.invoke("trust:scheduled"),

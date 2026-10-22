@@ -89,6 +89,8 @@ export interface DecisionRow {
   reason: string | null;
   grantId: number | null;
   durationMs: number | null;
+  command: string | null;
+  url: string | null;
 }
 
 export interface HistoryRow {

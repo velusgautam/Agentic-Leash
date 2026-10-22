@@ -165,6 +165,7 @@ test("walkthrough frames", async () => {
   await box("popupTtl", popup.getByRole("radiogroup", { name: "Allow for" }));
   await box("popupAllow", popup.getByRole("button", { name: /Allow website for 1 hour/ }));
   await shot(popup, "05-approval-scope");
+  await expect(popup.getByRole("button", { name: /^Allow/ })).toBeEnabled();
   await popup.keyboard.press("Enter");
   await expect.poll(() => win.evaluate(`window.leash.listGrants().then((rows) => rows.length)`)).toBe(4);
   socket.destroy();

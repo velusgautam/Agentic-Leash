@@ -88,7 +88,7 @@ async function psLines(): Promise<string[]> {
 
 const cursorStateDb = () => join(app.getPath("appData"), "Cursor/User/globalStorage/state.vscdb");
 
-export function startRuntime(options: { userData: string; openApproval: () => void; closeApproval: () => void; setPending: (count: number) => void; notify: (title: string, body: string) => void; finishUninstall: () => void; disableLoginItem: () => void }): { revokeAll: () => { revoked: number } } {
+export function startRuntime(options: { userData: string; openApproval: () => void; closeApproval: () => void; setPending: (count: number) => void; notify: (title: string, body: string) => void; finishUninstall: () => void; disableLoginItem: () => void; onStatus?: (status: { count: number; lockdown: boolean }) => void }): { revokeAll: () => { revoked: number }; unlock: () => void } {
   const db = openGrantsDb(grantsDbPath());
   collapseGrantDupes(db);
   const home = homeDir();
@@ -197,6 +197,12 @@ export function startRuntime(options: { userData: string; openApproval: () => vo
       historyDb.close();
     }
   };
+  const grantStatus = () => ({ count: listGrants(db).length, lockdown: getSetting(db, "lockdown", "0") === "1" });
+  const publishStatus = () => {
+    const status = grantStatus();
+    for (const window of BrowserWindow.getAllWindows()) window.webContents.send("grants:status-changed", status);
+    options.onStatus?.(status);
+  };
   const revokeAll = () => {
     const grants = listGrants(db);
     for (const grant of grants) revokeStoredGrant(home, grant);
@@ -204,26 +210,31 @@ export function startRuntime(options: { userData: string; openApproval: () => vo
     setSetting(db, "lockdown", "1");
     publishClaudeRules(db, join(claudeRoot(), "settings.json"), home, snapshots.find((snapshot) => snapshot.id === "claude-code")?.enforcement === "rules");
     rescan();
+    publishStatus();
     return { revoked: grants.length };
+  };
+  const unlock = () => {
+    setSetting(db, "lockdown", "0");
+    publishClaudeRules(db, join(claudeRoot(), "settings.json"), home, snapshots.find((snapshot) => snapshot.id === "claude-code")?.enforcement === "rules");
+    publishStatus();
   };
 
   ipcMain.handle("agents:list", () => snapshots);
   ipcMain.handle("grants:list", () => listGrants(db));
-  ipcMain.handle("grants:status", () => ({ count: listGrants(db).length, lockdown: getSetting(db, "lockdown", "0") === "1" }));
+  ipcMain.handle("grants:status", () => grantStatus());
   ipcMain.handle("grants:revoke", (_event, id: number) => {
     const grant = listGrants(db).find((item) => item.id === id);
     if (grant) revokeStoredGrant(home, grant);
     deleteGrant(db, id);
     rescan();
+    publishStatus();
   });
   ipcMain.handle("grants:revoke-all", () => revokeAll());
   ipcMain.handle("grants:create", (_event, input: { agent: AgentId | "*"; path: string; access: Access; ttlSeconds: number | null }) => {
     allow([input.path], input.agent, input.access, input.ttlSeconds, true);
+    publishStatus();
   });
-  ipcMain.handle("grants:unlock", () => {
-    setSetting(db, "lockdown", "0");
-    publishClaudeRules(db, join(claudeRoot(), "settings.json"), home, snapshots.find((snapshot) => snapshot.id === "claude-code")?.enforcement === "rules");
-  });
+  ipcMain.handle("grants:unlock", () => unlock());
   const autoAllowRows = () => {
     const off = new Set(parseAutoAllowOff(getSetting(db, "auto_allow_off", "[]")));
     return AUTO_ALLOWS.map((rule) => ({ ...rule, enabled: !off.has(rule.id) }));
@@ -326,7 +337,10 @@ export function startRuntime(options: { userData: string; openApproval: () => vo
       }
     }
     broker.decide(id, { decision, ttlSeconds: ttlSeconds ?? undefined });
-    if (decision === "allow") releaseCovered();
+    if (decision === "allow") {
+      releaseCovered();
+      publishStatus();
+    }
   });
   // Agents that aren't running read the new config on their next start, so they drop out here.
   const staleTargets = async () => {
@@ -555,13 +569,17 @@ export function startRuntime(options: { userData: string; openApproval: () => vo
   });
 
   try {
-    globalShortcut.register(IS_MAC ? "Control+Alt+Command+L" : "Control+Alt+Shift+L", () => void revokeAll());
+    globalShortcut.register(IS_MAC ? "Control+Alt+Command+L" : "Control+Alt+Shift+L", () => {
+      const { revoked } = revokeAll();
+      options.notify("Lockdown is on", `Revoked ${revoked} grants. Agent tool calls are blocked until you end lockdown.`);
+    });
   } catch {
     /* shortcut already owned */
   }
   void ensureSweepAgent();
   nativeTheme.themeSource = readUiState(options.userData).theme ?? "system";
-  return { revokeAll };
+  publishStatus();
+  return { revokeAll, unlock };
 }
 
 export function leashDataDir(): string {

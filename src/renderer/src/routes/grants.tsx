@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { ArrowDown, ArrowUp, FolderLock, History, Lock, LockOpen, ShieldOff, SquareTerminal, Timer, Users } from "lucide-react";
+import { decisionTarget } from "../../../shared/decisionView";
 import { viewGrants, type GrantSortKey, type SortDir } from "../../../shared/grantView";
 import { denyCountdown, pendingSecondsLeft, POPUP_TIMEOUT_S } from "../../../shared/pending";
 import type { DecisionRow, Grant, HookRequest, PendingRequest } from "../../../shared/types";
@@ -7,6 +8,7 @@ import { ConfirmAction, grantEffects, REVOKE_ALL_EFFECTS } from "~/components/Co
 import { AGENT_LABELS, AgentIcon } from "~/components/Icons";
 import { PageContainer, SettingsSection } from "~/components/settings";
 import { Button } from "~/components/ui/button";
+import { toast, toastRevoked } from "~/components/ui/toast";
 import { cn } from "~/lib/utils";
 
 function remaining(expiresAt: number | null): string {
@@ -75,15 +77,15 @@ function PendingRow({ item, now, onDecide }: { item: PendingRequest; now: number
           ))}
         </div>
         <span className="ml-auto flex items-center gap-2">
-          <Button size="sm" variant="ghost" onClick={() => void window.leash.decidePending(item.id, "deny", null).then(onDecide)}>Deny</Button>
-          <Button size="sm" onClick={() => void window.leash.decidePending(item.id, "allow", preset.seconds).then(onDecide)}>Allow</Button>
+          <Button size="sm" variant="ghost" onClick={() => void window.leash.decidePending(item.id, "deny", null).then(() => { toast({ title: "Denied" }); onDecide(); })}>Deny</Button>
+          <Button size="sm" onClick={() => void window.leash.decidePending(item.id, "allow", preset.seconds).then(() => { toast({ title: "Allowed", description: preset.label }); onDecide(); })}>Allow</Button>
         </span>
       </div>
     </div>
   );
 }
 
-function GrantRow({ grant, mono, Icon, onRevoke }: { grant: Grant; mono: string; Icon: typeof FolderLock; onRevoke: (id: number) => void }) {
+function GrantRow({ grant, mono, Icon, onRevoke }: { grant: Grant; mono: string; Icon: typeof FolderLock; onRevoke: (grant: Grant) => void }) {
   return (
     <div className="flex items-center gap-3 px-4 py-3 text-sm">
       <Icon className="size-4 shrink-0 text-muted-foreground" aria-hidden />
@@ -103,13 +105,13 @@ function GrantRow({ grant, mono, Icon, onRevoke }: { grant: Grant; mono: string;
         description={mono}
         effects={grantEffects(grant)}
         confirmLabel="Revoke"
-        onConfirm={() => onRevoke(grant.id)}
+        onConfirm={() => onRevoke(grant)}
       />
     </div>
   );
 }
 
-function GrantList({ grants, agent, sort, dir, onAgent, onSort, onRevoke }: { grants: Grant[]; agent: string; sort: GrantSortKey; dir: SortDir; onAgent: (agent: string) => void; onSort: (sort: GrantSortKey) => void; onRevoke: (id: number) => void }) {
+function GrantList({ grants, agent, sort, dir, onAgent, onSort, onRevoke }: { grants: Grant[]; agent: string; sort: GrantSortKey; dir: SortDir; onAgent: (agent: string) => void; onSort: (sort: GrantSortKey) => void; onRevoke: (grant: Grant) => void }) {
   const agents = [...new Set(grants.map((grant) => grant.agent))].sort((a, b) => agentName(a).localeCompare(agentName(b)));
   const folders = viewGrants(grants.filter((grant) => grant.command == null), { agent, sort, dir });
   const commands = viewGrants(grants.filter((grant) => grant.command != null), { agent, sort, dir });
@@ -202,12 +204,14 @@ export function GrantsPage() {
         <SettingsSection title="Decisions, last 30 days">
           {decisions.length === 0 ? <p className="px-4 py-4 text-sm text-muted-foreground"><span aria-hidden className="mr-2">🗒️</span>No decisions yet</p> : null}
           {decisions.map((row) => (
-            <div key={row.id} className="flex items-center gap-3 overflow-x-auto px-4 py-2.5 text-sm whitespace-nowrap">
-              <span className="font-mono text-xs text-muted-foreground tabular-nums">{new Date(row.ts).toLocaleString()}</span>
-              <Agent agent={row.agent} />
-              <span className="font-mono text-xs">{row.tool}</span>
-              <span className={cn(pill, VERDICT[row.verdict] ?? "bg-muted text-muted-foreground")}>{row.verdict}</span>
-              {row.durationMs !== null ? <span className="text-xs text-muted-foreground tabular-nums">{row.durationMs} ms</span> : null}
+            <div key={row.id} className="flex items-center gap-3 px-4 py-2.5 text-sm whitespace-nowrap">
+              <span className="shrink-0 font-mono text-xs text-muted-foreground tabular-nums">{new Date(row.ts).toLocaleString()}</span>
+              <span className="shrink-0"><Agent agent={row.agent} /></span>
+              <span className="shrink-0 font-mono text-xs">{row.tool}</span>
+              <span className={cn(pill, "shrink-0", VERDICT[row.verdict] ?? "bg-muted text-muted-foreground")}>{row.verdict}</span>
+              <span className="min-w-0 flex-1 truncate font-mono text-xs" title={decisionTarget(row)}>{decisionTarget(row)}</span>
+              {row.reason ? <span className="max-w-[40%] shrink-0 truncate text-xs text-muted-foreground" title={row.reason}>{row.reason}</span> : null}
+              {row.durationMs !== null ? <span className="shrink-0 text-xs text-muted-foreground tabular-nums">{row.durationMs} ms</span> : null}
             </div>
           ))}
         </SettingsSection>
@@ -217,7 +221,7 @@ export function GrantsPage() {
           <p className="mt-2 text-sm text-muted-foreground">No grants yet</p>
         </div>
       ) : (
-        <GrantList grants={grants} agent={agent} sort={sort} dir={dir} onAgent={setAgent} onSort={pickSort} onRevoke={(id) => void window.leash.revokeGrant(id).then(load)} />
+        <GrantList grants={grants} agent={agent} sort={sort} dir={dir} onAgent={setAgent} onSort={pickSort} onRevoke={(grant) => void window.leash.revokeGrant(grant.id).then(() => { toast({ title: "Grant revoked", description: grant.command ?? grant.path }); load(); })} />
       )}
       <div className="flex flex-wrap items-center gap-2 px-3">
         <ConfirmAction
@@ -226,14 +230,14 @@ export function GrantsPage() {
           description="Every agent loses the folder access it has now."
           effects={REVOKE_ALL_EFFECTS}
           confirmLabel="Revoke all"
-          onConfirm={() => void window.leash.revokeAll().then(load)}
+          onConfirm={() => void window.leash.revokeAll().then((result) => { toastRevoked(result.revoked); load(); })}
         />
         <Button
           variant={lockdown ? "destructive" : "outline"}
           disabled={!lockdown}
           aria-pressed={lockdown}
           className={lockdown ? undefined : "text-muted-foreground disabled:opacity-100"}
-          onClick={() => void window.leash.unlock().then(load)}
+          onClick={() => void window.leash.unlock().then(() => { toast({ title: "Lockdown ended" }); load(); })}
         >
           {lockdown ? <Lock /> : <LockOpen />}
           {lockdown ? "End lockdown" : "Lockdown off"}

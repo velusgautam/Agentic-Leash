@@ -1,9 +1,10 @@
 import { useEffect, useState } from "react";
 import { Link, Outlet, useLocation, useNavigate } from "@tanstack/react-router";
-import { ArrowLeft, RotateCw, Settings, ShieldOff, X } from "lucide-react";
+import { ArrowLeft, Lock, RotateCw, Settings, ShieldOff, X } from "lucide-react";
 import { ConfirmAction, REVOKE_ALL_EFFECTS } from "~/components/ConfirmAction";
 import { AgentIcon, LeashMark } from "~/components/Icons";
 import { Button } from "~/components/ui/button";
+import { toast, Toaster, toastRevoked } from "~/components/ui/toast";
 import {
   Sidebar,
   SidebarContent,
@@ -19,35 +20,35 @@ import {
 } from "~/components/ui/sidebar";
 import { needsAgentBanner, visibleAgent } from "../../../shared/setup";
 import { SetupScreen } from "~/components/SetupScreen";
+import { useGrantStatus } from "~/components/useGrantStatus";
 import { SetupProvider, useSetup } from "~/components/useSetup";
 import { AGENT_NAV, MAIN_NAV, SETTINGS_SECTIONS } from "~/nav";
 
-function RevokeAll() {
-  const [status, setStatus] = useState({ count: 0, lockdown: false });
-  const [note, setNote] = useState<string | null>(null);
-  useEffect(() => {
-    const tick = () => void window.leash.grantStatus().then(setStatus);
-    tick();
-    const timer = window.setInterval(tick, 2000);
-    return () => window.clearInterval(timer);
-  }, []);
+function RevokeAll({ count }: { count: number }) {
   return (
-    <>
-      {note ? <span className="text-xs text-muted-foreground">{note}</span> : null}
-      <ConfirmAction
-        trigger={
-          <Button size="sm" variant="outline" className="border-destructive/30 text-destructive hover:bg-destructive/10 disabled:opacity-40" disabled={status.count === 0}>
-            <ShieldOff />
-            {status.count === 0 ? "Nothing to revoke" : `Revoke all (${status.count})`}
-          </Button>
-        }
-        title={`Revoke all ${status.count} grants?`}
-        description="Every agent loses the folder access it has now."
-        effects={REVOKE_ALL_EFFECTS}
-        confirmLabel="Revoke all"
-        onConfirm={() => void window.leash.revokeAll().then((result) => setNote(`Revoked ${result.revoked}. Lockdown is on.`))}
-      />
-    </>
+    <ConfirmAction
+      trigger={
+        <Button size="sm" variant="outline" className="border-destructive/30 text-destructive hover:bg-destructive/10 disabled:opacity-40" disabled={count === 0}>
+          <ShieldOff />
+          {count === 0 ? "Nothing to revoke" : `Revoke all (${count})`}
+        </Button>
+      }
+      title={`Revoke all ${count} grants?`}
+      description="Every agent loses the folder access it has now."
+      effects={REVOKE_ALL_EFFECTS}
+      confirmLabel="Revoke all"
+      onConfirm={() => void window.leash.revokeAll().then((result) => toastRevoked(result.revoked))}
+    />
+  );
+}
+
+function LockdownBanner() {
+  return (
+    <div role="status" className="mx-5 mb-2 flex items-center gap-3 rounded-lg border border-destructive/30 bg-destructive/10 py-1.5 pr-1.5 pl-3 text-sm">
+      <Lock className="size-4 shrink-0 text-destructive" aria-hidden />
+      <span className="min-w-0 flex-1">Lockdown is on. Every agent tool call is blocked.</span>
+      <Button size="sm" variant="outline" onClick={() => void window.leash.unlock()}>End lockdown</Button>
+    </div>
   );
 }
 
@@ -130,6 +131,7 @@ function AppShell() {
   const [restart, setRestart] = useState<{ name: string; kind: "gui" | "cli"; count: number }[]>([]);
   const [path, setPath] = useState("");
   const { status } = useSetup();
+  const grants = useGrantStatus();
   const onSettings = pathname.startsWith("/settings");
   const shownAgents = AGENT_NAV.filter((item) => status?.agents.some((agent) => agent.id === item.id && visibleAgent(agent)));
   useEffect(() => {
@@ -188,12 +190,13 @@ function AppShell() {
         <SidebarRail />
       </Sidebar>
       <SidebarInset className="min-h-0 overflow-hidden">
-        <div className="drag-region flex h-13 shrink-0 items-center justify-end gap-3 px-5">{onSettings ? null : <RevokeAll />}</div>
+        <div className="drag-region flex h-13 shrink-0 items-center justify-end gap-3 px-5">{onSettings ? null : <RevokeAll count={grants.count} />}</div>
         {status && needsAgentBanner(status.agents) ? (
           <div role="status" className="mx-5 mb-2 rounded-lg border border-border bg-muted/50 px-3 py-2 text-sm">
             Install Claude, Cursor, Codex, Gemini, or Hermes to start tracking.
           </div>
         ) : null}
+        {grants.lockdown ? <LockdownBanner /> : null}
         {restart.length ? (
           <div role="status" className="mx-5 mb-2 flex items-center gap-3 rounded-lg border border-amber-500/30 bg-amber-500/10 py-1.5 pr-1.5 pl-3 text-sm">
             <RotateCw className="size-4 shrink-0 text-amber-500" aria-hidden />
@@ -228,7 +231,13 @@ function AppShell() {
             onClick={(event) => event.stopPropagation()}
             onSubmit={(event) => {
               event.preventDefault();
-              if (path.trim()) void window.leash.createGrant({ agent: "*", path: path.trim(), access: "write", ttlSeconds: 3600 });
+              const target = path.trim();
+              if (target) {
+                void window.leash.createGrant({ agent: "*", path: target, access: "write", ttlSeconds: 3600 }).then(
+                  () => toast({ title: "Granted write access", description: `${target} · all agents · 1 hour` }),
+                  (error: unknown) => toast({ title: "Couldn't grant access", description: error instanceof Error ? error.message : String(error), tone: "destructive" }),
+                );
+              }
               setPalette(false);
             }}
           >
@@ -245,13 +254,14 @@ function AppShell() {
                 confirmLabel="Revoke all"
                 onConfirm={() => {
                   setPalette(false);
-                  void window.leash.revokeAll();
+                  void window.leash.revokeAll().then((result) => toastRevoked(result.revoked));
                 }}
               />
             </div>
           </form>
         </div>
       ) : null}
+      <Toaster />
     </SidebarProvider>
   );
 }

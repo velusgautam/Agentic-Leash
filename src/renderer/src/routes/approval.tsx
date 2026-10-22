@@ -1,11 +1,13 @@
 import { useEffect, useState } from "react";
-import { CheckCircle2, X } from "lucide-react";
-import { parentFolders } from "../../../shared/parents";
+import { CheckCircle2, TriangleAlert, X } from "lucide-react";
+import { isHomeFolder, parentFolders } from "../../../shared/parents";
 import { denyCountdown, pendingSecondsLeft, POPUP_TIMEOUT_S } from "../../../shared/pending";
 import type { PendingRequest } from "../../../shared/types";
 import { AGENT_LABELS, AgentIcon } from "~/components/Icons";
 import { Button } from "~/components/ui/button";
 import { cn } from "~/lib/utils";
+
+const ARM_MS = 600;
 
 const PRESETS = [
   { key: "1", label: "15 min", seconds: 15 * 60 },
@@ -50,12 +52,28 @@ export function ApprovalPage() {
     setChoice(1);
     setScope(null);
   }, [current?.id]);
+  const [armed, setArmed] = useState(false);
+  useEffect(() => {
+    let timer = 0;
+    const arm = () => {
+      window.clearTimeout(timer);
+      setArmed(false);
+      timer = window.setTimeout(() => setArmed(true), ARM_MS);
+    };
+    arm();
+    window.addEventListener("focus", arm);
+    return () => {
+      window.clearTimeout(timer);
+      window.removeEventListener("focus", arm);
+    };
+  }, [current?.id]);
+  const broad = scope !== null && isHomeFolder(scope) && PRESETS[choice]!.seconds === null;
   const allow = () => current && void window.leash.decidePending(current.id, "allow", PRESETS[choice]!.seconds, scope ?? undefined);
   const deny = () => current && void window.leash.decidePending(current.id, "deny", null);
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
       if (!current) return;
-      if (event.key === "Enter") allow();
+      if (event.key === "Enter" && armed && !broad) allow();
       if (event.key === "Escape") deny();
       const index = PRESETS.findIndex((item) => item.key === event.key);
       if (index >= 0) setChoice(index);
@@ -109,15 +127,26 @@ export function ApprovalPage() {
                 <button
                   key={folder}
                   type="button"
-                  title={folder}
+                  title={isHomeFolder(folder) ? `${folder} — your whole home folder` : folder}
                   aria-pressed={scope === folder}
                   onClick={() => setScope((value) => (value === folder ? null : folder))}
-                  className={cn("rounded-md border px-2 py-1 font-mono text-xs", scope === folder ? "border-primary bg-primary/10 font-medium ring-1 ring-primary/30" : "border-border bg-background hover:bg-accent")}
+                  className={cn(
+                    "rounded-md border px-2 py-1 font-mono text-xs",
+                    isHomeFolder(folder)
+                      ? cn("border-amber-500/50 text-amber-700 dark:text-amber-300", scope === folder ? "bg-amber-500/10 font-medium ring-1 ring-amber-500/30" : "bg-background hover:bg-accent")
+                      : scope === folder ? "border-primary bg-primary/10 font-medium ring-1 ring-primary/30" : "border-border bg-background hover:bg-accent",
+                  )}
                 >
                   {folderLabel(folder)}
                 </button>
               ))}
             </div>
+            {scope && isHomeFolder(scope) ? (
+              <p className="mt-1.5 flex items-center gap-1.5 text-xs text-amber-700 dark:text-amber-300">
+                <TriangleAlert className="size-3.5 shrink-0" aria-hidden />
+                Covers your whole home folder, including ~/.ssh and ~/.aws.
+              </p>
+            ) : null}
           </div>
         ) : null}
         <div>
@@ -147,8 +176,8 @@ export function ApprovalPage() {
         <Button size="sm" variant="ghost" className="h-8 text-sm" onClick={deny}>
           Deny <Kbd>esc</Kbd>
         </Button>
-        <Button size="sm" className="h-8 text-sm" onClick={() => allow()}>
-          Allow {scope ? `${folderLabel(scope)} ` : ""}{PRESETS[choice]!.seconds === null ? "always" : `for ${PRESETS[choice]!.label}`} <Kbd>↵</Kbd>
+        <Button size="sm" variant={broad ? "destructive" : "default"} disabled={!armed} className="h-8 text-sm" onClick={() => allow()}>
+          Allow {scope ? `${folderLabel(scope)} ` : ""}{PRESETS[choice]!.seconds === null ? "always" : `for ${PRESETS[choice]!.label}`} {broad ? null : <Kbd>↵</Kbd>}
         </Button>
       </footer>
     </div>

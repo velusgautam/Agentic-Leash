@@ -15,6 +15,9 @@ export function grantRoot(path: string, exact: boolean, isDir: (path: string) =>
   return root === "/" || root === "/Users" ? null : root;
 }
 
+/** Exactly `/Users/<name>` or `/home/<name>`. */
+export const isHomeFolder = (path: string): boolean => /^\/(Users|home)\/[^/]+$/.test(path);
+
 /** Parent folders shared by every path, nearest first. */
 export function parentFolders(paths: string[]): string[] {
   const lists = paths.filter((path) => path.startsWith("/")).map(ancestors);

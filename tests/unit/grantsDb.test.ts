@@ -7,8 +7,10 @@ import {
   collapseGrantDupes,
   createRule,
   deleteRule,
+  listDecisions,
   listGrants,
   openGrantsDb,
+  recordDecision,
   updateRule,
   upsertCommandGrant,
   upsertGrant,
@@ -113,6 +115,32 @@ describe("rules", () => {
     expect(left.map((rule) => rule.value)).toEqual(["ls"]);
     expect(deleteRule(db, id)).toEqual(left);
     expect(deleteRule(db, left[0]!.id)).toEqual([]);
+    db.close();
+  });
+});
+
+describe("decisions", () => {
+  it("stores the command, url and paths behind each decision", () => {
+    const db = openGrantsDb(join(mkdtempSync(join(tmpdir(), "al-dec-")), "grants.db"));
+    recordDecision(db, { ts: 1, agent: "cursor", tool: "Bash", paths: [], verdict: "deny", reason: "Denied in Agentic Leash", command: "rm -rf x" });
+    recordDecision(db, { ts: 2, agent: "cursor", tool: "Write", paths: ["/a", "/b"], verdict: "pass" });
+    recordDecision(db, { ts: 3, agent: "cursor", tool: "WebFetch", paths: [], verdict: "pass", url: "https://x.dev" });
+    const [web, write, bash] = listDecisions(db);
+    expect(web).toMatchObject({ url: "https://x.dev", command: null });
+    expect(write).toMatchObject({ paths: '["/a","/b"]', command: null, url: null, reason: null });
+    expect(bash).toMatchObject({ command: "rm -rf x", url: null, reason: "Denied in Agentic Leash" });
+    db.close();
+  });
+
+  it("adds command and url to a pre-existing decisions table", () => {
+    const path = join(mkdtempSync(join(tmpdir(), "al-olddec-")), "grants.db");
+    const raw = new DatabaseSync(path);
+    raw.exec("CREATE TABLE decisions (id INTEGER PRIMARY KEY, ts INTEGER NOT NULL, agent TEXT NOT NULL, tool TEXT NOT NULL, paths TEXT NOT NULL, verdict TEXT NOT NULL, reason TEXT, grant_id INTEGER, duration_ms INTEGER)");
+    raw.prepare("INSERT INTO decisions (ts, agent, tool, paths, verdict) VALUES (?, ?, ?, ?, ?)").run(1, "cursor", "Write", '["/p"]', "pass");
+    raw.close();
+    const db = openGrantsDb(path);
+    recordDecision(db, { ts: 2, agent: "cursor", tool: "Bash", paths: [], verdict: "pass", command: "ls" });
+    expect(listDecisions(db).map((row) => [row.command, row.url])).toEqual([["ls", null], [null, null]]);
     db.close();
   });
 });
