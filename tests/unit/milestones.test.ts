@@ -13,12 +13,24 @@ import { parseLsof, parsePs, percentiles, restartTargets } from "../../src/main/
 
 describe("rules and hooks", () => {
   it("writes rules for live grants and removes them again", () => {
-    const next = rulesForGrants([{ id: 1, agent: "claude-code", path: "/Users/me/Desktop", access: "write", source: "leash", command: null, createdAt: 0, expiresAt: null }], false, "/Users/me");
+    const next = rulesForGrants([{ id: 1, agent: "claude-code", path: "/Users/me/Desktop", access: "write", source: "leash", command: null, createdAt: 0, expiresAt: null }], [], false, "/Users/me");
     const withRules = applyRules({ permissions: { deny: ["Read(./.env)"] } }, next, { additionalDirectories: [], deny: [] });
     expect(withRules.permissions?.additionalDirectories).toContain("/Users/me/Desktop");
     const cleared = applyRules(withRules, { additionalDirectories: [], deny: [] }, next);
     expect(cleared.permissions?.additionalDirectories).toEqual([]);
     expect(cleared.permissions?.deny).toEqual(["Read(./.env)"]);
+  });
+
+  it("publishes Claude and Global folder rules and skips commands and other agents", () => {
+    const grants = [{ id: 1, agent: "claude-code" as const, path: "/Users/me/Desktop", access: "write" as const, source: "leash" as const, createdAt: 0, expiresAt: null, command: null }];
+    const rules = [
+      { id: 1, kind: "folder" as const, agent: "claude-code" as const, value: "/Users/me/src", createdAt: 0 },
+      { id: 2, kind: "folder" as const, agent: "*" as const, value: "/Users/me/shared", createdAt: 0 },
+      { id: 3, kind: "folder" as const, agent: "cursor" as const, value: "/Users/me/cursor", createdAt: 0 },
+      { id: 4, kind: "command" as const, agent: "claude-code" as const, value: "npm test", createdAt: 0 },
+    ];
+    const next = rulesForGrants(grants, rules, false, "/Users/me");
+    expect(next.additionalDirectories).toEqual(["/Users/me/Desktop", "/Users/me/src", "/Users/me/shared"]);
   });
 
   it("publishes rules into a settings file and sweeps expiry", () => {

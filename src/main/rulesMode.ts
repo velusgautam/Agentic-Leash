@@ -1,7 +1,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import type { DatabaseSync } from "node:sqlite";
-import { getSetting, listGrants, setSetting } from "../shared/db";
-import type { Grant } from "../shared/types";
+import { getSetting, listGrants, listRules, setSetting } from "../shared/db";
+import type { AllowRule, Grant } from "../shared/types";
 import { normalise } from "../shared/paths";
 import { readJson } from "./agents/fs";
 import { writeWithBackup } from "./backup";
@@ -14,13 +14,16 @@ export interface LeashRules {
 const LOCKDOWN_DENY = ["Read", "Edit", "Write", "Bash", "WebFetch", "WebSearch", "mcp__*"];
 const SENSITIVE_DENY = ["Read(//Users/*/.ssh/**)", "Read(//Users/*/.aws/**)", "Read(**/.env*)", "Read(~/Library/Keychains/**)"];
 
-export function rulesForGrants(grants: Grant[], lockdown: boolean, home: string): LeashRules {
-  const additionalDirectories = grants
-    .filter((grant) => grant.source === "leash" && (grant.agent === "claude-code" || grant.agent === "*"))
+export function rulesForGrants(grants: Grant[], rules: AllowRule[], lockdown: boolean, home: string): LeashRules {
+  const fromGrants = grants
+    .filter((grant) => grant.source === "leash" && grant.command == null && (grant.agent === "claude-code" || grant.agent === "*"))
     .map((grant) => normalise(grant.path, home, home));
+  const fromRules = rules
+    .filter((rule) => rule.kind === "folder" && (rule.agent === "claude-code" || rule.agent === "*"))
+    .map((rule) => normalise(rule.value, home, home));
   const deny = [...SENSITIVE_DENY];
   if (lockdown) deny.push(...LOCKDOWN_DENY);
-  return { additionalDirectories: [...new Set(additionalDirectories)], deny };
+  return { additionalDirectories: [...new Set([...fromGrants, ...fromRules])], deny };
 }
 
 type Settings = { permissions?: { allow?: string[]; deny?: string[]; additionalDirectories?: string[] }; hooks?: unknown };
@@ -44,7 +47,7 @@ export type ClaudeMode = "hook" | "rules";
 export function publishClaudeRules(db: DatabaseSync, settingsPath: string, home: string, rulesMode: boolean, now = Date.now()): void {
   const previous = JSON.parse(getSetting(db, "leash_rules", '{"additionalDirectories":[],"deny":[]}')) as LeashRules;
   const live = listGrants(db).filter((grant) => grant.expiresAt === null || grant.expiresAt > now);
-  const next = rulesMode ? rulesForGrants(live, getSetting(db, "lockdown", "0") === "1", home) : { additionalDirectories: [] as string[], deny: [] as string[] };
+  const next = rulesMode ? rulesForGrants(live, listRules(db), getSetting(db, "lockdown", "0") === "1", home) : { additionalDirectories: [] as string[], deny: [] as string[] };
   const dirty = next.additionalDirectories.length + next.deny.length + previous.additionalDirectories.length + previous.deny.length > 0;
   if (!dirty) return;
   const updated = applyRules((existsSync(settingsPath) ? readJson(settingsPath) : {}) as Settings, next, previous);
@@ -53,9 +56,9 @@ export function publishClaudeRules(db: DatabaseSync, settingsPath: string, home:
   setSetting(db, "leash_rules", JSON.stringify(next));
 }
 
-export function migratedRules(prev: ClaudeMode, next: ClaudeMode, live: Grant[], lockdown: boolean, home: string, previous: LeashRules): { write: LeashRules; clear: boolean } {
-  if (prev === "hook" && next === "rules") return { write: rulesForGrants(live, lockdown, home), clear: false };
+export function migratedRules(prev: ClaudeMode, next: ClaudeMode, live: Grant[], rules: AllowRule[], lockdown: boolean, home: string, previous: LeashRules): { write: LeashRules; clear: boolean } {
+  if (prev === "hook" && next === "rules") return { write: rulesForGrants(live, rules, lockdown, home), clear: false };
   if (prev === "rules" && next === "hook") return { write: { additionalDirectories: [], deny: [] }, clear: true };
-  if (next === "rules") return { write: rulesForGrants(live, lockdown, home), clear: false };
+  if (next === "rules") return { write: rulesForGrants(live, rules, lockdown, home), clear: false };
   return { write: previous, clear: false };
 }
