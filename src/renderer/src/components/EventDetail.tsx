@@ -1,9 +1,10 @@
-import { KeyRound, ShieldQuestion } from "lucide-react";
+import { KeyRound, ShieldQuestion, Undo2 } from "lucide-react";
 import type { Grant, HistoryRow } from "../../../shared/types";
 import { ConfirmAction, grantEffects } from "~/components/ConfirmAction";
 import { KindBadge } from "~/components/EventRow";
 import { AGENT_LABELS, AgentIcon } from "~/components/Icons";
 import { Button } from "~/components/ui/button";
+import { toast } from "~/components/ui/toast";
 import { WriteDiff } from "~/components/WriteDiff";
 import { cn } from "~/lib/utils";
 
@@ -63,7 +64,24 @@ export function EventDetail({
       </div>
       {row.kind === "write" ? (
         text ? (
-          <WriteDiff className={docked ? "min-h-0 flex-1" : undefined} path={row.path} before={text.before ?? ""} after={text.after ?? ""} />
+          <>
+            {typeof text.before === "string" ? (
+              <div className="flex justify-end border-b border-border/50 px-4 py-2">
+                <ConfirmAction
+                  trigger={<Button size="sm" variant="outline"><Undo2 />Restore previous version</Button>}
+                  title="Restore the previous version?"
+                  description="Agentic Leash writes the captured earlier text back to this file."
+                  effects={["Replaces the file's current contents.", "Only works if the file hasn't changed since this write."]}
+                  confirmLabel="Restore"
+                  onConfirm={() => void window.leash.restoreWrite(row.id).then((result) => {
+                    if (result.ok) toast({ title: `Restored ${row.path.split("/").pop()}` });
+                    else toast({ title: "Could not restore", description: result.reason, tone: "destructive" });
+                  }, (error: unknown) => { toast({ title: "Could not restore", description: error instanceof Error ? error.message : String(error), tone: "destructive" }); })}
+                />
+              </div>
+            ) : null}
+            <WriteDiff className={docked ? "min-h-0 flex-1" : undefined} path={row.path} before={text.before ?? ""} after={text.after ?? ""} />
+          </>
         ) : (
           <p className="px-4 py-4 text-sm text-muted-foreground">Loading the captured text.</p>
         )

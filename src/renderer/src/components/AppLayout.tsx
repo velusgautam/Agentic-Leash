@@ -4,6 +4,7 @@ import { ArrowLeft, Lock, RotateCw, Settings, ShieldOff, X } from "lucide-react"
 import { ConfirmAction, REVOKE_ALL_EFFECTS } from "~/components/ConfirmAction";
 import { AgentIcon, LeashMark } from "~/components/Icons";
 import { Button } from "~/components/ui/button";
+import { useAppInfo } from "~/components/useAppInfo";
 import { toast, Toaster, toastRevoked } from "~/components/ui/toast";
 import {
   Sidebar,
@@ -135,6 +136,7 @@ function AppShell() {
   const [path, setPath] = useState("");
   const { status } = useSetup();
   const grants = useGrantStatus();
+  const info = useAppInfo();
   const onSettings = pathname.startsWith("/settings");
   const shownAgents = AGENT_NAV.filter((item) => status?.agents.some((agent) => agent.id === item.id && visibleAgent(agent)));
   useEffect(() => {
@@ -154,6 +156,9 @@ function AppShell() {
       window.clearInterval(timer);
     };
   }, [navigate]);
+  useEffect(() => {
+    if (info?.build === "dev" && pathname !== "/approval") document.title = "Agentic Leash (dev)";
+  }, [info, pathname]);
   useEffect(() => {
     if (pathname === "/approval") return;
     const go = () => void window.leash.takeNav().then((to) => {

@@ -2,13 +2,16 @@ import { useEffect, useRef, useState } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { CalendarClock, Eye, EyeOff, Inbox, Search, X } from "lucide-react";
 import { Empty, EmptyHeader, EmptyMedia, EmptyTitle } from "~/components/ui/empty";
-import type { Grant, HistoryRow } from "../../../shared/types";
+import type { Grant, HistoryRow, HistorySummary } from "../../../shared/types";
 import { DetailSplit } from "~/components/DetailSplit";
 import { coveringGrant, EventDetail } from "~/components/EventDetail";
 import { AgentChips, control, KindSelect, SensitiveToggle } from "~/components/EventFilters";
 import { EventRow } from "~/components/EventRow";
 import { HISTORY_AGENT, visibleAgent } from "../../../shared/setup";
 import { useSetup } from "~/components/useSetup";
+import { AGENT_LABELS, AgentIcon } from "~/components/Icons";
+import { Pill } from "~/components/ui/pill";
+import { useLeashData } from "~/hooks/useLeash";
 import { cn } from "~/lib/utils";
 
 const PAGE = 200;
@@ -37,6 +40,30 @@ function localValue(ms: number | null): string {
   const date = new Date(ms);
   const pad = (n: number) => String(n).padStart(2, "0");
   return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
+}
+
+const subscribeHistory = (refresh: () => void) => window.leash.onHistory(refresh);
+const startOfToday = () => new Date().setHours(0, 0, 0, 0);
+const NO_SUMMARY = null as HistorySummary | null;
+const plural = (count: number, one: string, many: string) => `${count.toLocaleString()} ${count === 1 ? one : many}`;
+
+function TodayStrip() {
+  const summary = useLeashData(() => window.leash.historySummary(startOfToday()), subscribeHistory, NO_SUMMARY, 60000);
+  if (!summary || (summary.total === 0 && summary.blocked === 0)) return null;
+  return (
+    <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground">
+      <span className="tabular-nums">Today · {plural(summary.total, "event", "events")}</span>
+      <span aria-hidden>·</span>
+      <span className={cn("tabular-nums", summary.sensitive > 0 && "font-medium text-red-700 dark:text-red-300")}>{summary.sensitive.toLocaleString()} sensitive</span>
+      <span aria-hidden>·</span>
+      <span className={cn("tabular-nums", summary.blocked > 0 && "font-medium text-amber-700 dark:text-amber-300")}>{summary.blocked.toLocaleString()} blocked</span>
+      {summary.agents.map((item) => {
+        const parts = [item.reads && plural(item.reads, "read", "reads"), item.writes && plural(item.writes, "write", "writes"), item.execs && plural(item.execs, "exec", "execs"), item.net && `${item.net.toLocaleString()} net`].filter(Boolean);
+        if (parts.length === 0) return null;
+        return <Pill key={item.agent} className="tabular-nums"><AgentIcon agent={item.agent} className="size-3" />{AGENT_LABELS[item.agent] ?? item.agent} {parts.join(" · ")}</Pill>;
+      })}
+    </div>
+  );
 }
 
 export function HistoryPage() {
@@ -112,6 +139,7 @@ export function HistoryPage() {
 
   const toolbar = (
     <div className="space-y-3">
+      <TodayStrip />
       <div className="flex items-center gap-3">
         <h1 className="text-lg font-semibold tracking-tight">History</h1>
         <span className="rounded-full bg-muted px-2 py-0.5 text-xs text-muted-foreground tabular-nums">{total.toLocaleString()} events</span>

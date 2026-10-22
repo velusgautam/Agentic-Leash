@@ -2,8 +2,9 @@ import { useEffect, useState } from "react";
 import { ArrowDown, ArrowUp, Check, CircleHelp, Eye, FolderLock, KeyRound, Lock, LockOpen, Pencil, ScrollText, ShieldOff, SquareTerminal, Timer, Users, X, type LucideIcon } from "lucide-react";
 import { decisionTarget } from "../../../shared/decisionView";
 import { viewGrants, type GrantSortKey, type SortDir } from "../../../shared/grantView";
+import { isHomeFolder } from "../../../shared/parents";
 import { denyCountdown, pendingSecondsLeft, POPUP_TIMEOUT_S } from "../../../shared/pending";
-import type { DecisionRow, Grant, PendingRequest } from "../../../shared/types";
+import type { DecisionRow, Grant, PendingRequest, RuleSuggestion } from "../../../shared/types";
 import { ApprovalChoices, allowLabel, isBroad, PRESETS } from "~/components/ApprovalChoices";
 import { ConfirmAction, grantEffects, REVOKE_ALL_EFFECTS } from "~/components/ConfirmAction";
 import { AGENT_LABELS, AgentIcon } from "~/components/Icons";
@@ -77,6 +78,24 @@ function PendingRow({ item, now }: { item: PendingRequest; now: number }) {
   );
 }
 
+const tilde = (path: string) => path.replace(/^\/(Users|home)\/[^/]+/, "~");
+
+function SuggestionRow({ item }: { item: RuleSuggestion }) {
+  const target = item.command ?? (item.path ? tilde(item.path) : "");
+  const home = item.path !== null && isHomeFolder(item.path);
+  const fail = (error: unknown) => { toast({ title: "Could not update suggestion", description: error instanceof Error ? error.message : String(error), tone: "destructive" }); };
+  return (
+    <div className="flex items-center gap-3 px-4 py-3 text-sm">
+      <AgentIcon agent={item.agent} className="size-4 shrink-0" />
+      <p className="min-w-0 flex-1 text-xs">
+        {agentName(item.agent)} got {item.access} access to <span className="font-mono font-medium break-all">{target}</span> {item.count} {item.count === 1 ? "time" : "times"} in 2 weeks
+      </p>
+      <Button size="sm" variant={home ? "destructive" : "default"} onClick={() => void window.leash.acceptSuggestion(item.key).then(() => { toast({ title: "Always allowed" }); }, fail)}>Make it Always</Button>
+      <Button size="sm" variant="ghost" onClick={() => void window.leash.dismissSuggestion(item.key).then(() => { toast({ title: "Suggestion dismissed" }); }, fail)}>Dismiss</Button>
+    </div>
+  );
+}
+
 function GrantRow({ grant, mono, Icon, onRevoke }: { grant: Grant; mono: string; Icon: typeof FolderLock; onRevoke: (grant: Grant) => void }) {
   return (
     <div className="flex items-center gap-3 px-4 py-3 text-sm">
@@ -91,6 +110,9 @@ function GrantRow({ grant, mono, Icon, onRevoke }: { grant: Grant; mono: string;
           <span className="text-xs text-muted-foreground">{SOURCE_LABELS[grant.source] ?? grant.source}</span>
         </div>
       </div>
+      {grant.expiresAt !== null && grant.source === "leash" ? (
+        <Button size="sm" variant="ghost" aria-label="Extend by 1 hour" onClick={() => void window.leash.extendGrant(grant.id, 3600).then(({ expiresAt }) => { if (expiresAt === null) toast({ title: "Could not extend", description: "This grant can't be extended.", tone: "destructive" }); else toast({ title: "Extended by 1 hour" }); }, (error: unknown) => { toast({ title: "Could not extend", description: error instanceof Error ? error.message : String(error), tone: "destructive" }); })}>+1 h</Button>
+      ) : null}
       <ConfirmAction
         trigger={<Button size="sm" variant="destructive-outline">Revoke</Button>}
         title="Revoke this grant?"
@@ -160,6 +182,7 @@ const subscribeLog = (refresh: () => void) => {
 };
 const NO_GRANTS = { grants: [] as Grant[], lockdown: false };
 const NO_DECISIONS: DecisionRow[] = [];
+const NO_SUGGESTIONS: RuleSuggestion[] = [];
 
 export function GrantsPage() {
   const { grants, lockdown } = useLeashData(async () => {
@@ -167,6 +190,7 @@ export function GrantsPage() {
     return { grants: list, lockdown: status.lockdown };
   }, subscribeGrants, NO_GRANTS, 15000);
   const decisions = useLeashData(() => window.leash.listDecisions(), subscribeLog, NO_DECISIONS, 10000);
+  const suggestions = useLeashData(() => window.leash.listSuggestions(), subscribeGrants, NO_SUGGESTIONS, 60000);
   const pending = usePending();
   const [tab, setTab] = useState("active");
   const [agent, setAgent] = useState("all");
@@ -191,6 +215,11 @@ export function GrantsPage() {
       {pending.length ? (
         <SettingsSection title="Pending">
           {pending.map((item) => <PendingRow key={item.id} item={item} now={now} />)}
+        </SettingsSection>
+      ) : null}
+      {suggestions.length ? (
+        <SettingsSection title="Suggestions">
+          {suggestions.map((item) => <SuggestionRow key={item.key} item={item} />)}
         </SettingsSection>
       ) : null}
       <Tabs value={tab} onValueChange={(value) => setTab(String(value))}>

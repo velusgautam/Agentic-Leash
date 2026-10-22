@@ -1,7 +1,8 @@
+import type { ApprovalStyle } from "./approvalStyle";
 import type { AutoAllow } from "./autoAllow";
 import type { IgnoredRow } from "./ignored";
 import type { SetupStatus } from "./setup";
-import type { Access, AgentId, AgentSnapshot, AllowRule, DecisionRow, Diagnostics, Grant, HistoryRow, PendingRequest, ScheduledRevoke, ThemeSource } from "./types";
+import type { Access, AgentId, AppInfo, AgentSnapshot, AllowRule, DecisionRow, Diagnostics, Grant, HistoryRow, HistorySummary, PendingRequest, RuleSuggestion, ScheduledRevoke, ThemeSource } from "./types";
 
 export interface OpenAtLoginState {
   enabled: boolean;
@@ -22,12 +23,21 @@ export interface HistoryOptimizationResult {
 
 export interface LeashBridge {
   platform: string;
+  appInfo(): Promise<AppInfo>;
   getOpenAtLogin(): Promise<OpenAtLoginState>;
   setOpenAtLogin(enabled: boolean): Promise<OpenAtLoginState>;
   listAgents(): Promise<AgentSnapshot[]>;
   listGrants(): Promise<Grant[]>;
   revokeGrant(id: number): Promise<void>;
   revokeAll(): Promise<{ revoked: number }>;
+  extendGrant(id: number, seconds: number): Promise<{ expiresAt: number | null }>;
+  getApprovalStyle(): Promise<ApprovalStyle>;
+  setApprovalStyle(style: ApprovalStyle): Promise<void>;
+  listSuggestions(): Promise<RuleSuggestion[]>;
+  acceptSuggestion(key: string): Promise<void>;
+  dismissSuggestion(key: string): Promise<void>;
+  restoreWrite(id: number): Promise<{ ok: true } | { ok: false; reason: string }>;
+  historySummary(from: number): Promise<HistorySummary>;
   grantStatus(): Promise<{ count: number; lockdown: boolean }>;
   createGrant(input: { agent: AgentId | "*"; path: string; access: Access; ttlSeconds: number | null }): Promise<void>;
   listAutoAllows(): Promise<(AutoAllow & { enabled: boolean })[]>;

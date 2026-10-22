@@ -6,9 +6,12 @@ import { promisify } from "node:util";
 import { app, BrowserWindow, globalShortcut, ipcMain, nativeTheme } from "electron";
 import { DEFAULT_TTL_S, grantsDbPath, HISTORY_DIR, homeDir, isClaudeBinary, IS_MAC, leashDir, POPUP_TIMEOUT_S, protectedRoots, socketPath, TCC_CLIENTS } from "../shared/constants";
 import { diagnosticsReport } from "../shared/diagnostics";
-import { cancelScheduled, collapseGrantDupes, createRule, decisionDurations, deleteGrant, deleteGrants, deleteRule, getSetting, listDecisions, listGrants, listRules, listScheduled, openGrantsDb, scheduleRevoke, setSetting, updateRule, upsertCommandGrant, upsertGrant } from "../shared/db";
-import { historyStorageBytes, historyText, listHistory, openHistoryDb, optimizeHistory, queryHistory, type HistoryFilter } from "../helper/historyDb";
-import type { Access, AgentId, AgentSnapshot, HistoryRow, ThemeSource } from "../shared/types";
+import { cancelScheduled, collapseGrantDupes, createRule, decisionDurations, deleteGrant, deleteGrants, deleteRule, extendGrant, countBlocked, getSetting, listApprovals, listDecisions, listGrants, listRules, listScheduled, openGrantsDb, recordApproval, scheduleRevoke, setSetting, updateRule, upsertCommandGrant, upsertGrant } from "../shared/db";
+import { historyEvent, historyStorageBytes, historyText, listHistory, openHistoryDb, optimizeHistory, queryHistory, summarizeHistory, type HistoryFilter } from "../helper/historyDb";
+import { checkRestore } from "../shared/restore";
+import { parseApprovalStyle, type ApprovalStyle } from "../shared/approvalStyle";
+import { suggestRules, SUGGEST_WINDOW_MS } from "../shared/suggestions";
+import type { Access, AgentId, AgentSnapshot, HistoryRow, PendingRequest, ThemeSource } from "../shared/types";
 import { loadClaude } from "./agents/claude";
 import { cursorWatchPaths, cursorWorkers, loadCursor } from "./agents/cursor";
 import { mirrorConfigGrants } from "./agents/mirror";
@@ -93,7 +96,7 @@ const broadcast = (channel: string, payload?: unknown) => {
   for (const window of BrowserWindow.getAllWindows()) if (!window.webContents.isDestroyed()) window.webContents.send(channel, payload);
 };
 
-export function startRuntime(options: { userData: string; openApproval: () => void; closeApproval: () => void; setPending: (count: number) => void; notify: (title: string, body: string) => void; finishUninstall: () => void; disableLoginItem: () => void; onStatus?: (status: { count: number; lockdown: boolean }) => void }): { revokeAll: () => { revoked: number }; unlock: () => void } {
+export function startRuntime(options: { userData: string; openApproval: () => void; closeApproval: () => void; setPending: (count: number) => void; notify: (title: string, body: string) => void; finishUninstall: () => void; disableLoginItem: () => void; onStatus?: (status: { count: number; lockdown: boolean }) => void; notifyPending?: (item: PendingRequest, decide: (decision: "allow" | "deny") => void) => (() => void) | void }): { revokeAll: () => { revoked: number }; unlock: () => void } {
   const db = openGrantsDb(grantsDbPath());
   collapseGrantDupes(db);
   const home = homeDir();
@@ -105,14 +108,29 @@ export function startRuntime(options: { userData: string; openApproval: () => vo
   let uninstalling = false;
   const timeouts = new Map<string, NodeJS.Timeout>();
 
+  const notified = new Map<string, (() => void) | void>();
   const broker = new Broker((pending) => {
     options.setPending(pending.length);
     broadcast("pending:changed", pending);
-    if (pending.length) options.openApproval();
-    else options.closeApproval();
+    const notifyStyle = parseApprovalStyle(getSetting(db, "approval_style", "popup")) === "notification";
+    if (!pending.length) options.closeApproval();
+    else if (!notifyStyle) options.openApproval();
     for (const item of pending) {
       if (timeouts.has(item.id)) continue;
       timeouts.set(item.id, setTimeout(() => broker.decide(item.id, { decision: "timeout" }), POPUP_TIMEOUT_S * 1000));
+    }
+    for (const [id, cleanup] of notified) {
+      if (pending.some((item) => item.id === id)) continue;
+      notified.delete(id);
+      cleanup?.();
+    }
+    for (const item of pending) {
+      if (notified.has(item.id)) continue;
+      if (!notifyStyle) {
+        notified.set(item.id, undefined);
+        continue;
+      }
+      notified.set(item.id, options.notifyPending?.(item, (decision) => decideApproval(item.id, decision, decision === "allow" ? 900 : null)));
     }
   });
   try {
@@ -193,12 +211,17 @@ export function startRuntime(options: { userData: string; openApproval: () => vo
 
   const allow = (paths: string[], agent: AgentId | "*", access: Access, ttlSeconds: number | null, exact = false) => {
     const expiresAt = ttlSeconds === null ? null : Date.now() + ttlSeconds * 1000;
+    const roots: string[] = [];
     for (const path of paths) {
       const root = grantRoot(path, exact, (item) => statSync(item, { throwIfNoEntry: false })?.isDirectory() ?? false);
-      if (root) upsertGrant(db, { agent, path: root, access, source: "leash", createdAt: Date.now(), expiresAt });
+      if (root) {
+        upsertGrant(db, { agent, path: root, access, source: "leash", createdAt: Date.now(), expiresAt });
+        roots.push(root);
+      }
     }
     const claude = snapshots.find((snapshot) => snapshot.id === "claude-code");
     publishClaudeRules(db, join(claudeRoot(), "settings.json"), home, claude?.enforcement === "rules");
+    return roots;
   };
 
   const withHistory = <T,>(read: (historyDb: ReturnType<typeof openHistoryDb>) => T): T => {
@@ -247,6 +270,39 @@ export function startRuntime(options: { userData: string; openApproval: () => vo
     allow([input.path], input.agent, input.access, input.ttlSeconds, true);
     publishStatus();
   });
+  ipcMain.handle("grants:extend", (_event, id: number, seconds: number) => {
+    if (!Number.isInteger(id) || !Number.isFinite(seconds) || seconds <= 0) return { expiresAt: null };
+    const expiresAt = extendGrant(db, id, seconds, Date.now());
+    if (expiresAt !== null) {
+      rescan();
+      publishStatus();
+    }
+    return { expiresAt };
+  });
+  const dismissedSuggestions = (): string[] => {
+    try {
+      const parsed = JSON.parse(getSetting(db, "suggestions:dismissed", "[]"));
+      return Array.isArray(parsed) ? parsed.filter((item): item is string => typeof item === "string") : [];
+    } catch {
+      return [];
+    }
+  };
+  const currentSuggestions = () => suggestRules(listApprovals(db, Date.now() - SUGGEST_WINDOW_MS), listGrants(db), dismissedSuggestions(), Date.now());
+  ipcMain.handle("suggestions:list", () => currentSuggestions());
+  ipcMain.handle("suggestions:accept", (_event, key: string) => {
+    const item = currentSuggestions().find((suggestion) => suggestion.key === key);
+    if (!item) return;
+    if (item.command) upsertCommandGrant(db, { agent: item.agent, command: item.command, createdAt: Date.now(), expiresAt: null });
+    else if (item.path) allow([item.path], item.agent as AgentId | "*", item.access, null, true);
+    publishStatus();
+  });
+  ipcMain.handle("suggestions:dismiss", (_event, key: string) => {
+    if (typeof key !== "string") return;
+    setSetting(db, "suggestions:dismissed", JSON.stringify([...dismissedSuggestions().filter((item) => item !== key), key].slice(-200)));
+    publishStatus();
+  });
+  ipcMain.handle("approval-style:get", () => parseApprovalStyle(getSetting(db, "approval_style", "popup")));
+  ipcMain.handle("approval-style:set", (_event, style: ApprovalStyle) => setSetting(db, "approval_style", parseApprovalStyle(style)));
   ipcMain.handle("grants:unlock", () => unlock());
   const autoAllowRows = () => {
     const off = new Set(parseAutoAllowOff(getSetting(db, "auto_allow_off", "[]")));
@@ -364,24 +420,53 @@ export function startRuntime(options: { userData: string; openApproval: () => vo
     return listIgnored(db);
   });
   ipcMain.handle("history:text", (_event, id: number) => withHistory((historyDb) => historyText(historyDb, id)));
+  ipcMain.handle("history:summary", (_event, from: number) => {
+    const since = Number.isFinite(from) ? from : 0;
+    return { ...withHistory((historyDb) => summarizeHistory(historyDb, since)), blocked: countBlocked(db, since) };
+  });
+  ipcMain.handle("history:restore", (_event, id: number) => {
+    if (!Number.isInteger(id)) return { ok: false, reason: "That history entry is gone." };
+    const { event, text } = withHistory((historyDb) => ({ event: historyEvent(historyDb, id), text: historyText(historyDb, id) }));
+    if (!event) return { ok: false, reason: "That history entry is gone." };
+    let current: string | null = null;
+    try {
+      current = readFileSync(event.path, "utf8");
+    } catch {
+      /* missing or unreadable */
+    }
+    const check = checkRestore({ kind: event.kind, path: event.path, before: text.before, after: text.after, current, home, protectedRoots: protectedRoots(home) });
+    if (!check.ok || text.before === null) return check.ok ? { ok: false, reason: "There is no earlier version to restore." } : check;
+    try {
+      const mode = statSync(event.path).mode & 0o777;
+      writeFileSync(event.path, text.before, { mode });
+      chmodSync(event.path, mode);
+    } catch {
+      return { ok: false, reason: "The file could not be written." };
+    }
+    return { ok: true };
+  });
   ipcMain.handle("approval:list", () => broker.list());
   ipcMain.handle("approval:close", () => options.closeApproval());
-  ipcMain.handle("approval:decide", (_event, id: string, decision: "allow" | "deny", ttlSeconds: number | null, scopePath?: string) => {
+  const decideApproval = (id: string, decision: "allow" | "deny", ttlSeconds: number | null, scopePath?: string) => {
     const pending = broker.list().find((item) => item.id === id);
     const timeout = timeouts.get(id);
     if (timeout) clearTimeout(timeout);
     const ttl = ttlSeconds === undefined ? DEFAULT_TTL_S : ttlSeconds;
     if (decision === "allow" && pending) {
+      const { agent, access } = pending.request;
       const scope = typeof scopePath === "string" && parentFolders(pending.request.paths).includes(scopePath) ? scopePath : undefined;
-      allow(scope ? [scope] : pending.request.paths, pending.request.agent, pending.request.access, ttl, Boolean(scope));
+      const roots = allow(scope ? [scope] : pending.request.paths, agent, access, ttl, Boolean(scope));
+      const ts = Date.now();
+      for (const path of roots) recordApproval(db, { ts, agent, path, command: null, access, ttlSeconds: ttl });
       const command = pending.request.command?.trim() ?? "";
       if (command) {
         upsertCommandGrant(db, {
-          agent: pending.request.agent,
+          agent,
           command,
           createdAt: Date.now(),
           expiresAt: ttl === null ? null : Date.now() + ttl * 1000,
         });
+        recordApproval(db, { ts, agent, path: null, command, access, ttlSeconds: ttl });
       }
     }
     broker.decide(id, { decision, ttlSeconds: ttlSeconds ?? undefined });
@@ -389,7 +474,8 @@ export function startRuntime(options: { userData: string; openApproval: () => vo
       releaseCovered();
       publishStatus();
     }
-  });
+  };
+  ipcMain.handle("approval:decide", (_event, id: string, decision: "allow" | "deny", ttlSeconds: number | null, scopePath?: string) => decideApproval(id, decision, ttlSeconds, scopePath));
   // Agents that aren't running read the new config on their next start, so they drop out here.
   const staleTargets = async () => {
     if (!pendingRestart.size) return [];
