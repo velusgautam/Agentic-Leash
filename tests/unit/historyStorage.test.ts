@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { describe, expect, it } from "vitest";
 import { checkpointHistory, historyText, insertEvents, openHistoryDb, optimizeHistory, pruneHistory, queryHistory } from "../../src/helper/historyDb";
+import { capBytes, formatBytes, parseCapGb, rearmDismissed, storageWarning, type HistoryStats } from "../../src/shared/storage";
 
 const empty = { from: null, to: null, agents: [], path: "", kind: "all", sensitive: false, offset: 0, limit: 50, includeNoise: true };
 const row = { ts: 1, agent: "codex" as const, pid: 1, exe: "codex", kind: "write" as const, sensitive: false, source: "eslogger" as const };
@@ -101,5 +102,55 @@ describe("history WAL", () => {
     checkpointHistory(history);
     expect(statSync(`${path}-wal`).size).toBe(0);
     history.close();
+  });
+});
+
+const stats = (percent: number, hardCap = false): HistoryStats => ({ usedBytes: percent, fileBytes: percent, capBytes: 100, counts: [], prunedAt: null, prunedRows: 0, hardCap });
+
+describe("history cap", () => {
+  it("accepts whole gigabytes from 1 to 1024", () => {
+    expect(parseCapGb("10")).toBe(10);
+    expect(parseCapGb("1")).toBe(1);
+    expect(parseCapGb("1024")).toBe(1024);
+    for (const value of ["0", "1.5", "abc", "1025", ""]) expect(parseCapGb(value)).toBeNull();
+  });
+
+  it("falls back to 10 GB", () => {
+    expect(capBytes("")).toBe(10 * 1024 ** 3);
+    expect(capBytes("2")).toBe(2 * 1024 ** 3);
+  });
+
+  it("formats bytes", () => {
+    expect(formatBytes(512)).toBe("512 B");
+    expect(formatBytes(2048)).toBe("2 KB");
+    expect(formatBytes(1.5 * 1024 ** 3)).toBe("1.5 GB");
+  });
+});
+
+describe("storageWarning", () => {
+  it("steps every 10 points from 50%", () => {
+    expect(storageWarning(null, 0)).toBeNull();
+    expect(storageWarning(stats(49), 0)).toBeNull();
+    expect(storageWarning(stats(50), 0)).toEqual({ step: 50, percent: 50, closable: true });
+    expect(storageWarning(stats(67), 0)).toEqual({ step: 60, percent: 67, closable: true });
+  });
+
+  it("hides dismissed steps until the next one", () => {
+    expect(storageWarning(stats(67), 60)).toBeNull();
+    expect(storageWarning(stats(72), 60)).toEqual({ step: 70, percent: 72, closable: true });
+  });
+
+  it("cannot dismiss the hard cap", () => {
+    expect(storageWarning(stats(85, true), 0)).toEqual({ step: 100, percent: 85, closable: false });
+    expect(storageWarning(stats(100), 100)).toEqual({ step: 100, percent: 100, closable: false });
+  });
+});
+
+describe("rearmDismissed", () => {
+  it("lowers the dismissed step once usage falls 10 points below it", () => {
+    expect(rearmDismissed(stats(65), 80)).toBe(70);
+    expect(rearmDismissed(stats(45), 50)).toBe(50);
+    expect(rearmDismissed(stats(39), 50)).toBe(40);
+    expect(rearmDismissed(null, 50)).toBe(50);
   });
 });

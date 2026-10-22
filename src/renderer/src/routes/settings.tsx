@@ -21,6 +21,7 @@ import { aboutText, BUILD_LABELS, runtimeLine } from "../../../shared/appInfo";
 import { cn } from "~/lib/utils";
 import { SETTINGS_SECTIONS } from "~/nav";
 import { parseRetentionDays } from "../../../shared/retention";
+import { formatBytes } from "../../../shared/storage";
 import { DEFAULT_APPEARANCE, readAppearance, saveAppearance, type AppearancePrefs } from "../appearance";
 
 function General() {
@@ -278,12 +279,6 @@ function Monitoring() {
     }).then(setOptimization).catch((caught: unknown) => {
       setOptimizationError(caught instanceof Error ? caught.message : "History optimization stopped.");
     }).finally(() => setOptimizing(false));
-  };
-  const formatBytes = (bytes: number) => {
-    if (bytes < 1024) return `${bytes} B`;
-    const units = ["KB", "MB", "GB", "TB"];
-    const unit = Math.min(Math.floor(Math.log(bytes) / Math.log(1024)) - 1, units.length - 1);
-    return `${(bytes / 1024 ** (unit + 1)).toFixed(unit > 0 ? 1 : 0)} ${units[unit]}`;
   };
   const optimizationDescription = optimizationError
     ?? (optimized ? `Reduced history from ${formatBytes(optimized.beforeBytes)} to ${formatBytes(optimized.afterBytes)}.`
