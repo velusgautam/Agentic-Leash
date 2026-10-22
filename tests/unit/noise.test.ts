@@ -62,14 +62,6 @@ describe("eventBucket", () => {
 });
 
 describe("history tables", () => {
-  it("stores snapshots once without a duplicate blobs table", () => {
-    const history = db();
-    insertEvents(history, [{ ...row, kind: "write", path: "/Users/me/project/a.ts", beforeBlob: "before", afterBlob: "after" }]);
-    expect(history.prepare("SELECT before_blob, after_blob FROM events").get()).toEqual({ before_blob: "before", after_blob: "after" });
-    expect(history.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'blobs'").get()).toBeUndefined();
-    history.close();
-  });
-
   it("stores main and noise separately and can read them together", () => {
     const history = db();
     insertEvents(history, [
@@ -85,7 +77,7 @@ describe("history tables", () => {
     expect(both.rows.map((item) => item.path).sort()).toEqual(["/Users/me/project/src/index.ts", "/tmp/app/.env", "/tmp/payload", "10.0.0.1:443"]);
     expect(both.total).toBe(4);
     const noise = both.rows.find((item) => item.path === "/tmp/payload");
-    expect(historyText(history, noise!.id)).toEqual({ before: "a", after: "b" });
+    expect(historyText(history, noise!.id)).toEqual({ before: null, after: null });
     expect(new Set(both.rows.map((item) => item.id)).size).toBe(4);
     history.close();
   });
@@ -131,11 +123,10 @@ describe("history tables", () => {
     history.close();
   });
 
-  it("rebuilds history without legacy blobs or exec rows", () => {
+  it("rebuilds history without orphan blobs or exec rows", () => {
     const dir = mkdtempSync(join(tmpdir(), "al-optimize-"));
     const path = join(dir, "history.db");
     const history = openHistoryDb(path);
-    history.exec("CREATE TABLE blobs (sha256 TEXT PRIMARY KEY, content BLOB NOT NULL)");
     insertEvents(history, [
       { ...row, ts: 2, kind: "write", path: "/Users/me/project/a.ts", beforeBlob: "a", afterBlob: "b" },
       { ...row, ts: 3, kind: "write", path: "/tmp/payload" },
@@ -146,7 +137,7 @@ describe("history tables", () => {
     );
     insertExec.run(20, 4, "/usr/bin/git");
     history.prepare("INSERT INTO noise (id, ts, agent, pid, exe, kind, path, sensitive, source) VALUES (?, ?, 'codex', 1, 'codex', 'exec', ?, 0, 'eslogger')").run(21, 5, "/tmp/tool");
-    history.prepare("INSERT INTO blobs (sha256, content) VALUES ('old', 'duplicate')").run();
+    history.prepare("INSERT INTO blobs (hash, size, data) VALUES ('old', 9, zeroblob(100000))").run();
     history.prepare("INSERT INTO meta (key, value) VALUES ('custom', 'kept')").run();
     history.close();
 
@@ -159,7 +150,7 @@ describe("history tables", () => {
     expect(rows.map((item) => item.id).sort()).toEqual([1, 2]);
     expect(historyText(compact, rows.find((item) => item.path.endsWith("a.ts"))!.id)).toEqual({ before: "a", after: "b" });
     expect(compact.prepare("SELECT value FROM meta WHERE key = 'custom'").get()).toEqual({ value: "kept" });
-    expect(compact.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'blobs'").get()).toBeUndefined();
+    expect(compact.prepare("SELECT count(*) AS n FROM blobs WHERE hash = 'old'").get()).toEqual({ n: 0 });
     expect(compact.prepare("SELECT count(*) AS n FROM events WHERE kind = 'exec'").get()).toEqual({ n: 0 });
     expect((compact.prepare("PRAGMA index_list(events)").all() as { name: string }[]).some((index) => index.name === "events_ts")).toBe(true);
     expect(result.afterBytes).toBeLessThan(result.beforeBytes);

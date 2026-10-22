@@ -1,13 +1,16 @@
 import { chmodSync, chownSync, existsSync, mkdirSync, renameSync, rmSync, statSync } from "node:fs";
 import { dirname } from "node:path";
 import { DatabaseSync } from "node:sqlite";
+import { deflateRawSync, inflateRawSync } from "node:zlib";
 import { ignoredMatchSql } from "../shared/ignored";
 import { eventBucket } from "../shared/noise";
 import { MAIN_RETENTION_DAYS, NOISE_RETENTION_DAYS } from "../shared/retention";
 import type { HistoryEvent, HistoryRow, HistorySummary } from "../shared/types";
+import { sha256 } from "./classify";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
-const EVENT_COLS = "id, ts, agent, pid, exe, kind, path, dest_path, sha256, before_blob, after_blob, sensitive, source, minute_key";
+const EVENT_COLS = "id, ts, agent, pid, exe, kind, path, dest_path, sha256, before_blob, after_blob, sensitive, source, minute_key, before_hash, after_hash";
+const LEGACY_COLS = EVENT_COLS.replace(", before_hash, after_hash", ", NULL, NULL");
 const EVENT_TABLE = `
   id INTEGER PRIMARY KEY,
   ts INTEGER NOT NULL,
@@ -22,7 +25,9 @@ const EVENT_TABLE = `
   after_blob TEXT,
   sensitive INTEGER NOT NULL DEFAULT 0,
   source TEXT NOT NULL,
-  minute_key TEXT
+  minute_key TEXT,
+  before_hash TEXT,
+  after_hash TEXT
 `;
 
 const SCHEMA = `
@@ -34,7 +39,14 @@ CREATE TABLE IF NOT EXISTS noise (${EVENT_TABLE});
 CREATE UNIQUE INDEX IF NOT EXISTS noise_read_collapse ON noise (minute_key) WHERE minute_key IS NOT NULL;
 CREATE INDEX IF NOT EXISTS noise_ts ON noise (ts);
 CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS blobs (hash TEXT PRIMARY KEY, size INTEGER NOT NULL, data BLOB NOT NULL);
 `;
+
+const REFERENCED = ["events", "noise"].flatMap((table) => ["before_hash", "after_hash"].map((col) => `SELECT ${col} FROM ${table} WHERE ${col} IS NOT NULL`)).join(" UNION ");
+
+function hasColumn(db: DatabaseSync, table: string, column: string, schema = "main"): boolean {
+  return (db.prepare(`PRAGMA ${schema}.table_info(${table})`).all() as { name: string }[]).some((item) => item.name === column);
+}
 
 export function openHistoryDb(path: string, readOnly = false): DatabaseSync {
   if (!readOnly) mkdirSync(dirname(path), { recursive: true });
@@ -42,7 +54,10 @@ export function openHistoryDb(path: string, readOnly = false): DatabaseSync {
   db.exec("PRAGMA busy_timeout = 5000");
   if (!readOnly) {
     db.exec("PRAGMA journal_mode = WAL");
+    db.exec("PRAGMA journal_size_limit = 67108864");
+    if (hasTable(db, "blobs") && !hasColumn(db, "blobs", "hash")) db.exec("DROP TABLE blobs");
     db.exec(SCHEMA);
+    for (const table of ["events", "noise"]) for (const col of ["before_hash", "after_hash"]) if (!hasColumn(db, table, col)) db.exec(`ALTER TABLE ${table} ADD COLUMN ${col} TEXT`);
   }
   return db;
 }
@@ -53,6 +68,17 @@ function maxId(db: DatabaseSync): number {
   return Math.max(events, noise);
 }
 
+export function checkpointHistory(db: DatabaseSync): void {
+  db.exec("PRAGMA busy_timeout = 0");
+  try {
+    db.prepare("PRAGMA wal_checkpoint(TRUNCATE)").get();
+  } catch (error) {
+    if (!(error instanceof Error && /busy|locked/i.test(error.message))) throw error;
+  } finally {
+    db.exec("PRAGMA busy_timeout = 5000");
+  }
+}
+
 export function insertEvents(db: DatabaseSync, events: HistoryEvent[], ignored: readonly string[] = []): void {
   const kept = events.flatMap((event) => {
     const bucket = eventBucket(event, ignored);
@@ -60,15 +86,25 @@ export function insertEvents(db: DatabaseSync, events: HistoryEvent[], ignored: 
   });
   if (!kept.length) return;
   let next = maxId(db);
-  const insertMain = db.prepare(`INSERT OR IGNORE INTO events (${EVENT_COLS}) VALUES (${Array(14).fill("?").join(", ")})`);
-  const insertNoise = db.prepare(`INSERT OR IGNORE INTO noise (${EVENT_COLS}) VALUES (${Array(14).fill("?").join(", ")})`);
+  const insertMain = db.prepare(`INSERT OR IGNORE INTO events (${EVENT_COLS}) VALUES (${Array(16).fill("?").join(", ")})`);
+  const insertNoise = db.prepare(`INSERT OR IGNORE INTO noise (${EVENT_COLS}) VALUES (${Array(16).fill("?").join(", ")})`);
+  const insertBlob = db.prepare("INSERT OR IGNORE INTO blobs (hash, size, data) VALUES (?, ?, ?)");
+  const store = (text: string | undefined): string | null => {
+    if (text == null) return null;
+    const hash = sha256(text);
+    insertBlob.run(hash, Buffer.byteLength(text), deflateRawSync(text));
+    return hash;
+  };
   db.exec("BEGIN");
   try {
     for (const item of kept) {
       next += 1;
       const event = item.event;
       const minute = event.kind === "read" ? `${event.agent}|${event.path}|${Math.floor(event.ts / 60000)}` : null;
-      const args = [next, event.ts, event.agent, event.pid, event.exe, event.kind, event.path, event.destPath ?? null, event.sha256 ?? null, event.beforeBlob ?? null, event.afterBlob ?? null, event.sensitive ? 1 : 0, event.source, minute];
+      const main = item.bucket === "main";
+      const beforeHash = main ? store(event.beforeBlob) : null;
+      const afterHash = main ? store(event.afterBlob) : null;
+      const args = [next, event.ts, event.agent, event.pid, event.exe, event.kind, event.path, event.destPath ?? null, afterHash ?? event.sha256 ?? null, null, null, event.sensitive ? 1 : 0, event.source, minute, beforeHash, afterHash];
       (item.bucket === "noise" ? insertNoise : insertMain).run(...args);
     }
     db.exec("COMMIT");
@@ -155,13 +191,13 @@ function filters(filter: HistoryFilter): { clause: string; args: (string | numbe
   return { clause: where.join(" AND "), args };
 }
 
-function hasNoiseTable(db: DatabaseSync): boolean {
-  return Boolean(db.prepare("SELECT 1 AS n FROM sqlite_master WHERE type = 'table' AND name = 'noise'").get());
+function hasTable(db: DatabaseSync, name: string): boolean {
+  return Boolean(db.prepare("SELECT 1 AS n FROM sqlite_master WHERE type = 'table' AND name = ?").get(name));
 }
 
 export function queryHistory(db: DatabaseSync, filter: HistoryFilter): { rows: HistoryRow[]; total: number } {
   const { clause, args } = filters(filter);
-  const tables = filter.includeNoise && hasNoiseTable(db) ? ["events", "noise"] : ["events"];
+  const tables = filter.includeNoise && hasTable(db, "noise") ? ["events", "noise"] : ["events"];
   const union = tables.map((table) => `SELECT ${LIST_COLS} FROM ${table} WHERE ${clause}`).join(" UNION ALL ");
   const unionArgs = tables.flatMap(() => args);
   const total = Number((db.prepare(`SELECT count(*) AS n FROM (${union})`).get(...unionArgs) as { n: number }).n);
@@ -169,11 +205,15 @@ export function queryHistory(db: DatabaseSync, filter: HistoryFilter): { rows: H
   return { rows: rows.map((row) => toRow(row, false)), total };
 }
 
+function blobText(db: DatabaseSync, hash: string | null | undefined): string | null {
+  const row = hash ? (db.prepare("SELECT data FROM blobs WHERE hash = ?").get(hash) as { data: Uint8Array } | undefined) : undefined;
+  return row ? inflateRawSync(row.data).toString("utf8") : null;
+}
+
 export function historyText(db: DatabaseSync, id: number): { before: string | null; after: string | null } {
-  const sql = "SELECT before_blob, after_blob FROM events WHERE id = ?";
-  const noiseSql = hasNoiseTable(db) ? sql.replace("events", "noise") : null;
-  const row = (db.prepare(sql).get(id) ?? (noiseSql ? db.prepare(noiseSql).get(id) : undefined)) as { before_blob: string | null; after_blob: string | null } | undefined;
-  return { before: row?.before_blob ?? null, after: row?.after_blob ?? null };
+  const sql = (table: string) => `SELECT before_blob, after_blob, ${hasColumn(db, table, "before_hash") ? "before_hash, after_hash" : "NULL AS before_hash, NULL AS after_hash"} FROM ${table} WHERE id = ?`;
+  const row = (db.prepare(sql("events")).get(id) ?? (hasTable(db, "noise") ? db.prepare(sql("noise")).get(id) : undefined)) as { before_blob: string | null; after_blob: string | null; before_hash: string | null; after_hash: string | null } | undefined;
+  return { before: blobText(db, row?.before_hash) ?? row?.before_blob ?? null, after: blobText(db, row?.after_hash) ?? row?.after_blob ?? null };
 }
 
 function verifyHistory(path: string): void {
@@ -246,9 +286,11 @@ export function optimizeHistory(path: string): HistoryOptimization {
       compact.prepare("ATTACH DATABASE ? AS source").run(path);
       compact.exec("BEGIN");
       try {
-        compact.exec(`INSERT INTO events (${EVENT_COLS}) SELECT ${EVENT_COLS} FROM source.events WHERE kind <> 'exec'`);
+        const cols = (table: string) => (hasColumn(compact, table, "before_hash", "source") ? EVENT_COLS : LEGACY_COLS);
+        compact.exec(`INSERT INTO events (${EVENT_COLS}) SELECT ${cols("events")} FROM source.events WHERE kind <> 'exec'`);
         const sourceNoise = compact.prepare("SELECT 1 AS n FROM source.sqlite_master WHERE type = 'table' AND name = 'noise'").get();
-        if (sourceNoise) compact.exec(`INSERT INTO noise (${EVENT_COLS}) SELECT ${EVENT_COLS} FROM source.noise WHERE kind <> 'exec'`);
+        if (sourceNoise) compact.exec(`INSERT INTO noise (${EVENT_COLS}) SELECT ${cols("noise")} FROM source.noise WHERE kind <> 'exec'`);
+        if (hasColumn(compact, "blobs", "hash", "source")) compact.exec(`INSERT INTO blobs (hash, size, data) SELECT hash, size, data FROM source.blobs WHERE hash IN (${REFERENCED})`);
         const sourceMeta = compact.prepare("SELECT 1 AS n FROM source.sqlite_master WHERE type = 'table' AND name = 'meta'").get();
         if (sourceMeta) compact.exec("INSERT OR REPLACE INTO meta (key, value) SELECT key, value FROM source.meta");
         compact.exec("COMMIT");
@@ -301,21 +343,26 @@ export function splitHistory(db: DatabaseSync): void {
 
 export function dropIgnored(db: DatabaseSync, prefixes: readonly string[]): void {
   if (!prefixes.length) return;
-  const tables = ["events", ...(hasNoiseTable(db) ? ["noise"] : [])];
+  const tables = ["events", ...(hasTable(db, "noise") ? ["noise"] : [])];
   for (const prefix of prefixes) {
     const match = ignoredMatchSql(prefix);
     for (const table of tables) db.prepare(`DELETE FROM ${table} WHERE ${match.sql}`).run(...match.args);
   }
 }
 
-export function pruneHistory(db: DatabaseSync, now: number, mainDays = MAIN_RETENTION_DAYS, noiseDays = NOISE_RETENTION_DAYS): void {
-  db.prepare("DELETE FROM events WHERE ts < ?").run(now - mainDays * DAY_MS);
-  db.prepare("DELETE FROM noise WHERE ts < ?").run(now - noiseDays * DAY_MS);
+export function deleteOrphanBlobs(db: DatabaseSync): number {
+  return Number(db.prepare(`DELETE FROM blobs WHERE hash NOT IN (${REFERENCED})`).run().changes);
+}
+
+export function pruneHistory(db: DatabaseSync, now: number, mainDays = MAIN_RETENTION_DAYS, noiseDays = NOISE_RETENTION_DAYS): number {
+  const deleted = Number(db.prepare("DELETE FROM events WHERE ts < ?").run(now - mainDays * DAY_MS).changes) + Number(db.prepare("DELETE FROM noise WHERE ts < ?").run(now - noiseDays * DAY_MS).changes);
+  if (deleted) deleteOrphanBlobs(db);
+  return deleted;
 }
 
 export function historyEvent(db: DatabaseSync, id: number): { path: string; kind: string } | null {
   const sql = "SELECT path, kind FROM events WHERE id = ?";
-  const row = (db.prepare(sql).get(id) ?? (hasNoiseTable(db) ? db.prepare(sql.replace("events", "noise")).get(id) : undefined)) as { path: string; kind: string } | undefined;
+  const row = (db.prepare(sql).get(id) ?? (hasTable(db, "noise") ? db.prepare(sql.replace("events", "noise")).get(id) : undefined)) as { path: string; kind: string } | undefined;
   return row ?? null;
 }
 

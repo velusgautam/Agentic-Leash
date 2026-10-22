@@ -46,6 +46,36 @@ describe("content cache", () => {
     expect(write.afterBlob).toBe("now");
   });
 
+  it("skips snapshots for scratch paths and keeps them for project writes", () => {
+    const reads: string[] = [];
+    const cache = new ContentCache({
+      readText: (path) => (reads.push(path), "text"),
+      gitShow: () => "from-git",
+      granted: () => true,
+    });
+    for (const path of ["/private/var/folders/ab/T/x.json", "/tmp/payload"]) {
+      expect(cache.observe(event({ kind: "read", path }))).toEqual(event({ kind: "read", path }));
+      const write = cache.observe(event({ kind: "write", path }));
+      expect(write.beforeBlob).toBeUndefined();
+      expect(write.afterBlob).toBeUndefined();
+    }
+    expect(reads).toEqual([]);
+    const write = cache.observe(event({ kind: "write" }));
+    expect(write.beforeBlob).toBe("from-git");
+    expect(write.afterBlob).toBe("text");
+  });
+
+  it("keeps at most 2 000 paths and evicts the oldest", () => {
+    const cache = new ContentCache({
+      readText: (path) => `cached ${path}`,
+      gitShow: () => "from-git",
+      granted: () => true,
+    });
+    for (let index = 1; index <= 2001; index += 1) cache.observe(event({ kind: "read", path: `/proj/${index}` }));
+    expect(cache.observe(event({ kind: "write", path: "/proj/1" })).beforeBlob).toBe("from-git");
+    expect(cache.observe(event({ kind: "write", path: "/proj/2001" })).beforeBlob).toBe("cached /proj/2001");
+  });
+
   it("reads text under 1 MB and a git HEAD baseline", () => {
     const dir = mkdtempSync(join(tmpdir(), "al-snap-"));
     const file = join(dir, "note.txt");

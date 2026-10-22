@@ -49,8 +49,7 @@ test("Monitoring optimizes history after confirmation", async () => {
     sensitive: false,
     source: "eslogger",
   }]);
-  history.exec("CREATE TABLE blobs (sha256 TEXT PRIMARY KEY, content BLOB NOT NULL)");
-  history.prepare("INSERT INTO blobs VALUES ('old', zeroblob(100000))").run();
+  history.prepare("INSERT INTO blobs (hash, size, data) VALUES ('old', 0, zeroblob(100000))").run();
   history.close();
 
   const app = await launch([], { AGENTIC_LEASH_HISTORY_DIR: historyDir });

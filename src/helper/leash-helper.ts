@@ -12,7 +12,7 @@ import { isUnder } from "../shared/paths";
 import { MAIN_RETENTION_DAYS, NOISE_RETENTION_DAYS, retentionDays } from "../shared/retention";
 import type { HistoryEvent } from "../shared/types";
 import { classify } from "./classify";
-import { dropIgnored, insertEvents, openHistoryDb, optimizeHistory, pruneHistory, splitHistory } from "./historyDb";
+import { checkpointHistory, dropIgnored, insertEvents, openHistoryDb, optimizeHistory, pruneHistory, splitHistory } from "./historyDb";
 import { lsofText, pollNet } from "./net";
 import { ProcTree, type EsEvent } from "./proctree";
 import { ContentCache, gitBaseline, readText } from "./snapshots";
@@ -95,6 +95,7 @@ export function startHelper(historyPath: string, eslogger = "/usr/bin/eslogger")
       /* grants db is absent until the app has opened */
     }
     pruneHistory(db, Date.now(), main, noise);
+    checkpointHistory(db);
   };
   splitHistory(db);
   applyIgnored();
