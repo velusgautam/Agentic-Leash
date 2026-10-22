@@ -2,7 +2,7 @@ import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { expect, test } from "@playwright/test";
-import { insertEvents, openHistoryDb } from "../../src/helper/historyDb";
+import { insertEvents, openHistoryDb, writeHistoryStats } from "../../src/helper/historyDb";
 import { launch } from "./launch";
 
 test("General shows Open at login, disabled outside the installed app", async () => {
@@ -87,5 +87,48 @@ test("Monitoring keeps a valid history size limit", async () => {
   await expect(win.getByRole("alertdialog")).toHaveCount(0);
   await win.reload();
   await expect(win.getByLabel("History size limit in GB")).toHaveValue("5");
+  await app.close();
+});
+
+function seedStats(percent: number, hardCap = false): string {
+  const historyDir = mkdtempSync(join(tmpdir(), "al-history-stats-"));
+  const history = openHistoryDb(join(historyDir, "history.db"));
+  const capBytes = 1024 ** 3;
+  writeHistoryStats(history, { usedBytes: Math.ceil((capBytes * percent) / 100), fileBytes: capBytes, capBytes, counts: [], prunedAt: null, prunedRows: 0, hardCap });
+  history.close();
+  return historyDir;
+}
+
+test("Storage warning can be dismissed and stays dismissed", async () => {
+  const app = await launch([], { AGENTIC_LEASH_HISTORY_DIR: seedStats(55) });
+  const win = await app.firstWindow();
+  const banner = win.getByRole("status").filter({ hasText: "History is using 55% of its 1.0 GB limit. Old reads and scratch files are being removed automatically." });
+  await expect(banner).toBeVisible();
+  await banner.getByRole("button", { name: "Manage storage" }).click();
+  await expect(win.getByRole("heading", { name: "Monitoring" })).toBeVisible();
+  await banner.getByRole("button", { name: "Dismiss" }).click();
+  await expect(banner).toHaveCount(0);
+  await win.reload();
+  await expect(win.getByRole("heading", { name: "Monitoring" })).toBeVisible();
+  await expect(win.getByText(/History is using/)).toHaveCount(0);
+  await app.close();
+});
+
+test("Storage warning shows the 60% step", async () => {
+  const app = await launch([], { AGENTIC_LEASH_HISTORY_DIR: seedStats(65) });
+  const win = await app.firstWindow();
+  const banner = win.getByRole("status").filter({ hasText: "History is using 65% of its 1.0 GB limit." });
+  await expect(banner).toBeVisible();
+  await expect(banner.getByRole("button", { name: "Dismiss" })).toBeVisible();
+  await app.close();
+});
+
+test("Storage warning at the hard cap cannot be dismissed", async () => {
+  const app = await launch([], { AGENTIC_LEASH_HISTORY_DIR: seedStats(85, true) });
+  const win = await app.firstWindow();
+  const banner = win.getByRole("status").filter({ hasText: "History has reached its 1.0 GB limit. The oldest history, including sensitive files, is being deleted to make room. Raise the limit or clean up history to stop this." });
+  await expect(banner).toBeVisible();
+  await expect(banner.getByRole("button", { name: "Manage storage" })).toBeVisible();
+  await expect(banner.getByRole("button", { name: "Dismiss" })).toHaveCount(0);
   await app.close();
 });
