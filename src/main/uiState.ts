@@ -9,6 +9,7 @@ export interface UiState {
   onboarded?: boolean;
   historySeen?: number;
   disabledAgents?: string[];
+  storageWarningDismissed?: number;
 }
 
 export function readUiState(dir: string): UiState {

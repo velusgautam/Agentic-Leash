@@ -3,7 +3,7 @@ import { useParams } from "@tanstack/react-router";
 import { Monitor, Moon, Sun } from "lucide-react";
 import licenses from "../../../../THIRD_PARTY_LICENSES.md?raw";
 import type { IgnoredRow } from "../../../shared/ignored";
-import type { HistoryOptimizationInfo, HistoryOptimizationResult, OpenAtLoginState } from "../../../shared/bridge";
+import type { HistoryCleanupResult, HistoryStorageInfo, OpenAtLoginState } from "../../../shared/bridge";
 import type { ApprovalStyle } from "../../../shared/approvalStyle";
 import type { AgentId, Diagnostics, ThemeSource } from "../../../shared/types";
 import { ConfirmAction } from "~/components/ConfirmAction";
@@ -259,13 +259,13 @@ function IgnoredNoises() {
 
 function Monitoring() {
   const [days, setDays] = useState<{ main: number; noise: number } | null>(null);
-  const [optimization, setOptimization] = useState<HistoryOptimizationInfo | null>(null);
-  const [optimized, setOptimized] = useState<HistoryOptimizationResult | null>(null);
+  const [optimization, setOptimization] = useState<HistoryStorageInfo | null>(null);
+  const [optimized, setOptimized] = useState<HistoryCleanupResult | null>(null);
   const [optimizationError, setOptimizationError] = useState<string | null>(null);
   const [optimizing, setOptimizing] = useState(false);
   useEffect(() => {
     void window.leash.historyRetention().then(setDays);
-    void window.leash.historyOptimizationInfo().then(setOptimization);
+    void window.leash.historyStorage().then(setOptimization);
   }, []);
   const save = (which: "main" | "noise", value: number) => {
     void window.leash.setHistoryRetention(which, value).then(setDays);
@@ -274,16 +274,16 @@ function Monitoring() {
     setOptimizing(true);
     setOptimized(null);
     setOptimizationError(null);
-    void window.leash.optimizeHistory().then((result) => {
+    void window.leash.purgeHistory("compact").then((result) => {
       setOptimized(result);
-      return window.leash.historyOptimizationInfo();
+      return window.leash.historyStorage();
     }).then(setOptimization).catch((caught: unknown) => {
       setOptimizationError(caught instanceof Error ? caught.message : "History optimization stopped.");
     }).finally(() => setOptimizing(false));
   };
   const optimizationDescription = optimizationError
     ?? (optimized ? `Reduced history from ${formatBytes(optimized.beforeBytes)} to ${formatBytes(optimized.afterBytes)}.`
-      : optimization?.available ? `History database is ${formatBytes(optimization.sizeBytes)}. Optimization needs up to ${formatBytes(optimization.requiredBytes)} free; ${formatBytes(optimization.freeBytes)} is available.`
+      : optimization?.files[0]?.bytes ? `History database is ${formatBytes(optimization.files[0].bytes)}. Optimization needs up to ${formatBytes(optimization.requiredBytes)} free; ${formatBytes(optimization.freeBytes)} is available.`
         : "No history database yet.");
   const { status } = useSetup();
   const skipped = status?.helper === "skipped";
@@ -302,7 +302,7 @@ function Monitoring() {
         description={<span aria-live="polite">{optimizationDescription}</span>}
         control={
           <ConfirmAction
-            trigger={<Button size="sm" variant="outline" disabled={optimizing || !optimization?.available || optimization.freeBytes < optimization.requiredBytes}>{optimizing ? "Optimizing…" : "Optimize history"}</Button>}
+            trigger={<Button size="sm" variant="outline" disabled={optimizing || !optimization?.files[0]?.bytes || optimization.freeBytes < optimization.requiredBytes}>{optimizing ? "Optimizing…" : "Optimize history"}</Button>}
             title="Optimize history?"
             description="Agent monitoring pauses while History is rebuilt."
             effects={["Removes existing process execution rows.", "Removes duplicate snapshot storage.", "Keeps file changes, network activity, and tool decisions."]}

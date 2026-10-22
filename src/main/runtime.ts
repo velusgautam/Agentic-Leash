@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, statfsSync, statSync, watch, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, rmSync, statfsSync, statSync, watch, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { promisify } from "node:util";
@@ -7,7 +7,8 @@ import { app, BrowserWindow, globalShortcut, ipcMain, nativeTheme } from "electr
 import { DEFAULT_TTL_S, grantsDbPath, HISTORY_DIR, homeDir, isClaudeBinary, IS_MAC, leashDir, POPUP_TIMEOUT_S, protectedRoots, socketPath, TCC_CLIENTS } from "../shared/constants";
 import { diagnosticsReport } from "../shared/diagnostics";
 import { cancelScheduled, collapseGrantDupes, createRule, decisionDurations, deleteGrant, deleteGrants, deleteRule, extendGrant, countBlocked, getSetting, listApprovals, listDecisions, listGrants, listRules, listScheduled, openGrantsDb, recordApproval, scheduleRevoke, setSetting, updateRule, upsertCommandGrant, upsertGrant } from "../shared/db";
-import { historyEvent, historyStorageBytes, historyText, listHistory, openHistoryDb, optimizeHistory, queryHistory, summarizeHistory, type HistoryFilter } from "../helper/historyDb";
+import { historyEvent, historyStorageBytes, historyText, listHistory, openHistoryDb, optimizeHistory, queryHistory, readHistoryStats, summarizeHistory, type HistoryFilter } from "../helper/historyDb";
+import { purgeCommand } from "../helper/leash-helper";
 import { checkRestore } from "../shared/restore";
 import { parseApprovalStyle, type ApprovalStyle } from "../shared/approvalStyle";
 import { suggestRules, SUGGEST_WINDOW_MS } from "../shared/suggestions";
@@ -26,6 +27,8 @@ import { revokeStoredGrant } from "./revokeConfig";
 import { AUTO_ALLOWS, parseAutoAllowOff } from "../shared/autoAllow";
 import { addIgnored, deleteIgnored, listIgnored, setIgnoredEnabled } from "../shared/ignored";
 import { MAIN_RETENTION_DAYS, NOISE_RETENTION_DAYS, parseRetentionDays, retentionDays } from "../shared/retention";
+import { CAP_DEFAULT_GB, CLEANUP_MODES, parseCapGb, rearmDismissed, storageWarning, type CleanupMode, type HistoryStats } from "../shared/storage";
+import type { HistoryCleanupResult } from "../shared/bridge";
 import { coveredPending } from "../hook/decide";
 import { grantRoot, parentFolders } from "../shared/parents";
 import { helperInstallScript, helperMaintenanceScript, helperUninstallScript, installSweepAgent, sweepServiceTarget } from "./helperInstall";
@@ -84,6 +87,16 @@ async function psText(): Promise<string> {
     return (await exec("ps", ["-axo", "pid,ppid,args"])).stdout;
   } catch {
     return "";
+  }
+}
+
+function pathBytes(path: string): number {
+  try {
+    const stat = lstatSync(path, { throwIfNoEntry: false });
+    if (!stat) return 0;
+    return stat.isDirectory() ? readdirSync(path).reduce((total, name) => total + pathBytes(join(path, name)), 0) : stat.size;
+  } catch {
+    return 0;
   }
 }
 
@@ -371,33 +384,81 @@ export function startRuntime(options: { userData: string; openApproval: () => vo
     setSetting(db, which === "main" ? "history_days" : "noise_days", String(parsed));
     return retentionState();
   });
-  const optimizationInfo = () => {
+  const capGb = () => parseCapGb(getSetting(db, "history_cap_gb", "")) ?? CAP_DEFAULT_GB;
+  ipcMain.handle("history:cap:get", () => ({ gb: capGb() }));
+  ipcMain.handle("history:cap:set", (_event, gb: number) => {
+    const parsed = parseCapGb(String(gb));
+    if (parsed !== null) setSetting(db, "history_cap_gb", String(parsed));
+    return { gb: capGb() };
+  });
+  const historyStats = () => withHistory((historyDb) => readHistoryStats(historyDb));
+  const storageInfo = () => {
     const historyDir = dirname(historyPath);
-    if (!existsSync(historyPath)) {
-      const disk = existsSync(historyDir) ? statfsSync(historyDir) : null;
-      return { available: false, sizeBytes: 0, requiredBytes: 0, freeBytes: disk ? disk.bavail * disk.bsize : 0 };
-    }
+    const logPath = join(historyDir, "helper.log");
     const sizeBytes = historyStorageBytes(historyPath);
-    const disk = statfsSync(historyDir);
-    return { available: true, sizeBytes, requiredBytes: sizeBytes + 64 * 1024 * 1024, freeBytes: disk.bavail * disk.bsize };
+    const disk = existsSync(historyDir) ? statfsSync(historyDir) : null;
+    let stats: HistoryStats | null = null;
+    try {
+      stats = existsSync(historyPath) ? historyStats() : null;
+    } catch {
+      stats = null;
+    }
+    return {
+      stats,
+      files: [
+        { label: "History database", path: historyPath, bytes: sizeBytes },
+        { label: "Helper log", path: logPath, bytes: pathBytes(logPath) + pathBytes(`${logPath}.1`) },
+        { label: "Grants and settings", path: grantsDbPath(), bytes: historyStorageBytes(grantsDbPath()) },
+        { label: "App data", path: options.userData, bytes: pathBytes(options.userData) },
+      ],
+      freeBytes: disk ? disk.bavail * disk.bsize : 0,
+      requiredBytes: sizeBytes + 64 * 1024 * 1024,
+    };
   };
+  ipcMain.handle("history:storage:info", () => storageInfo());
+  ipcMain.handle("history:warning:get", () => {
+    try {
+      const stats = historyStats();
+      const state = readUiState(options.userData);
+      const stored = state.storageWarningDismissed ?? 0;
+      const dismissed = rearmDismissed(stats, stored);
+      if (dismissed !== stored) writeUiState(options.userData, { ...state, storageWarningDismissed: dismissed });
+      return { warning: storageWarning(stats, dismissed), capBytes: stats?.capBytes ?? 0 };
+    } catch {
+      return { warning: null, capBytes: 0 };
+    }
+  });
+  ipcMain.handle("history:warning:dismiss", (_event, step: number) => {
+    if (!Number.isInteger(step) || step >= 100) return;
+    const state = readUiState(options.userData);
+    writeUiState(options.userData, { ...state, storageWarningDismissed: Math.max(state.storageWarningDismissed ?? 0, step) });
+  });
   let optimizingHistory = false;
-  ipcMain.handle("history:optimize:info", () => optimizationInfo());
-  ipcMain.handle("history:optimize:run", async () => {
-    if (optimizingHistory) throw new Error("History optimization is already running.");
-    const info = optimizationInfo();
-    if (!info.available) throw new Error("There is no history database to optimize.");
-    if (info.freeBytes < info.requiredBytes) throw new Error("Not enough free disk space to optimize history safely.");
+  ipcMain.handle("history:purge:run", async (_event, mode: CleanupMode, days?: number) => {
+    if (!CLEANUP_MODES.includes(mode)) throw new Error("Unknown history cleanup.");
+    const keepDays = mode === "older" ? parseRetentionDays(String(days)) : null;
+    if (mode === "older" && keepDays === null) throw new Error("Pick from 5 to 365 days.");
+    if (optimizingHistory) throw new Error("History cleanup is already running.");
+    const info = storageInfo();
+    if (!existsSync(historyPath)) throw new Error("There is no history database to clean up.");
+    if (mode !== "all" && info.freeBytes < info.requiredBytes) throw new Error("Not enough free disk space to clean up history safely.");
     optimizingHistory = true;
     historyPaused = true;
     try {
-      let result;
+      let result: HistoryCleanupResult;
       if (IS_MAC && app.isPackaged) {
         const helperScript = hookScript().replace("leash-hook.js", "leash-helper.js");
-        await exec("/usr/bin/osascript", ["-e", helperMaintenanceScript(process.execPath, helperScript, ["--optimize", historyPath])]);
-        result = { beforeBytes: info.sizeBytes, afterBytes: historyStorageBytes(historyPath) };
+        const args = mode === "compact" ? ["--optimize", historyPath] : ["--purge", mode, historyPath, ...(keepDays === null ? [] : [String(keepDays)])];
+        const { stdout } = await exec("/usr/bin/osascript", ["-e", helperMaintenanceScript(process.execPath, helperScript, args)]);
+        let deleted: number | null = null;
+        try {
+          deleted = (JSON.parse(stdout.trim().split("\n").pop() ?? "") as { deleted?: number | null }).deleted ?? null;
+        } catch {
+          deleted = null;
+        }
+        result = { beforeBytes: info.files[0]!.bytes, afterBytes: historyStorageBytes(historyPath), deleted };
       } else {
-        result = optimizeHistory(historyPath);
+        result = mode === "compact" ? { ...optimizeHistory(historyPath), deleted: null } : purgeCommand(mode, historyPath, keepDays === null ? undefined : String(keepDays));
       }
       pollHistory();
       return result;
