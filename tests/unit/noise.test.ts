@@ -199,13 +199,15 @@ describe("history tables", () => {
     const writer = openHistoryDb(path);
     insertEvents(writer, [{ ...row, ts: 2, path: "/Users/me/project/b.ts" }]);
     writer.close();
+    const started = Date.now();
     try {
       expect(() => optimizeHistory(path)).toThrow("active history connection");
+      expect(Date.now() - started).toBeLessThan(1000);
     } finally {
       reader.exec("ROLLBACK");
       reader.close();
     }
-  }, 7_000);
+  }, 1_500);
 });
 
 describe("parseRetentionDays", () => {

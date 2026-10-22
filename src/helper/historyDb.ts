@@ -222,10 +222,16 @@ export function optimizeHistory(path: string): HistoryOptimization {
   rmSync(`${replacement}-shm`, { force: true });
   const source = new DatabaseSync(path);
   try {
-    source.exec("PRAGMA busy_timeout = 5000");
+    source.exec("PRAGMA busy_timeout = 0");
     const current = source.prepare("PRAGMA journal_mode").get() as { journal_mode: string };
     if (current.journal_mode === "wal") {
-      const checkpoint = source.prepare("PRAGMA wal_checkpoint(TRUNCATE)").get() as { busy: number; log: number; checkpointed: number };
+      let checkpoint: { busy: number; log: number; checkpointed: number };
+      try {
+        checkpoint = source.prepare("PRAGMA wal_checkpoint(TRUNCATE)").get() as { busy: number; log: number; checkpointed: number };
+      } catch (error) {
+        if (error instanceof Error && /busy|locked/i.test(error.message)) throw new Error("Cannot optimize history while an active history connection is open.");
+        throw error;
+      }
       if (checkpoint.busy !== 0 || checkpoint.log !== 0) throw new Error("Cannot optimize history while an active history connection is open.");
     }
     const mode = source.prepare("PRAGMA journal_mode = DELETE").get() as { journal_mode: string };
