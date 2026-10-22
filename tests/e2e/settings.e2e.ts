@@ -102,7 +102,7 @@ function seedStats(percent: number, hardCap = false): string {
 test("Storage warning can be dismissed and stays dismissed", async () => {
   const app = await launch([], { AGENTIC_LEASH_HISTORY_DIR: seedStats(55) });
   const win = await app.firstWindow();
-  const banner = win.getByRole("status").filter({ hasText: "History is using 55% of its 1.0 GB limit. Old reads and scratch files are being removed automatically." });
+  const banner = win.getByRole("status").filter({ hasText: "History is using 55% of its 1.0 GB limit. Old reads and scratch files go first, then command, file-change, and network history if that isn't enough." });
   await expect(banner).toBeVisible();
   await banner.getByRole("button", { name: "Manage storage" }).click();
   await expect(win.getByRole("heading", { name: "Monitoring" })).toBeVisible();
