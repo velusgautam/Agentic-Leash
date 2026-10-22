@@ -22,6 +22,7 @@ const EVENTS = ["open", "close", "create", "unlink", "rename", "exec", "fork", "
 const DEFAULT_HISTORY = "/Library/Application Support/AgenticLeash/history.db";
 const LOG_LIMIT = 10 * 1024 * 1024;
 const COUNTS_EVERY_MS = 10 * 60 * 1000;
+const USAGE_EVERY_MS = 5000;
 
 function userHome(): string {
   if (process.env.AGENTIC_LEASH_HOME) return process.env.AGENTIC_LEASH_HOME;
@@ -91,6 +92,7 @@ export function startHelper(historyPath: string, eslogger = "/usr/bin/eslogger")
   let stats: HistoryStats = { usedBytes: 0, fileBytes: 0, capBytes: capBytes(""), counts: [], prunedAt: null, prunedRows: 0, hardCap: false, ...previous };
   let countedAt = 0;
   let armed = false;
+  let checkedAt = 0;
   const prune = () => {
     let main = MAIN_RETENTION_DAYS;
     let noise = NOISE_RETENTION_DAYS;
@@ -127,7 +129,10 @@ export function startHelper(historyPath: string, eslogger = "/usr/bin/eslogger")
   const timer = setInterval(() => {
     if (!queue.length) return;
     insertEvents(db, queue.splice(0), ignored);
-    if (armed && historyUsage(db) >= stats.capBytes * PRUNE_START) prune();
+    const now = Date.now();
+    if (!armed || now - checkedAt < USAGE_EVERY_MS) return;
+    checkedAt = now;
+    if (historyUsage(db) >= stats.capBytes * PRUNE_START) prune();
   }, 250);
   const netTimer = setInterval(() => {
     grants = grantPaths(Date.now());

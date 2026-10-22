@@ -460,10 +460,7 @@ function deleteOldest(db: DatabaseSync): number {
 }
 
 export function pruneBySize(db: DatabaseSync, cap: number, now: number): { deleted: number; hardCap: boolean } {
-  const used = () => {
-    checkpointHistory(db);
-    return historyUsage(db);
-  };
+  const used = () => historyUsage(db);
   if (used() < cap * PRUNE_START) return { deleted: 0, hardCap: false };
   let deleted = 0;
   const drain = (batch: () => number, stop: number): boolean => {

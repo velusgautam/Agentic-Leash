@@ -392,6 +392,18 @@ describe("pruneBySize", () => {
     db.close();
   });
 
+  it("measures WAL pages without checkpointing per batch, then checkpoints once at the end", () => {
+    const { path, db } = fresh();
+    seed(db, "noise", "read", 6000, (index) => now - 2 * day - index);
+    expect(statSync(`${path}-wal`).size).toBeGreaterThan(0);
+    const used = historyUsage(db);
+    expect(pruneBySize(db, Math.ceil(used / 0.4), now)).toEqual({ deleted: 0, hardCap: false });
+    expect(statSync(`${path}-wal`).size).toBeGreaterThan(0);
+    expect(pruneBySize(db, Math.ceil(used / 0.6), now).deleted).toBe(5000);
+    expect(statSync(`${path}-wal`).size).toBe(0);
+    db.close();
+  });
+
   it("shrinks the file after deleting", () => {
     const { path, db } = fresh();
     seed(db, "noise", "read", 6000, (index) => now - 2 * day - index);
