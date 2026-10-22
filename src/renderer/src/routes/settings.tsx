@@ -4,6 +4,7 @@ import { Monitor, Moon, Sun } from "lucide-react";
 import licenses from "../../../../THIRD_PARTY_LICENSES.md?raw";
 import type { IgnoredRow } from "../../../shared/ignored";
 import type { HistoryOptimizationInfo, HistoryOptimizationResult, OpenAtLoginState } from "../../../shared/bridge";
+import type { ApprovalStyle } from "../../../shared/approvalStyle";
 import type { AgentId, Diagnostics, ThemeSource } from "../../../shared/types";
 import { ConfirmAction } from "~/components/ConfirmAction";
 import { AGENT_LABELS } from "~/components/Icons";
@@ -21,10 +22,13 @@ import { DEFAULT_APPEARANCE, readAppearance, saveAppearance, type AppearancePref
 
 function General() {
   const [login, setLogin] = useState<OpenAtLoginState | null>(null);
+  const [style, setStyle] = useState<ApprovalStyle>("popup");
   useEffect(() => {
     void window.leash.getOpenAtLogin().then(setLogin);
+    void window.leash.getApprovalStyle().then(setStyle);
   }, []);
   return (
+    <>
     <SettingsSection title="Startup">
       <SettingsRow
         title="Open at login"
@@ -43,6 +47,31 @@ function General() {
         }
       />
     </SettingsSection>
+    <SettingsSection title="Approvals">
+      <SettingsRow
+        title="Ask for approval with"
+        description="Popup takes focus so you can answer right away. Notification waits in the corner with Allow 15 min and Deny buttons; requests still time out and are denied after 2 minutes. macOS must allow alerts from Agentic Leash for the buttons to show."
+        control={
+          <div className="flex gap-1" role="group" aria-label="Ask for approval with">
+            {(["popup", "notification"] as const).map((value) => (
+              <Button
+                key={value}
+                size="sm"
+                variant={style === value ? "default" : "outline"}
+                aria-pressed={style === value}
+                onClick={() => {
+                  setStyle(value);
+                  void window.leash.setApprovalStyle(value);
+                }}
+              >
+                {value === "popup" ? "Popup" : "Notification"}
+              </Button>
+            ))}
+          </div>
+        }
+      />
+    </SettingsSection>
+    </>
   );
 }
 

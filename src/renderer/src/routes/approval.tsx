@@ -48,6 +48,14 @@ export function ApprovalPage() {
   const broad = isBroad(scope, choice);
   const allow = () => current && void window.leash.decidePending(current.id, "allow", PRESETS[choice]!.seconds, scope ?? undefined);
   const deny = () => current && void window.leash.decidePending(current.id, "deny", null);
+  const allowAll = () => {
+    const seconds = PRESETS[choice]!.seconds;
+    for (const id of pending.map((item) => item.id)) void window.leash.decidePending(id, "allow", seconds);
+  };
+  const denyAll = () => {
+    for (const id of pending.map((item) => item.id)) void window.leash.decidePending(id, "deny", null);
+  };
+  const noLimit = PRESETS[choice]!.seconds === null;
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
       if (!current) return;
@@ -89,6 +97,13 @@ export function ApprovalPage() {
       <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto px-4 py-3 [&>*]:shrink-0">
         <ApprovalChoices request={request} choice={choice} onChoice={setChoice} scope={scope} onScope={setScope} showKeys />
       </div>
+      {pending.length > 1 ? (
+        <div className="flex shrink-0 items-center gap-2 border-t border-border/60 px-4 py-1.5">
+          <p className="mr-auto text-xs text-muted-foreground tabular-nums">{pending.length} waiting:</p>
+          <Button size="sm" variant="ghost" className="h-7" onClick={denyAll}>Deny all ({pending.length})</Button>
+          <Button size="sm" variant="outline" className="h-7" disabled={!armed || noLimit} title={noLimit ? "Choose a time limit to allow several at once" : undefined} onClick={allowAll}>Allow all ({pending.length})</Button>
+        </div>
+      ) : null}
       <footer className="flex shrink-0 items-center gap-2 border-t border-border/60 bg-muted/50 px-4 py-2.5">
         <p className="mr-auto text-xs text-muted-foreground tabular-nums">{denyCountdown(pendingSecondsLeft(current.askedAt, now, POPUP_TIMEOUT_S))}</p>
         <Button size="sm" variant="ghost" className="h-8 text-sm" onClick={deny}>

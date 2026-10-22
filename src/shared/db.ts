@@ -55,6 +55,15 @@ CREATE TABLE IF NOT EXISTS decisions (
   command TEXT,
   url TEXT
 );
+CREATE TABLE IF NOT EXISTS approvals (
+  id INTEGER PRIMARY KEY,
+  ts INTEGER NOT NULL,
+  agent TEXT NOT NULL,
+  path TEXT,
+  command TEXT,
+  access TEXT NOT NULL,
+  ttl_seconds INTEGER
+);
 CREATE TABLE IF NOT EXISTS ignored_noise (
   id INTEGER PRIMARY KEY,
   prefix TEXT NOT NULL UNIQUE,
@@ -291,4 +300,29 @@ export function updateRule(db: DatabaseSync, id: number, input: { kind: unknown;
 export function deleteRule(db: DatabaseSync, id: number): AllowRule[] {
   db.prepare("DELETE FROM rules WHERE id = ?").run(id);
   return ruleRows(db);
+}
+
+export function extendGrant(db: DatabaseSync, id: number, seconds: number, now: number): number | null {
+  const result = db.prepare("UPDATE grants SET expires_at = MAX(expires_at, ?) + ? WHERE id = ? AND expires_at IS NOT NULL AND source = 'leash'").run(now, seconds * 1000, id);
+  if (Number(result.changes) === 0) return null;
+  return (db.prepare("SELECT expires_at FROM grants WHERE id = ?").get(id) as { expires_at: number }).expires_at;
+}
+
+export interface ApprovalRow { id?: number; ts: number; agent: string; path: string | null; command: string | null; access: Access; ttlSeconds: number | null }
+
+export function recordApproval(db: DatabaseSync, row: Omit<ApprovalRow, "id">): void {
+  db.prepare("INSERT INTO approvals (ts, agent, path, command, access, ttl_seconds) VALUES (?, ?, ?, ?, ?, ?)").run(row.ts, row.agent, row.path, row.command, row.access, row.ttlSeconds);
+}
+
+export function listApprovals(db: DatabaseSync, since: number): ApprovalRow[] {
+  const rows = db.prepare("SELECT * FROM approvals WHERE ts >= ? ORDER BY id").all(since) as unknown as { id: number; ts: number; agent: string; path: string | null; command: string | null; access: string; ttl_seconds: number | null }[];
+  return rows.map((row) => ({ id: row.id, ts: row.ts, agent: row.agent, path: row.path, command: row.command, access: row.access as Access, ttlSeconds: row.ttl_seconds }));
+}
+
+export function pruneApprovals(db: DatabaseSync, olderThan: number): number {
+  return Number(db.prepare("DELETE FROM approvals WHERE ts < ?").run(olderThan).changes);
+}
+
+export function countBlocked(db: DatabaseSync, from: number): number {
+  return (db.prepare("SELECT COUNT(*) AS n FROM decisions WHERE ts >= ? AND verdict IN ('deny','timeout')").get(from) as { n: number }).n;
 }

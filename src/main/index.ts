@@ -5,6 +5,7 @@ import trayIcon from "../../resources/trayTemplate.png?asset";
 import type { OpenAtLoginState } from "../shared/bridge";
 import { isOpenAtLogin, setOpenAtLogin } from "./loginItem";
 import { appMenuTemplate, trayMenuTemplate } from "./menus";
+import { pendingNotice } from "../shared/pendingNotice";
 import { startRuntime } from "./runtime";
 import { readUiState, writeUiState } from "./uiState";
 
@@ -20,6 +21,8 @@ let quitting = false;
 let pendingCount = 0;
 let pendingNav: string | null = null;
 let lockdown = false;
+// Module scope on purpose: a garbage-collected Notification never fires its action events.
+const pendingNotes = new Map<string, Notification>();
 let revokeAll = (): { revoked: number } => ({ revoked: 0 });
 let unlock = (): void => undefined;
 
@@ -247,6 +250,17 @@ if (!app.requestSingleInstanceLock()) {
       onStatus: (status) => {
         lockdown = status.lockdown;
         refreshTray();
+      },
+      notifyPending: (item, decide) => {
+        const note = new Notification({ ...pendingNotice(item), actions: [{ type: "button", text: "Allow 15 min" }, { type: "button", text: "Deny" }] });
+        pendingNotes.set(item.id, note);
+        note.on("action", (_event, index) => decide(index === 0 ? "allow" : "deny"));
+        note.on("click", openApproval);
+        note.show();
+        return () => {
+          pendingNotes.delete(item.id);
+          note.close();
+        };
       },
       notify: (title, body) => new Notification({ title, body }).show(),
       disableLoginItem: () => {

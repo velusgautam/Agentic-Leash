@@ -121,3 +121,6 @@ export interface Diagnostics {
   lastDecision: { ts: number; agent: string; tool: string; verdict: string; reason: string | null } | null;
   errors: string[];
 }
+
+export interface RuleSuggestion { key: string; agent: string; path: string | null; command: string | null; access: Access; count: number; lastAt: number }
+export interface HistorySummary { from: number; total: number; sensitive: number; blocked: number; agents: { agent: string; reads: number; writes: number; execs: number; net: number; other: number }[] }
