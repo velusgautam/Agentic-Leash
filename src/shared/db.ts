@@ -1,6 +1,7 @@
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import { DatabaseSync } from "node:sqlite";
+import { ensureIgnored } from "./ignored";
 import { validateRule } from "./rules";
 import type { Access, AgentId, AllowRule, DecisionRow, Grant, ScheduledRevoke } from "./types";
 
@@ -40,6 +41,12 @@ CREATE TABLE IF NOT EXISTS decisions (
   grant_id INTEGER,
   duration_ms INTEGER
 );
+CREATE TABLE IF NOT EXISTS ignored_noise (
+  id INTEGER PRIMARY KEY,
+  prefix TEXT NOT NULL UNIQUE,
+  enabled INTEGER NOT NULL DEFAULT 1,
+  builtin INTEGER NOT NULL DEFAULT 0
+);
 `;
 
 interface GrantSql {
@@ -74,6 +81,7 @@ export function openGrantsDb(path: string): DatabaseSync {
   db.exec(SCHEMA);
   const cols = db.prepare("PRAGMA table_info(grants)").all() as { name: string }[];
   if (!cols.some((col) => col.name === "command")) db.exec("ALTER TABLE grants ADD COLUMN command TEXT");
+  ensureIgnored(db);
   return db;
 }
 

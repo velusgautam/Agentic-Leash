@@ -6,12 +6,13 @@ import { createInterface } from "node:readline";
 import { DatabaseSync } from "node:sqlite";
 import { grantsDbPath } from "../shared/constants";
 import { getSetting } from "../shared/db";
+import { BUILTIN_IGNORED, enabledIgnoredPrefixes } from "../shared/ignored";
 import { eventBucket } from "../shared/noise";
 import { isUnder } from "../shared/paths";
 import { MAIN_RETENTION_DAYS, NOISE_RETENTION_DAYS, retentionDays } from "../shared/retention";
 import type { HistoryEvent } from "../shared/types";
 import { classify } from "./classify";
-import { insertEvents, openHistoryDb, pruneHistory, splitHistory } from "./historyDb";
+import { dropIgnored, insertEvents, openHistoryDb, pruneHistory, splitHistory } from "./historyDb";
 import { lsofText, pollNet } from "./net";
 import { ProcTree, type EsEvent } from "./proctree";
 import { ContentCache, gitBaseline, readText } from "./snapshots";
@@ -31,6 +32,17 @@ function userHome(): string {
     /* console user is unavailable in some test runs */
   }
   return homedir();
+}
+
+function readIgnored(home: string): string[] {
+  try {
+    const db = new DatabaseSync(grantsDbPath(home), { readOnly: true });
+    const prefixes = enabledIgnoredPrefixes(db);
+    db.close();
+    return prefixes;
+  } catch {
+    return [...BUILTIN_IGNORED];
+  }
 }
 
 function grantPaths(now: number): string[] {
@@ -62,6 +74,15 @@ export function startHelper(historyPath: string, eslogger = "/usr/bin/eslogger")
     granted: (file) => grants.some((root) => isUnder(file, root)),
   });
   const home = userHome();
+  let ignored = readIgnored(home);
+  let ignoredKey = "";
+  const applyIgnored = () => {
+    ignored = readIgnored(home);
+    const key = ignored.join("\0");
+    if (key === ignoredKey) return;
+    ignoredKey = key;
+    dropIgnored(db, ignored);
+  };
   const prune = () => {
     let main = MAIN_RETENTION_DAYS;
     let noise = NOISE_RETENTION_DAYS;
@@ -76,13 +97,15 @@ export function startHelper(historyPath: string, eslogger = "/usr/bin/eslogger")
     pruneHistory(db, Date.now(), main, noise);
   };
   splitHistory(db);
+  applyIgnored();
   prune();
   const timer = setInterval(() => {
     if (!queue.length) return;
-    insertEvents(db, queue.splice(0));
+    insertEvents(db, queue.splice(0), ignored);
   }, 250);
   const netTimer = setInterval(() => {
     grants = grantPaths(Date.now());
+    applyIgnored();
     queue.push(...pollNet({ pids: tree.pids(), seen, now: Date.now(), agentFor: (pid) => tree.agent(pid) as HistoryEvent["agent"], lsof: lsofText }));
   }, 2000);
   const pruneTimer = setInterval(prune, 60_000);
@@ -99,7 +122,7 @@ export function startHelper(historyPath: string, eslogger = "/usr/bin/eslogger")
         const event = JSON.parse(line) as EsEvent;
         tree.apply(event);
         const classified = classify(event, tree, home);
-        if (classified && eventBucket(classified) !== "drop") queue.push(cache.observe(classified));
+        if (classified && eventBucket(classified, ignored) !== "drop") queue.push(cache.observe(classified));
       } catch {
         /* eslogger sometimes emits a partial line */
       }
@@ -115,7 +138,7 @@ export function startHelper(historyPath: string, eslogger = "/usr/bin/eslogger")
     clearInterval(netTimer);
     clearInterval(pruneTimer);
     child?.kill("SIGKILL");
-    if (queue.length) insertEvents(db, queue.splice(0));
+    if (queue.length) insertEvents(db, queue.splice(0), ignored);
     db.close();
     log.end();
   };

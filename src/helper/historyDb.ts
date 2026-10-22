@@ -1,6 +1,7 @@
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import { DatabaseSync } from "node:sqlite";
+import { ignoredMatchSql } from "../shared/ignored";
 import { eventBucket } from "../shared/noise";
 import { MAIN_RETENTION_DAYS, NOISE_RETENTION_DAYS } from "../shared/retention";
 import { sha256 } from "./classify";
@@ -60,9 +61,9 @@ function maxId(db: DatabaseSync): number {
   return Math.max(events, noise);
 }
 
-export function insertEvents(db: DatabaseSync, events: HistoryEvent[]): void {
+export function insertEvents(db: DatabaseSync, events: HistoryEvent[], ignored: readonly string[] = []): void {
   const kept = events.flatMap((event) => {
-    const bucket = eventBucket(event);
+    const bucket = eventBucket(event, ignored);
     return bucket === "drop" ? [] : [{ event, bucket }];
   });
   if (!kept.length) return;
@@ -207,6 +208,16 @@ export function splitHistory(db: DatabaseSync): void {
   } catch (error) {
     db.exec("ROLLBACK");
     throw error;
+  }
+  dropOrphanBlobs(db);
+}
+
+export function dropIgnored(db: DatabaseSync, prefixes: readonly string[]): void {
+  if (!prefixes.length) return;
+  const tables = ["events", ...(hasNoiseTable(db) ? ["noise"] : [])];
+  for (const prefix of prefixes) {
+    const match = ignoredMatchSql(prefix);
+    for (const table of tables) db.prepare(`DELETE FROM ${table} WHERE ${match.sql}`).run(...match.args);
   }
   dropOrphanBlobs(db);
 }

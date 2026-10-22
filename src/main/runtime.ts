@@ -21,6 +21,7 @@ import { writeWithBackup } from "./backup";
 import { applyDueClaudeTrust, revokeClaudeTrust } from "./claudeTrust";
 import { revokeStoredGrant } from "./revokeConfig";
 import { AUTO_ALLOWS, parseAutoAllowOff } from "../shared/autoAllow";
+import { addIgnored, deleteIgnored, listIgnored, setIgnoredEnabled } from "../shared/ignored";
 import { MAIN_RETENTION_DAYS, NOISE_RETENTION_DAYS, parseRetentionDays, retentionDays } from "../shared/retention";
 import { coveredPending } from "../hook/decide";
 import { grantRoot, parentFolders } from "../shared/parents";
@@ -288,6 +289,20 @@ export function startRuntime(options: { userData: string; openApproval: () => vo
     if (parsed === null) return retentionState();
     setSetting(db, which === "main" ? "history_days" : "noise_days", String(parsed));
     return retentionState();
+  });
+  ipcMain.handle("ignored:list", () => listIgnored(db));
+  ipcMain.handle("ignored:set", (_event, id: number, enabled: boolean) => {
+    if (!Number.isInteger(id) || typeof enabled !== "boolean") return listIgnored(db);
+    setIgnoredEnabled(db, id, enabled);
+    return listIgnored(db);
+  });
+  ipcMain.handle("ignored:add", (_event, prefix: string) => {
+    const added = typeof prefix === "string" && addIgnored(db, prefix) !== null;
+    return { rows: listIgnored(db), added };
+  });
+  ipcMain.handle("ignored:delete", (_event, id: number) => {
+    if (Number.isInteger(id)) deleteIgnored(db, id);
+    return listIgnored(db);
   });
   ipcMain.handle("history:text", (_event, id: number) => withHistory((historyDb) => historyText(historyDb, id)));
   ipcMain.handle("approval:list", () => broker.list());

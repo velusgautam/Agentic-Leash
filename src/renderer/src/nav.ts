@@ -1,6 +1,7 @@
 import {
   Activity,
   Bot,
+  EyeOff,
   FolderLock,
   History,
   Keyboard,
@@ -31,6 +32,7 @@ export const SETTINGS_SECTIONS = [
   { id: "agents", label: "Agents", icon: Bot },
   { id: "allow-list", label: "Allow list", icon: ListChecks },
   { id: "monitoring", label: "Monitoring", icon: Radar },
+  { id: "ignored", label: "Ignored noises", icon: EyeOff },
   { id: "appearance", label: "Appearance", icon: Palette },
   { id: "keybindings", label: "Keybindings", icon: Keyboard },
   { id: "diagnostics", label: "Diagnostics", icon: Stethoscope },
