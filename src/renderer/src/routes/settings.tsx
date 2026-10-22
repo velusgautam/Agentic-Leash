@@ -15,6 +15,9 @@ import { isHookAgent } from "../../../shared/setup";
 import { useSetup } from "~/components/useSetup";
 import { Button } from "~/components/ui/button";
 import { Switch } from "~/components/ui/switch";
+import { toast } from "~/components/ui/toast";
+import { useAppInfo } from "~/components/useAppInfo";
+import { aboutText, BUILD_LABELS, runtimeLine } from "../../../shared/appInfo";
 import { cn } from "~/lib/utils";
 import { SETTINGS_SECTIONS } from "~/nav";
 import { parseRetentionDays } from "../../../shared/retention";
@@ -23,6 +26,7 @@ import { DEFAULT_APPEARANCE, readAppearance, saveAppearance, type AppearancePref
 function General() {
   const [login, setLogin] = useState<OpenAtLoginState | null>(null);
   const [style, setStyle] = useState<ApprovalStyle>("popup");
+  const info = useAppInfo();
   useEffect(() => {
     void window.leash.getOpenAtLogin().then(setLogin);
     void window.leash.getApprovalStyle().then(setStyle);
@@ -68,6 +72,26 @@ function General() {
               </Button>
             ))}
           </div>
+        }
+      />
+    </SettingsSection>
+    <SettingsSection title="About">
+      <SettingsRow title="Version" description={info?.version ?? "…"} />
+      <SettingsRow title="Build" description={info ? BUILD_LABELS[info.build] : "…"} />
+      <SettingsRow
+        title="Runtime"
+        description={info ? runtimeLine(info) : "…"}
+        control={
+          <Button
+            size="sm"
+            variant="ghost"
+            disabled={!info}
+            onClick={() => {
+              if (info) void navigator.clipboard.writeText(aboutText(info)).then(() => toast({ title: "Copied version info" }));
+            }}
+          >
+            Copy
+          </Button>
         }
       />
     </SettingsSection>

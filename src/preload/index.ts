@@ -4,6 +4,7 @@ import type { HistoryRow, PendingRequest, ThemeSource } from "../shared/types";
 
 const leash: LeashBridge = {
   platform: process.platform,
+  appInfo: () => ipcRenderer.invoke("app:info"),
   getOpenAtLogin: () => ipcRenderer.invoke("login-item:get"),
   setOpenAtLogin: (enabled) => ipcRenderer.invoke("login-item:set", enabled),
   listAgents: () => ipcRenderer.invoke("agents:list"),

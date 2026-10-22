@@ -2,7 +2,7 @@ import type { ApprovalStyle } from "./approvalStyle";
 import type { AutoAllow } from "./autoAllow";
 import type { IgnoredRow } from "./ignored";
 import type { SetupStatus } from "./setup";
-import type { Access, AgentId, AgentSnapshot, AllowRule, DecisionRow, Diagnostics, Grant, HistoryRow, HistorySummary, PendingRequest, RuleSuggestion, ScheduledRevoke, ThemeSource } from "./types";
+import type { Access, AgentId, AppInfo, AgentSnapshot, AllowRule, DecisionRow, Diagnostics, Grant, HistoryRow, HistorySummary, PendingRequest, RuleSuggestion, ScheduledRevoke, ThemeSource } from "./types";
 
 export interface OpenAtLoginState {
   enabled: boolean;
@@ -23,6 +23,7 @@ export interface HistoryOptimizationResult {
 
 export interface LeashBridge {
   platform: string;
+  appInfo(): Promise<AppInfo>;
   getOpenAtLogin(): Promise<OpenAtLoginState>;
   setOpenAtLogin(enabled: boolean): Promise<OpenAtLoginState>;
   listAgents(): Promise<AgentSnapshot[]>;

@@ -3,6 +3,8 @@ import { app, BrowserWindow, dialog, ipcMain, Menu, Notification, nativeImage, n
 import appIcon from "../../resources/icon.png?asset";
 import trayIcon from "../../resources/trayTemplate.png?asset";
 import type { OpenAtLoginState } from "../shared/bridge";
+import { buildKind } from "../shared/appInfo";
+import type { AppInfo } from "../shared/types";
 import { isOpenAtLogin, setOpenAtLogin } from "./loginItem";
 import { appMenuTemplate, trayMenuTemplate } from "./menus";
 import { pendingNotice } from "../shared/pendingNotice";
@@ -193,6 +195,18 @@ ipcMain.handle("nav:take", () => {
   pendingNav = null;
   return next;
 });
+
+ipcMain.handle(
+  "app:info",
+  (): AppInfo => ({
+    version: app.getVersion(),
+    build: buildKind(app.isPackaged, process.env.ELECTRON_RENDERER_URL),
+    electron: process.versions.electron,
+    chrome: process.versions.chrome,
+    node: process.versions.node,
+    platform: `${process.platform} ${process.arch}`,
+  }),
+);
 
 function registerLoginItem(): void {
   ipcMain.handle("login-item:get", () => loginItemState());
