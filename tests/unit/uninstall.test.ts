@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { backupTargets, writeWithBackup } from "../../src/main/backup";
+import { backupTargets, writeWithBackup, writtenBackups } from "../../src/main/backup";
 import { mergeHermesConfig, removeHermesConfig } from "../../src/main/hermesHooks";
 import { mergeClaudeHooks, mergeCodexHooks, mergeCursorHooks, mergeGeminiHooks, removeClaudeHooks, removeCodexHooks, removeCursorHooks, removeGeminiHooks } from "../../src/main/hookInstall";
 import { removeLeftovers, uninstallLeftovers } from "../../src/main/uninstall";
@@ -21,6 +21,7 @@ function setup() {
   const claudeRoot = join(home, ".claude");
   const userData = join(home, "Library/Application Support/Agentic Leash");
   const systemHistory = join(root, "system-history");
+  process.env.AGENTIC_LEASH_HOME = home;
   return { root, home, claudeRoot, userData, systemHistory };
 }
 
@@ -50,7 +51,7 @@ describe("uninstallLeftovers", () => {
     const { home, claudeRoot, userData, systemHistory } = setup();
     const historyDir = join(home, "dev-history");
     const paths = uninstallLeftovers({ home, claudeRoot, userData, historyDir, systemHistory });
-    for (const target of backupTargets(home, claudeRoot)) expect(paths).toContain(`${target}.bak`);
+    expect(paths).not.toContain(historyDir);
     expect(paths).toEqual(expect.arrayContaining([
       join(home, ".hermes/agent-hooks/agentic-leash.sh"),
       join(home, ".hermes/agent-hooks"),
@@ -64,7 +65,6 @@ describe("uninstallLeftovers", () => {
       join(home, "Library/Preferences/com.agenticleash.app.plist"),
       join(home, "Library/Saved Application State/com.agenticleash.app.savedState"),
       join(home, "Library/HTTPStorages/com.agenticleash.app"),
-      historyDir,
     ]));
     for (const target of backupTargets(home, claudeRoot)) expect(paths).not.toContain(target);
   });
@@ -95,7 +95,6 @@ describe("removeLeftovers", () => {
     seed(hooks.codex, JSON.stringify(mergeCodexHooks({ keep: true }, COMMAND)));
     seed(hooks.gemini, JSON.stringify(mergeGeminiHooks({ theme: "dark" }, COMMAND)));
     seed(hermes, mergeHermesConfig("model: x\n", join(home, ".hermes/agent-hooks/agentic-leash.sh")));
-    for (const target of backupTargets(home, claudeRoot)) seed(`${target}.bak`, "old");
     for (const path of ["Library/LaunchAgents/com.agenticleash.sweep.plist", "Library/LaunchAgents/com.agenticleash.app.plist", ".agentic-leash/grants.db", ".hermes/agent-hooks/agentic-leash.sh", "Library/Logs/Agentic Leash/main.log", "Library/Caches/com.agenticleash.app/Cache.db", "Library/Caches/Agentic Leash/data", "Library/Preferences/com.agenticleash.app.plist", "Library/Saved Application State/com.agenticleash.app.savedState/data.data", "Library/HTTPStorages/com.agenticleash.app/httpstorages.sqlite", "dev-history/history.db"]) seed(join(home, path));
     seed(join(userData, "ui-state.json"));
 
@@ -105,9 +104,11 @@ describe("removeLeftovers", () => {
     writeWithBackup(hooks.gemini, JSON.stringify(removeGeminiHooks(JSON.parse(readFileSync(hooks.gemini, "utf8")))));
     writeWithBackup(hermes, removeHermesConfig(readFileSync(hermes, "utf8")));
     const paths = uninstallLeftovers({ home, claudeRoot, userData, historyDir, systemHistory });
+    expect(paths).toContain(`${hooks.claude}.bak`);
     removeLeftovers(paths);
 
     for (const path of paths) expect(existsSync(path), path).toBe(false);
+    expect(existsSync(historyDir)).toBe(false);
     expect(JSON.parse(readFileSync(hooks.claude, "utf8")).model).toBe("opus");
     expect(readFileSync(hooks.claude, "utf8")).not.toContain(COMMAND);
     expect(JSON.parse(readFileSync(hooks.cursor, "utf8")).version).toBe(1);
@@ -118,6 +119,40 @@ describe("removeLeftovers", () => {
     expect(readFileSync(hooks.gemini, "utf8")).not.toContain(COMMAND);
     expect(readFileSync(hermes, "utf8")).toBe("model: x\n");
     expect(existsSync(join(home, ".hermes"))).toBe(true);
+  });
+
+  it("only removes the files the app created in a custom history dir", () => {
+    const { home, claudeRoot, userData, systemHistory } = setup();
+    const historyDir = join(home, "work");
+    const ours = ["history.db", "history.db-wal", "history.db-shm", "history.db.optimize-1-2", "history.db.optimize-1-2-wal", "history.db.backup-1-2", "helper.log", "helper.log.1"];
+    for (const name of ours) seed(join(historyDir, name));
+    seed(join(historyDir, "notes.txt"), "mine");
+    seed(join(historyDir, "sub/keep.txt"), "mine");
+    const paths = uninstallLeftovers({ home, claudeRoot, userData, historyDir, systemHistory });
+    expect(paths).not.toContain(historyDir);
+    removeLeftovers(paths);
+    for (const name of ours) expect(existsSync(join(historyDir, name)), name).toBe(false);
+    expect(readFileSync(join(historyDir, "notes.txt"), "utf8")).toBe("mine");
+    expect(existsSync(join(historyDir, "sub/keep.txt"))).toBe(true);
+  });
+
+  it("ignores a missing custom history dir", () => {
+    const { home, claudeRoot, userData, systemHistory } = setup();
+    expect(() => removeLeftovers(uninstallLeftovers({ home, claudeRoot, userData, historyDir: join(home, "nope"), systemHistory }))).not.toThrow();
+  });
+
+  it("only removes .bak files the app wrote", () => {
+    const { home, claudeRoot, userData, systemHistory } = setup();
+    const ours = join(home, ".cursor/hooks.json");
+    const theirs = join(home, ".codex/hooks.json");
+    seed(ours, "a");
+    seed(theirs, "b");
+    seed(`${theirs}.bak`, "user backup");
+    writeWithBackup(ours, "c");
+    expect(writtenBackups(home)).toEqual([`${ours}.bak`]);
+    removeLeftovers(uninstallLeftovers({ home, claudeRoot, userData, historyDir: systemHistory, systemHistory }));
+    expect(existsSync(`${ours}.bak`)).toBe(false);
+    expect(readFileSync(`${theirs}.bak`, "utf8")).toBe("user backup");
   });
 
   it("keeps other files in a shared Hermes agent-hooks dir", () => {

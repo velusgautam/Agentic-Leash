@@ -1,18 +1,26 @@
 import { existsSync, readdirSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { APP_NAME, leashDir } from "../shared/constants";
-import { backupTargets } from "./backup";
+import { writtenBackups } from "./backup";
 import { sweepAgentPath } from "./helperInstall";
 import { LOGIN_AGENT_LABEL, loginAgentPath } from "./loginItem";
 
 export type LeftoverOptions = { home: string; claudeRoot: string; userData: string; historyDir: string; systemHistory: string };
 
-export function uninstallLeftovers({ home, claudeRoot, userData, historyDir, systemHistory }: LeftoverOptions): string[] {
+const ownHistoryFile = (name: string) => /^(history\.db(-wal|-shm|\.optimize-.*|\.backup-.*)?|helper\.log(\.1)?)$/.test(name);
+
+function historyFiles(dir: string): string[] {
+  if (!existsSync(dir)) return [];
+  const names = readdirSync(dir);
+  return [...names.filter(ownHistoryFile).map((name) => join(dir, name)), ...(names.every(ownHistoryFile) ? [dir] : [])];
+}
+
+export function uninstallLeftovers({ home, userData, historyDir, systemHistory }: LeftoverOptions): string[] {
   const hermesHooks = join(home, ".hermes/agent-hooks");
   const hermesShared = existsSync(hermesHooks) && readdirSync(hermesHooks).some((name) => name !== "agentic-leash.sh");
   const library = (path: string) => join(home, "Library", path);
   return [
-    ...backupTargets(home, claudeRoot).map((path) => `${path}.bak`),
+    ...writtenBackups(home),
     join(hermesHooks, "agentic-leash.sh"),
     ...(hermesShared ? [] : [hermesHooks]),
     sweepAgentPath(home),
@@ -25,7 +33,7 @@ export function uninstallLeftovers({ home, claudeRoot, userData, historyDir, sys
     library(`Preferences/${LOGIN_AGENT_LABEL}.plist`),
     library(`Saved Application State/${LOGIN_AGENT_LABEL}.savedState`),
     library(`HTTPStorages/${LOGIN_AGENT_LABEL}`),
-    ...(historyDir === systemHistory ? [] : [historyDir]),
+    ...(historyDir === systemHistory ? [] : historyFiles(historyDir)),
   ];
 }
 
