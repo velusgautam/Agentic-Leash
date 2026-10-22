@@ -383,7 +383,7 @@ function Storage() {
                 }}
                 title={`Lower the limit to ${pendingCap ?? 0} GB?`}
                 description={`History already uses ${formatBytes(used)}, more than half of the new limit.`}
-                effects={["Automatic cleanup starts within a minute.", "Scratch reads older than 1 day go first, then project reads older than 7 days, including sensitive ones.", "If that isn't enough, commands, file changes (with diffs), and network activity are deleted, oldest first.", "Other sensitive history is deleted only if history reaches the limit."]}
+                effects={["Automatic cleanup starts within a minute.", "Scratch reads older than 1 day go first, then project reads older than 7 days, including sensitive ones.", "If that isn't enough, scratch file changes go next, then project file changes and network activity, oldest first.", "If history reaches the limit, the oldest history is deleted, including sensitive files."]}
                 confirmLabel="Set limit"
                 onConfirm={() => {
                   if (pendingCap !== null) saveCap(pendingCap);

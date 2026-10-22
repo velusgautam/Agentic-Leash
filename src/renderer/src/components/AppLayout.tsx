@@ -84,7 +84,7 @@ function StorageBanner() {
   return (
     <div role="status" className="mx-5 mb-2 flex items-center gap-3 rounded-lg border border-amber-500/30 bg-amber-500/10 py-1.5 pr-1.5 pl-3 text-sm">
       <Database className="size-4 shrink-0 text-amber-500" aria-hidden />
-      <span className="min-w-0 flex-1">History is using {warning.percent}% of its {cap} limit. Old reads and scratch files go first, then command, file-change, and network history if that isn't enough.</span>
+      <span className="min-w-0 flex-1">History is using {warning.percent}% of its {cap} limit. Old reads go first, then file changes and network activity if that isn't enough.</span>
       {manage}
       <Button size="icon-sm" variant="ghost" aria-label="Dismiss" onClick={() => void window.leash.dismissStorageWarning(warning.step).then(() => setState(null))}>
         <X />
