@@ -34,32 +34,58 @@ test("General shows Open at login, disabled outside the installed app", async ()
   await app.close();
 });
 
-test("Monitoring optimizes history after confirmation", async () => {
+function seedHistory(): string {
   const historyDir = mkdtempSync(join(tmpdir(), "al-history-optimize-"));
   const history = openHistoryDb(join(historyDir, "history.db"));
-  insertEvents(history, [{
-    ts: 1,
-    agent: "cursor",
-    pid: 1,
-    exe: "cursor-agent",
-    kind: "write",
-    path: "/Users/me/project/a.ts",
-    beforeBlob: "before",
-    afterBlob: "after",
-    sensitive: false,
-    source: "eslogger",
-  }]);
+  const event = { agent: "cursor", pid: 1, exe: "cursor-agent", path: "/Users/me/project/a.ts", sensitive: false, source: "eslogger" } as const;
+  insertEvents(history, [{ ...event, ts: 1, kind: "write", beforeBlob: "before", afterBlob: "after" }, { ...event, ts: 2, kind: "read" }]);
   history.prepare("INSERT INTO blobs (hash, size, data) VALUES ('old', 0, zeroblob(100000))").run();
   history.close();
+  return historyDir;
+}
 
-  const app = await launch([], { AGENTIC_LEASH_HISTORY_DIR: historyDir });
+async function openMonitoring(env: Record<string, string> = {}) {
+  const app = await launch([], env);
   const win = await app.firstWindow();
   await win.getByRole("link", { name: "Settings", exact: true }).click();
   await win.getByRole("link", { name: "Monitoring" }).click();
+  return { app, win };
+}
+
+test("Monitoring compacts history after confirmation", async () => {
+  const { app, win } = await openMonitoring({ AGENTIC_LEASH_HISTORY_DIR: seedHistory() });
   await expect(win.getByText(/History database is/)).toBeVisible();
-  await win.getByRole("button", { name: "Optimize history" }).click();
-  await expect(win.getByRole("heading", { name: "Optimize history?" })).toBeVisible();
-  await win.getByRole("button", { name: "Optimize", exact: true }).click();
+  await win.getByRole("button", { name: "Clean up", exact: true }).click();
+  const dialog = win.getByRole("alertdialog");
+  await expect(dialog.getByRole("heading", { name: "Compact only?" })).toBeVisible();
+  await dialog.getByRole("button", { name: "Clean up", exact: true }).click();
   await expect(win.getByText(/Reduced history from/)).toBeVisible();
+  await app.close();
+});
+
+test("Monitoring removes reads after confirmation", async () => {
+  const { app, win } = await openMonitoring({ AGENTIC_LEASH_HISTORY_DIR: seedHistory() });
+  await win.getByLabel("Cleanup").selectOption("reads");
+  await win.getByRole("button", { name: "Clean up", exact: true }).click();
+  const dialog = win.getByRole("alertdialog");
+  await expect(dialog.getByRole("heading", { name: "Remove reads?" })).toBeVisible();
+  await dialog.getByRole("button", { name: "Clean up", exact: true }).click();
+  await expect(win.getByText(/Reduced history from .* Removed 1 row\./)).toBeVisible();
+  await app.close();
+});
+
+test("Monitoring keeps a valid history size limit", async () => {
+  const { app, win } = await openMonitoring();
+  await expect(win.getByText("Automatic cleanup starts at half this size. Default 10 GB.")).toBeVisible();
+  const field = win.getByLabel("History size limit in GB");
+  await expect(field).toHaveValue("10");
+  await field.fill("0");
+  await field.press("Enter");
+  await expect(field).toHaveValue("10");
+  await field.fill("5");
+  await field.press("Enter");
+  await expect(win.getByRole("alertdialog")).toHaveCount(0);
+  await win.reload();
+  await expect(win.getByLabel("History size limit in GB")).toHaveValue("5");
   await app.close();
 });

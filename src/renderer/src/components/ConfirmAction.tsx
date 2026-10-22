@@ -12,17 +12,21 @@ export function ConfirmAction({
   effects,
   confirmLabel,
   onConfirm,
+  open,
+  onOpenChange,
 }: {
-  trigger: ReactElement;
+  trigger?: ReactElement;
   title: ReactNode;
   description?: ReactNode;
   effects: string[];
   confirmLabel: string;
   onConfirm: () => void;
+  open?: boolean;
+  onOpenChange?: (open: boolean) => void;
 }) {
   return (
-    <AlertDialog.Root>
-      <AlertDialog.Trigger render={trigger} />
+    <AlertDialog.Root open={open} onOpenChange={onOpenChange}>
+      {trigger ? <AlertDialog.Trigger render={trigger} /> : null}
       <AlertDialog.Portal>
         <AlertDialog.Backdrop className="fixed inset-0 z-50 bg-black/40 backdrop-blur-[2px] transition-opacity duration-150 data-ending-style:opacity-0 data-starting-style:opacity-0" />
         <AlertDialog.Viewport className="fixed inset-0 z-50 grid place-items-center p-6">
