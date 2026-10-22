@@ -2,11 +2,12 @@ import { describe, expect, it } from "vitest";
 import { coveredPending, decide } from "../../src/hook/decide";
 import { normaliseHook } from "../../src/hook/normalise";
 import { extractShellPaths, isUnder } from "../../src/shared/paths";
-import type { Grant, HookRequest } from "../../src/shared/types";
+import type { AllowRule, Grant, HookRequest } from "../../src/shared/types";
 
 const req = (over: Partial<HookRequest>): HookRequest => ({ agent: "cursor", event: "preToolUse", tool: "Read", access: "read", paths: ["/a/b/c"], cwd: "/a/b", ...over });
 const grant = (over: Partial<Grant>): Grant => ({ id: 1, agent: "cursor", path: "/a/b", access: "read", source: "leash", command: null, createdAt: 0, expiresAt: null, ...over });
 const opts = { now: 1_000, lockdown: false, protectedRoots: ["/secret"] };
+const rule = (over: Partial<AllowRule>): AllowRule => ({ id: 1, kind: "folder", agent: "*", value: "/proj", createdAt: 0, ...over });
 
 describe("decide", () => {
   it("denies during lockdown", () => {
@@ -48,6 +49,28 @@ describe("decide", () => {
       { id: "2", request: req({ paths: ["/other"], access: "write" }), askedAt: 0 },
     ];
     expect(coveredPending(pending, [grant({ path: "/a/b", access: "write" })], opts)).toEqual(["1"]);
+  });
+  it("covers a child of a folder grant", () => {
+    expect(decide(req({ paths: ["/a/b/c/d"], access: "write" }), [grant({ path: "/a/b", access: "write" })], opts).kind).toBe("pass");
+  });
+  it("passes an exact command grant from another directory and ignores expiry that has passed", () => {
+    const command = "cat /etc/hosts";
+    const shell = req({ command, paths: ["/elsewhere", "/etc/hosts"], access: "write", cwd: "/elsewhere" });
+    expect(decide(shell, [grant({ command, access: "write", path: "" })], opts).kind).toBe("pass");
+    expect(decide(shell, [grant({ command, access: "write", path: "", expiresAt: 500 })], opts).kind).toBe("prompt");
+    expect(decide(req({ command: "npm test --watch", paths: ["/a/b"], access: "write" }), [grant({ command: "npm test", access: "write", path: "" })], opts).kind).toBe("prompt");
+  });
+  it("lets a command rule pass and lets lockdown deny it", () => {
+    const shell = req({ command: "npm test", paths: ["/etc/hosts"], access: "write" });
+    const rules = [rule({ kind: "command", value: "npm test", agent: "cursor" })];
+    expect(decide(shell, [], { ...opts, rules }).kind).toBe("pass");
+    expect(decide(shell, [], { ...opts, rules, lockdown: true }).kind).toBe("deny");
+  });
+  it("lets a folder rule cover a child read and ignores a command grant path", () => {
+    expect(decide(req({ paths: ["/proj/sub/a"], access: "read" }), [], { ...opts, rules: [rule({ value: "/proj" })] }).kind).toBe("pass");
+    expect(decide(req({ agent: "claude-code", paths: ["/proj/a"], access: "write" }), [], { ...opts, rules: [rule({ agent: "cursor", value: "/proj" })] }).kind).toBe("prompt");
+    expect(decide(req({ agent: "claude-code", paths: ["/proj/a"], access: "write" }), [], { ...opts, rules: [rule({ agent: "*", value: "/proj" })] }).kind).toBe("pass");
+    expect(decide(req({ paths: ["/secret-file"], access: "read" }), [grant({ command: "npm test", path: "", access: "write" })], opts).kind).toBe("prompt");
   });
 });
 
