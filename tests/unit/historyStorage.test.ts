@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { describe, expect, it } from "vitest";
-import { checkpointHistory, historyCounts, historyText, historyUsage, insertEvents, openHistoryDb, optimizeHistory, pruneBySize, pruneHistory, purgeHistory, queryHistory, readHistoryStats, resetHistory, writeHistoryStats } from "../../src/helper/historyDb";
+import { checkpointHistory, convertAutoVacuum, historyCounts, historyText, historyUsage, insertEvents, openHistoryDb, optimizeHistory, pruneBySize, pruneHistory, purgeHistory, queryHistory, readHistoryStats, resetHistory, writeHistoryStats } from "../../src/helper/historyDb";
 import { purgeCommand } from "../../src/helper/leash-helper";
 import { capBytes, formatBytes, parseCapGb, rearmDismissed, storageWarning, type HistoryStats } from "../../src/shared/storage";
 
@@ -187,6 +187,26 @@ describe("pruneBySize", () => {
     const { db } = fresh();
     expect(db.prepare("PRAGMA auto_vacuum").get()).toEqual({ auto_vacuum: 2 });
     for (const name of ["events_kind", "noise_kind"]) expect(count(db, `SELECT count(*) AS n FROM sqlite_master WHERE type = 'index' AND name = '${name}'`)).toBe(1);
+    db.close();
+  });
+
+  it("converts a legacy database to incremental auto-vacuum once, so pruning shrinks the file", () => {
+    const path = historyPath();
+    const legacy = new DatabaseSync(path);
+    legacy.exec("PRAGMA auto_vacuum = NONE");
+    legacy.exec("CREATE TABLE seed (n INTEGER)");
+    legacy.close();
+    const db = openHistoryDb(path);
+    expect(db.prepare("PRAGMA auto_vacuum").get()).toEqual({ auto_vacuum: 0 });
+    seed(db, "noise", "read", 6000, (index) => now - 2 * day - index);
+    expect(convertAutoVacuum(db)).toBe(true);
+    expect(db.prepare("PRAGMA auto_vacuum").get()).toEqual({ auto_vacuum: 2 });
+    expect(convertAutoVacuum(db)).toBe(false);
+    expect(rows(db, "noise", "1 = 1")).toBe(6000);
+    checkpointHistory(db);
+    const before = statSync(path).size;
+    pruneBySize(db, capAt(db, 0.6), now);
+    expect(statSync(path).size).toBeLessThan(before / 2);
     db.close();
   });
 

@@ -74,6 +74,14 @@ function maxId(db: DatabaseSync): number {
   return Math.max(events, noise);
 }
 
+export function convertAutoVacuum(db: DatabaseSync): boolean {
+  if (Number(Object.values(db.prepare("PRAGMA auto_vacuum").get() as Record<string, number>)[0]) === 2) return false;
+  db.exec("PRAGMA auto_vacuum = INCREMENTAL");
+  db.exec("VACUUM");
+  checkpointHistory(db);
+  return true;
+}
+
 export function checkpointHistory(db: DatabaseSync): void {
   db.exec("PRAGMA busy_timeout = 0");
   try {

@@ -13,7 +13,7 @@ import { MAIN_RETENTION_DAYS, NOISE_RETENTION_DAYS, retentionDays } from "../sha
 import { capBytes, HARD_CAP_STOP, PRUNE_START, type HistoryStats } from "../shared/storage";
 import type { HistoryEvent } from "../shared/types";
 import { classify } from "./classify";
-import { checkpointHistory, dropIgnored, historyCounts, historyStorageBytes, historyUsage, insertEvents, openHistoryDb, optimizeHistory, pruneBySize, pruneHistory, purgeHistory, readHistoryStats, resetHistory, splitHistory, writeHistoryStats } from "./historyDb";
+import { checkpointHistory, convertAutoVacuum, dropIgnored, historyCounts, historyStorageBytes, historyUsage, insertEvents, openHistoryDb, optimizeHistory, pruneBySize, pruneHistory, purgeHistory, readHistoryStats, resetHistory, splitHistory, writeHistoryStats } from "./historyDb";
 import { lsofText, pollNet } from "./net";
 import { ProcTree, type EsEvent } from "./proctree";
 import { ContentCache, gitBaseline, readText } from "./snapshots";
@@ -141,7 +141,16 @@ export function startHelper(historyPath: string, eslogger = "/usr/bin/eslogger")
     renameSync(logPath, `${logPath}.1`);
     log = createWriteStream(logPath, { flags: "a" });
   };
+  let converted = false;
   const pruneTimer = setInterval(() => {
+    if (!converted) {
+      converted = true;
+      try {
+        convertAutoVacuum(db);
+      } catch {
+        /* disk full or busy: the file keeps its size until the next start */
+      }
+    }
     prune();
     rotateLog();
   }, 60_000);
