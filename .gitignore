@@ -3,3 +3,6 @@ out/
 dist/
 test-results/
 playwright-report/
+/history*.db
+
+.worktrees/
