@@ -1,5 +1,5 @@
 import { DECISION_RETENTION_MS } from "../shared/constants";
-import { deleteGrants, listGrants, pruneDecisions } from "../shared/db";
+import { deleteGrants, listGrants, pruneApprovals, pruneDecisions } from "../shared/db";
 import type { DatabaseSync } from "node:sqlite";
 import type { Grant } from "../shared/types";
 
@@ -10,5 +10,6 @@ export function expireLeashGrants(db: DatabaseSync, now: number): Grant[] {
 }
 
 export function pruneOldDecisions(db: DatabaseSync, now: number): number {
+  pruneApprovals(db, now - 30 * 24 * 60 * 60 * 1000);
   return pruneDecisions(db, now - DECISION_RETENTION_MS);
 }

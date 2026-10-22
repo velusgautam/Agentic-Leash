@@ -1,10 +1,12 @@
-import { createContext, useContext, useEffect, useState, type ReactNode } from "react";
+import { createContext, useContext, useEffect, useRef, useState, type ReactNode } from "react";
 import type { SetupStatus } from "../../../shared/setup";
 
 interface SetupApi {
   status: SetupStatus | null;
+  completedThisSession: boolean;
   busy: string | null;
   failed: string | null;
+  refresh: () => void;
   run: (key: string, work: () => Promise<unknown>) => void;
 }
 
@@ -14,6 +16,13 @@ export function SetupProvider({ children }: { children: ReactNode }) {
   const [status, setStatus] = useState<SetupStatus | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [failed, setFailed] = useState<string | null>(null);
+  const [completedThisSession, setCompleted] = useState(false);
+  const sawSetup = useRef(false);
+  useEffect(() => {
+    if (!status) return;
+    if (!status.ready) sawSetup.current = true;
+    else if (sawSetup.current) setCompleted(true);
+  }, [status]);
   useEffect(() => {
     const tick = () => void window.leash.setup().then(setStatus);
     tick();
@@ -24,6 +33,7 @@ export function SetupProvider({ children }: { children: ReactNode }) {
       window.removeEventListener("focus", tick);
     };
   }, []);
+  const refresh = () => void window.leash.setup().then(setStatus);
   const run = (key: string, work: () => Promise<unknown>) => {
     setBusy(key);
     setFailed(null);
@@ -33,7 +43,7 @@ export function SetupProvider({ children }: { children: ReactNode }) {
       .catch(() => setFailed(key))
       .finally(() => setBusy((current) => (current === key ? null : current)));
   };
-  return <SetupContext.Provider value={{ status, busy, failed, run }}>{children}</SetupContext.Provider>;
+  return <SetupContext.Provider value={{ status, completedThisSession, busy, failed, refresh, run }}>{children}</SetupContext.Provider>;
 }
 
 export function useSetup(): SetupApi {

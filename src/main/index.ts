@@ -3,8 +3,11 @@ import { app, BrowserWindow, dialog, ipcMain, Menu, Notification, nativeImage, n
 import appIcon from "../../resources/icon.png?asset";
 import trayIcon from "../../resources/trayTemplate.png?asset";
 import type { OpenAtLoginState } from "../shared/bridge";
+import { buildKind } from "../shared/appInfo";
+import type { AppInfo } from "../shared/types";
 import { isOpenAtLogin, setOpenAtLogin } from "./loginItem";
 import { appMenuTemplate, trayMenuTemplate } from "./menus";
+import { pendingNotice } from "../shared/pendingNotice";
 import { startRuntime } from "./runtime";
 import { readUiState, writeUiState } from "./uiState";
 
@@ -20,6 +23,8 @@ let quitting = false;
 let pendingCount = 0;
 let pendingNav: string | null = null;
 let lockdown = false;
+// Module scope on purpose: a garbage-collected Notification never fires its action events.
+const pendingNotes = new Map<string, Notification>();
 let revokeAll = (): { revoked: number } => ({ revoked: 0 });
 let unlock = (): void => undefined;
 
@@ -191,6 +196,18 @@ ipcMain.handle("nav:take", () => {
   return next;
 });
 
+ipcMain.handle(
+  "app:info",
+  (): AppInfo => ({
+    version: app.getVersion(),
+    build: buildKind(app.isPackaged, process.env.ELECTRON_RENDERER_URL),
+    electron: process.versions.electron,
+    chrome: process.versions.chrome,
+    node: process.versions.node,
+    platform: `${process.platform} ${process.arch}`,
+  }),
+);
+
 function registerLoginItem(): void {
   ipcMain.handle("login-item:get", () => loginItemState());
   ipcMain.handle("login-item:set", (_event, enabled: boolean) => {
@@ -247,6 +264,17 @@ if (!app.requestSingleInstanceLock()) {
       onStatus: (status) => {
         lockdown = status.lockdown;
         refreshTray();
+      },
+      notifyPending: (item, decide) => {
+        const note = new Notification({ ...pendingNotice(item), actions: [{ type: "button", text: "Allow 15 min" }, { type: "button", text: "Deny" }] });
+        pendingNotes.set(item.id, note);
+        note.on("action", (_event, index) => decide(index === 0 ? "allow" : "deny"));
+        note.on("click", openApproval);
+        note.show();
+        return () => {
+          pendingNotes.delete(item.id);
+          note.close();
+        };
       },
       notify: (title, body) => new Notification({ title, body }).show(),
       disableLoginItem: () => {

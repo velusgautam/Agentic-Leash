@@ -17,6 +17,10 @@ export interface SetupStatus {
 }
 
 const HOOK_IDS = new Set(["claude-code", "cursor", "codex", "gemini", "hermes"]);
+
+export function isHookAgent(id: string): id is "claude-code" | "cursor" | "codex" | "gemini" | "hermes" {
+  return HOOK_IDS.has(id);
+}
 const BANNER_IDS = new Set(["claude-code", "cursor", "codex", "gemini", "hermes"]);
 
 export const HISTORY_AGENT: Record<string, string> = {
@@ -78,4 +82,10 @@ export function claudeSurface(exe: string): "Desktop" | "CLI" | null {
 export function macAppPresent(app: string, home: string, exists: (path: string) => boolean): boolean {
   const root = home.endsWith("/") ? home.slice(0, -1) : home;
   return exists(`/Applications/${app}.app`) || exists(`${root}/Applications/${app}.app`);
+}
+
+export function setupProgress(status: { helper: HelperState; fda: boolean; agents: SetupAgent[] }): { done: number; total: number } {
+  const active = status.agents.filter(turnedOn);
+  const steps = [active.length === 0 || active.some((agent) => agent.hooks === true), status.helper !== "stopped", status.fda];
+  return { done: steps.filter(Boolean).length, total: steps.length };
 }

@@ -131,6 +131,8 @@ test("walkthrough frames", async () => {
   ]);
   await claudeRow.getByRole("button", { name: "Install" }).click();
   await expect(win.getByText("Live activity")).toBeVisible();
+  await win.getByRole("button", { name: "Got it" }).click();
+  await expect(win.getByRole("alertdialog")).toBeHidden();
   await win.waitForTimeout(1000);
   const dismiss = win.getByRole("button", { name: "Dismiss" });
   if (await dismiss.isVisible()) await dismiss.click();
@@ -209,7 +211,7 @@ test("walkthrough frames", async () => {
   await box("revokeConfirm", dialog.getByRole("button", { name: "Revoke all" }));
   await shot(win, "10-revoke");
   await dialog.getByRole("button", { name: "Revoke all" }).click();
-  const end = win.getByRole("button", { name: "End lockdown" });
+  const end = win.getByRole("button", { name: "End lockdown", pressed: true });
   await expect(end).toBeEnabled();
   await expect(win.getByRole("button", { name: "Nothing to revoke" }).first()).toBeVisible();
   await win.waitForTimeout(2200);

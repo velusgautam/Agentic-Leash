@@ -69,3 +69,40 @@ test("revoking a grant asks first and explains the outcome", async () => {
   await expect(win.getByText("No grants yet")).toBeVisible();
   await app.close();
 });
+
+test("allow all approves every waiting request and is off for no time limit", async () => {
+  const app = await launch();
+  const win = await app.firstWindow();
+  const home = await app.evaluate(() => process.env.AGENTIC_LEASH_HOME!);
+  const socket = connect(join(home, ".agentic-leash", "agentic-leash.sock"));
+  await new Promise((resolve) => socket.once("connect", resolve));
+  for (const name of ["a", "b"]) {
+    const request = { agent: "cursor", event: "preToolUse", tool: "Read", access: "read", paths: [`/Users/someone/${name}/src/index.ts`], cwd: `/Users/someone/${name}` };
+    socket.write(`${JSON.stringify({ id: `e2e-batch-${name}`, request })}\n`);
+  }
+  const popup = await app.waitForEvent("window", { predicate: (page) => page.url().includes("#/approval") });
+  const allowAll = popup.getByRole("button", { name: "Allow all (2)" });
+  await expect(allowAll).toBeEnabled();
+  await popup.keyboard.press("4");
+  await expect(allowAll).toBeDisabled();
+  await popup.keyboard.press("2");
+  await expect(allowAll).toBeEnabled();
+  await allowAll.click();
+  await expect(popup.getByText("No requests waiting.")).toBeVisible();
+  await expect.poll(() => win.evaluate(`window.leash.listGrants().then((rows) => rows.map((row) => row.path).sort().join(","))`)).toBe("/Users/someone/a/src,/Users/someone/b/src");
+  socket.destroy();
+  await app.close();
+});
+
+test("extending a timed grant adds an hour", async () => {
+  const app = await launch();
+  const win = await app.firstWindow();
+  await win.evaluate(`window.leash.createGrant({ agent: "*", path: "/tmp/leash-extend", access: "write", ttlSeconds: 600 })`);
+  const expiry = () => win.evaluate(`window.leash.listGrants().then((rows) => rows.find((row) => row.path === "/tmp/leash-extend").expiresAt)`) as Promise<number>;
+  const before = await expiry();
+  await win.getByRole("link", { name: "Access", exact: true }).click();
+  await win.getByRole("button", { name: "Extend by 1 hour" }).click();
+  await expect(win.getByRole("dialog", { name: "Extended by 1 hour" })).toBeVisible();
+  await expect.poll(expiry).toBeGreaterThan(before);
+  await app.close();
+});

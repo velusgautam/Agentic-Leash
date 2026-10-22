@@ -4,15 +4,20 @@ import { Monitor, Moon, Sun } from "lucide-react";
 import licenses from "../../../../THIRD_PARTY_LICENSES.md?raw";
 import type { IgnoredRow } from "../../../shared/ignored";
 import type { HistoryOptimizationInfo, HistoryOptimizationResult, OpenAtLoginState } from "../../../shared/bridge";
+import type { ApprovalStyle } from "../../../shared/approvalStyle";
 import type { AgentId, Diagnostics, ThemeSource } from "../../../shared/types";
 import { ConfirmAction } from "~/components/ConfirmAction";
 import { AGENT_LABELS } from "~/components/Icons";
 import { PageContainer, SettingsRow, SettingsSection } from "~/components/settings";
 import { FullDiskControl } from "~/components/FullDiskControl";
 import { SetupButton } from "~/components/SetupButton";
+import { isHookAgent } from "../../../shared/setup";
 import { useSetup } from "~/components/useSetup";
 import { Button } from "~/components/ui/button";
 import { Switch } from "~/components/ui/switch";
+import { toast } from "~/components/ui/toast";
+import { useAppInfo } from "~/components/useAppInfo";
+import { aboutText, BUILD_LABELS, runtimeLine } from "../../../shared/appInfo";
 import { cn } from "~/lib/utils";
 import { SETTINGS_SECTIONS } from "~/nav";
 import { parseRetentionDays } from "../../../shared/retention";
@@ -20,10 +25,14 @@ import { DEFAULT_APPEARANCE, readAppearance, saveAppearance, type AppearancePref
 
 function General() {
   const [login, setLogin] = useState<OpenAtLoginState | null>(null);
+  const [style, setStyle] = useState<ApprovalStyle>("popup");
+  const info = useAppInfo();
   useEffect(() => {
     void window.leash.getOpenAtLogin().then(setLogin);
+    void window.leash.getApprovalStyle().then(setStyle);
   }, []);
   return (
+    <>
     <SettingsSection title="Startup">
       <SettingsRow
         title="Open at login"
@@ -42,6 +51,51 @@ function General() {
         }
       />
     </SettingsSection>
+    <SettingsSection title="Approvals">
+      <SettingsRow
+        title="Ask for approval with"
+        description="Popup takes focus so you can answer right away. Notification waits in the corner with Allow 15 min and Deny buttons; requests still time out and are denied after 2 minutes. macOS must allow alerts from Agentic Leash for the buttons to show."
+        control={
+          <div className="flex gap-1" role="group" aria-label="Ask for approval with">
+            {(["popup", "notification"] as const).map((value) => (
+              <Button
+                key={value}
+                size="sm"
+                variant={style === value ? "default" : "outline"}
+                aria-pressed={style === value}
+                onClick={() => {
+                  setStyle(value);
+                  void window.leash.setApprovalStyle(value);
+                }}
+              >
+                {value === "popup" ? "Popup" : "Notification"}
+              </Button>
+            ))}
+          </div>
+        }
+      />
+    </SettingsSection>
+    <SettingsSection title="About">
+      <SettingsRow title="Version" description={info?.version ?? "…"} />
+      <SettingsRow title="Build" description={info ? BUILD_LABELS[info.build] : "…"} />
+      <SettingsRow
+        title="Runtime"
+        description={info ? runtimeLine(info) : "…"}
+        control={
+          <Button
+            size="sm"
+            variant="ghost"
+            disabled={!info}
+            onClick={() => {
+              if (info) void navigator.clipboard.writeText(aboutText(info)).then(() => toast({ title: "Copied version info" }));
+            }}
+          >
+            Copy
+          </Button>
+        }
+      />
+    </SettingsSection>
+    </>
   );
 }
 
@@ -91,7 +145,7 @@ function Agents() {
     <SettingsSection title="Agents">
       {rows.map((agent) => {
         const name = AGENT_LABELS[agent.id] ?? agent.id;
-        const hookId = agent.id === "claude-code" || agent.id === "cursor" || agent.id === "codex" || agent.id === "gemini" || agent.id === "hermes" ? agent.id : null;
+        const hookId = isHookAgent(agent.id) ? agent.id : null;
         const description = agent.id === "codex"
           ? "Off hides this agent and removes its hooks. After install, run /hooks in Codex and trust Agentic Leash."
           : agent.id === "hermes"
@@ -341,7 +395,7 @@ function Appearance() {
 }
 
 function Keybindings() {
-  const rows = [["Hide to menu bar", "⌘Q"], ["Command palette", "⌘K"], ["Approval: pick duration", "1–4"], ["Approval: allow", "Return"], ["Approval: deny", "Esc"], ["Revoke all, no confirm", "⌃⌥⌘L"]];
+  const rows = [["Hide to menu bar", "⌘Q"], ["Command palette", "⌘K"], ["Approval: pick duration", "1–4"], ["Approval: allow", "Return"], ["Approval: deny", "Esc"], ["Revoke all, no confirm", "⌃⌥⌘L"], ["Go to Live", "⌘1"], ["Go to Access", "⌘2"], ["Go to History", "⌘3"], ["Search history", "⌘F"]];
   return (
     <SettingsSection title="Keybindings">
       {rows.map(([action, keys]) => <SettingsRow key={action} title={action} control={<span className="font-mono text-xs">{keys}</span>} />)}

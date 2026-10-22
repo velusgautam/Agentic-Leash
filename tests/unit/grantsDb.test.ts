@@ -6,10 +6,15 @@ import { describe, expect, it } from "vitest";
 import {
   collapseGrantDupes,
   createRule,
+  countBlocked,
   deleteRule,
+  extendGrant,
+  listApprovals,
   listDecisions,
   listGrants,
   openGrantsDb,
+  pruneApprovals,
+  recordApproval,
   recordDecision,
   updateRule,
   upsertCommandGrant,
@@ -174,5 +179,43 @@ describe("decisions", () => {
     recordDecision(db, { ts: 2, agent: "cursor", tool: "Bash", paths: [], verdict: "pass", command: "ls" });
     expect(listDecisions(db).map((row) => [row.command, row.url])).toEqual([["ls", null], [null, null]]);
     db.close();
+  });
+});
+
+describe("extendGrant", () => {
+  const fresh = () => openGrantsDb(join(mkdtempSync(join(tmpdir(), "al-ext-")), "grants.db"));
+  it("extends from expiry while live and from now once expired", () => {
+    const db = fresh();
+    const live = upsertGrant(db, row("/live", 5000));
+    const dead = upsertGrant(db, row("/dead", 100));
+    expect(extendGrant(db, live, 60, 1000)).toBe(65_000);
+    expect(extendGrant(db, dead, 60, 1000)).toBe(61_000);
+    expect(listGrants(db).find((grant) => grant.id === live)?.expiresAt).toBe(65_000);
+  });
+  it("does nothing for forever, config or missing grants", () => {
+    const db = fresh();
+    const forever = upsertGrant(db, row("/f", null));
+    const config = upsertGrant(db, { ...row("/c", 5000), source: "config" });
+    expect(extendGrant(db, forever, 60, 1000)).toBeNull();
+    expect(extendGrant(db, config, 60, 1000)).toBeNull();
+    expect(extendGrant(db, 999, 60, 1000)).toBeNull();
+    expect(listGrants(db).find((grant) => grant.id === config)?.expiresAt).toBe(5000);
+  });
+});
+
+describe("approvals and blocked counts", () => {
+  it("records, lists and prunes approvals", () => {
+    const db = openGrantsDb(join(mkdtempSync(join(tmpdir(), "al-apr-")), "grants.db"));
+    recordApproval(db, { ts: 10, agent: "cursor", path: "/p", command: null, access: "write", ttlSeconds: 900 });
+    recordApproval(db, { ts: 50, agent: "cursor", path: null, command: "ls", access: "write", ttlSeconds: null });
+    expect(listApprovals(db, 20)).toMatchObject([{ ts: 50, command: "ls", path: null, ttlSeconds: null }]);
+    expect(listApprovals(db, 0)).toHaveLength(2);
+    expect(pruneApprovals(db, 20)).toBe(1);
+    expect(listApprovals(db, 0)).toHaveLength(1);
+  });
+  it("counts denied and timed out decisions", () => {
+    const db = openGrantsDb(join(mkdtempSync(join(tmpdir(), "al-blk-")), "grants.db"));
+    for (const [ts, verdict] of [[1, "deny"], [10, "deny"], [11, "timeout"], [12, "allow"]] as const) recordDecision(db, { ts, agent: "cursor", tool: "t", paths: [], verdict });
+    expect(countBlocked(db, 5)).toBe(2);
   });
 });

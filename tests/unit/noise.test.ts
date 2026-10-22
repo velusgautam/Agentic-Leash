@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { describe, expect, it } from "vitest";
-import { historyText, insertEvents, openHistoryDb, optimizeHistory, pruneHistory, queryHistory, replaceHistory, splitHistory } from "../../src/helper/historyDb";
+import { historyText, insertEvents, openHistoryDb, optimizeHistory, pruneHistory, queryHistory, replaceHistory, splitHistory, summarizeHistory } from "../../src/helper/historyDb";
 import { eventBucket, isNoise } from "../../src/shared/noise";
 import { parseRetentionDays } from "../../src/shared/retention";
 
@@ -222,5 +222,25 @@ describe("parseRetentionDays", () => {
     expect(parseRetentionDays("4")).toBeNull();
     expect(parseRetentionDays("366")).toBeNull();
     expect(parseRetentionDays("30.5")).toBeNull();
+  });
+});
+
+describe("summarizeHistory", () => {
+  it("groups events by agent and kind since the cutoff", () => {
+    const history = db();
+    const ev = (over: { path: string } & Record<string, unknown>) => ({ ...row, ...over }) as never;
+    insertEvents(history, [
+      ev({ ts: 5, path: "/p/old" }),
+      ev({ ts: 600_000, path: "/p/a" }),
+      ev({ ts: 11, path: "/p/b", kind: "write" }),
+      ev({ ts: 12, path: "/p/c", kind: "delete" }),
+      ev({ ts: 14, path: "1.1.1.1:443", kind: "net" }),
+      ev({ ts: 1_200_000, path: "/p/.ssh/k", sensitive: true }),
+      ev({ ts: 16, path: "/p/e", agent: "cursor", kind: "write" }),
+    ]);
+    const summary = summarizeHistory(history, 10);
+    expect(summary).toMatchObject({ from: 10, total: 6, sensitive: 1 });
+    expect(summary.agents.find((a) => a.agent === "codex")).toEqual({ agent: "codex", reads: 2, writes: 2, execs: 0, net: 1, other: 0 });
+    expect(summary.agents.find((a) => a.agent === "cursor")).toMatchObject({ writes: 1, reads: 0 });
   });
 });

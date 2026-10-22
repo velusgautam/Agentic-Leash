@@ -4,6 +4,7 @@ import { ArrowLeft, Lock, RotateCw, Settings, ShieldOff, X } from "lucide-react"
 import { ConfirmAction, REVOKE_ALL_EFFECTS } from "~/components/ConfirmAction";
 import { AgentIcon, LeashMark } from "~/components/Icons";
 import { Button } from "~/components/ui/button";
+import { useAppInfo } from "~/components/useAppInfo";
 import { toast, Toaster, toastRevoked } from "~/components/ui/toast";
 import {
   Sidebar,
@@ -19,6 +20,7 @@ import {
   SidebarRail,
 } from "~/components/ui/sidebar";
 import { needsAgentBanner, visibleAgent } from "../../../shared/setup";
+import { WelcomeDialog } from "~/components/WelcomeDialog";
 import { SetupScreen } from "~/components/SetupScreen";
 import { useGrantStatus } from "~/components/useGrantStatus";
 import { SetupProvider, useSetup } from "~/components/useSetup";
@@ -124,6 +126,8 @@ export function AppLayout() {
   );
 }
 
+const TAB_KEYS: Record<string, "/live" | "/grants" | "/history"> = { "1": "/live", "2": "/grants", "3": "/history" };
+
 function AppShell() {
   const { pathname } = useLocation();
   const navigate = useNavigate();
@@ -132,6 +136,7 @@ function AppShell() {
   const [path, setPath] = useState("");
   const { status } = useSetup();
   const grants = useGrantStatus();
+  const info = useAppInfo();
   const onSettings = pathname.startsWith("/settings");
   const shownAgents = AGENT_NAV.filter((item) => status?.agents.some((agent) => agent.id === item.id && visibleAgent(agent)));
   useEffect(() => {
@@ -139,6 +144,9 @@ function AppShell() {
       if (event.metaKey && event.key.toLowerCase() === "k") {
         event.preventDefault();
         setPalette((open) => !open);
+      } else if (event.metaKey && !event.shiftKey && !event.altKey && !event.ctrlKey && event.key in TAB_KEYS) {
+        event.preventDefault();
+        void navigate({ to: TAB_KEYS[event.key] });
       }
     };
     window.addEventListener("keydown", onKey);
@@ -147,7 +155,10 @@ function AppShell() {
       window.removeEventListener("keydown", onKey);
       window.clearInterval(timer);
     };
-  }, []);
+  }, [navigate]);
+  useEffect(() => {
+    if (info?.build === "dev" && pathname !== "/approval") document.title = "Agentic Leash (dev)";
+  }, [info, pathname]);
   useEffect(() => {
     if (pathname === "/approval") return;
     const go = () => void window.leash.takeNav().then((to) => {
@@ -261,6 +272,7 @@ function AppShell() {
           </form>
         </div>
       ) : null}
+      <WelcomeDialog />
       <Toaster />
     </SidebarProvider>
   );

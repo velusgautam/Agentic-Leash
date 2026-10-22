@@ -1,16 +1,20 @@
 import { useEffect, useState } from "react";
-import { ArrowDown, ArrowUp, FolderLock, Lock, LockOpen, ShieldOff, SquareTerminal, Timer, Users } from "lucide-react";
+import { ArrowDown, ArrowUp, Check, CircleHelp, Eye, FolderLock, KeyRound, Lock, LockOpen, Pencil, ScrollText, ShieldOff, SquareTerminal, Timer, Users, X, type LucideIcon } from "lucide-react";
 import { decisionTarget } from "../../../shared/decisionView";
 import { viewGrants, type GrantSortKey, type SortDir } from "../../../shared/grantView";
+import { isHomeFolder } from "../../../shared/parents";
 import { denyCountdown, pendingSecondsLeft, POPUP_TIMEOUT_S } from "../../../shared/pending";
-import type { DecisionRow, Grant, PendingRequest } from "../../../shared/types";
+import type { DecisionRow, Grant, PendingRequest, RuleSuggestion } from "../../../shared/types";
 import { ApprovalChoices, allowLabel, isBroad, PRESETS } from "~/components/ApprovalChoices";
 import { ConfirmAction, grantEffects, REVOKE_ALL_EFFECTS } from "~/components/ConfirmAction";
 import { AGENT_LABELS, AgentIcon } from "~/components/Icons";
 import { PageContainer, SettingsSection } from "~/components/settings";
 import { Button } from "~/components/ui/button";
+import { Empty, EmptyHeader, EmptyMedia, EmptyTitle } from "~/components/ui/empty";
+import { accessTone, Pill, verdictTone } from "~/components/ui/pill";
 import { Tabs, TabsList, TabsPanel, TabsTab } from "~/components/ui/tabs";
 import { toast, toastRevoked } from "~/components/ui/toast";
+import { useLeashData, usePending } from "~/hooks/useLeash";
 import { cn } from "~/lib/utils";
 import { AllowList, AutomaticAllows } from "./access-parts";
 
@@ -22,13 +26,17 @@ function remaining(expiresAt: number | null): string {
   return `${seconds}s`;
 }
 
-const pill = "inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-xs font-medium whitespace-nowrap";
-const VERDICT: Record<string, string> = {
-  allow: "bg-emerald-500/10 text-emerald-700 dark:text-emerald-300",
-  pass: "bg-emerald-500/10 text-emerald-700 dark:text-emerald-300",
-  deny: "bg-red-500/10 text-red-700 dark:text-red-300",
-  ask: "bg-amber-500/12 text-amber-700 dark:text-amber-300",
-};
+const VERDICT_ICON: Record<string, LucideIcon> = { allow: Check, pass: Check, deny: X, ask: CircleHelp };
+
+function AccessPill({ access }: { access: string }) {
+  const Icon = access === "write" ? Pencil : Eye;
+  return <Pill tone={accessTone(access)}><Icon className="size-3" aria-hidden />{access}</Pill>;
+}
+
+function VerdictPill({ verdict }: { verdict: string }) {
+  const Icon = VERDICT_ICON[verdict];
+  return <Pill tone={verdictTone(verdict)} className="shrink-0">{Icon ? <Icon className="size-3" aria-hidden /> : null}{verdict}</Pill>;
+}
 
 const agentName = (agent: string) => (agent === "*" ? "All agents" : AGENT_LABELS[agent] ?? agent);
 const SOURCE_LABELS: Record<string, string> = { leash: "Agentic Leash", config: "Agent config" };
@@ -46,7 +54,7 @@ function Agent({ agent }: { agent: string }) {
   );
 }
 
-function PendingRow({ item, now, onDecide }: { item: PendingRequest; now: number; onDecide: () => void }) {
+function PendingRow({ item, now }: { item: PendingRequest; now: number }) {
   const [choice, setChoice] = useState(1);
   const [scope, setScope] = useState<string | null>(null);
   const request = item.request;
@@ -55,17 +63,35 @@ function PendingRow({ item, now, onDecide }: { item: PendingRequest; now: number
     <div className="flex flex-col gap-3 px-4 py-3 text-sm">
       <div className="flex flex-wrap items-center gap-2">
         <Agent agent={request.agent} />
-        <span className={cn(pill, request.access === "write" ? "bg-amber-500/12 text-amber-700 dark:text-amber-300" : "bg-sky-500/10 text-sky-700 dark:text-sky-300")}>{request.access}</span>
+        <AccessPill access={request.access} />
         <span className="font-mono text-xs">{request.tool}</span>
         <span className="ml-auto text-xs text-muted-foreground tabular-nums">{denyCountdown(pendingSecondsLeft(item.askedAt, now, POPUP_TIMEOUT_S))}</span>
       </div>
       <ApprovalChoices request={request} choice={choice} onChoice={setChoice} scope={scope} onScope={setScope} />
       <div className="flex flex-wrap items-center gap-2">
         <span className="ml-auto flex items-center gap-2">
-          <Button size="sm" variant="ghost" onClick={() => void window.leash.decidePending(item.id, "deny", null).then(() => { toast({ title: "Denied" }); onDecide(); })}>Deny</Button>
-          <Button size="sm" variant={isBroad(scope, choice) ? "destructive" : "default"} onClick={() => void window.leash.decidePending(item.id, "allow", preset.seconds, scope ?? undefined).then(() => { toast({ title: "Allowed", description: preset.label }); onDecide(); })}>{allowLabel(scope, choice)}</Button>
+          <Button size="sm" variant="ghost" onClick={() => void window.leash.decidePending(item.id, "deny", null).then(() => { toast({ title: "Denied" }); })}>Deny</Button>
+          <Button size="sm" variant={isBroad(scope, choice) ? "destructive" : "default"} onClick={() => void window.leash.decidePending(item.id, "allow", preset.seconds, scope ?? undefined).then(() => { toast({ title: "Allowed", description: preset.label }); })}>{allowLabel(scope, choice)}</Button>
         </span>
       </div>
+    </div>
+  );
+}
+
+const tilde = (path: string) => path.replace(/^\/(Users|home)\/[^/]+/, "~");
+
+function SuggestionRow({ item }: { item: RuleSuggestion }) {
+  const target = item.command ?? (item.path ? tilde(item.path) : "");
+  const home = item.path !== null && isHomeFolder(item.path);
+  const fail = (error: unknown) => { toast({ title: "Could not update suggestion", description: error instanceof Error ? error.message : String(error), tone: "destructive" }); };
+  return (
+    <div className="flex items-center gap-3 px-4 py-3 text-sm">
+      <AgentIcon agent={item.agent} className="size-4 shrink-0" />
+      <p className="min-w-0 flex-1 text-xs">
+        {agentName(item.agent)} got {item.access} access to <span className="font-mono font-medium break-all">{target}</span> {item.count} {item.count === 1 ? "time" : "times"} in 2 weeks
+      </p>
+      <Button size="sm" variant={home ? "destructive" : "default"} onClick={() => void window.leash.acceptSuggestion(item.key).then(() => { toast({ title: "Always allowed" }); }, fail)}>Make it Always</Button>
+      <Button size="sm" variant="ghost" onClick={() => void window.leash.dismissSuggestion(item.key).then(() => { toast({ title: "Suggestion dismissed" }); }, fail)}>Dismiss</Button>
     </div>
   );
 }
@@ -78,12 +104,15 @@ function GrantRow({ grant, mono, Icon, onRevoke }: { grant: Grant; mono: string;
         <div className="overflow-x-auto font-mono text-xs font-medium whitespace-nowrap">{mono}</div>
         <div className="flex flex-wrap items-center gap-2">
           <Agent agent={grant.agent} />
-          <span className={cn(pill, grant.access === "write" ? "bg-amber-500/12 text-amber-700 dark:text-amber-300" : "bg-sky-500/10 text-sky-700 dark:text-sky-300")}>{grant.access}</span>
+          <AccessPill access={grant.access} />
           <span className="text-xs text-muted-foreground tabular-nums" title={when(grant.createdAt)}>Approved {when(grant.createdAt)}</span>
-          <span className={cn(pill, "bg-muted text-foreground/80")} title={grant.expiresAt === null ? "Forever" : when(grant.expiresAt)}><Timer className="size-3" aria-hidden />{remaining(grant.expiresAt)}</span>
+          <Pill tone="subtle" title={grant.expiresAt === null ? "Forever" : when(grant.expiresAt)}><Timer className="size-3" aria-hidden />{remaining(grant.expiresAt)}</Pill>
           <span className="text-xs text-muted-foreground">{SOURCE_LABELS[grant.source] ?? grant.source}</span>
         </div>
       </div>
+      {grant.expiresAt !== null && grant.source === "leash" ? (
+        <Button size="sm" variant="ghost" aria-label="Extend by 1 hour" onClick={() => void window.leash.extendGrant(grant.id, 3600).then(({ expiresAt }) => { if (expiresAt === null) toast({ title: "Could not extend", description: "This grant can't be extended.", tone: "destructive" }); else toast({ title: "Extended by 1 hour" }); }, (error: unknown) => { toast({ title: "Could not extend", description: error instanceof Error ? error.message : String(error), tone: "destructive" }); })}>+1 h</Button>
+      ) : null}
       <ConfirmAction
         trigger={<Button size="sm" variant="destructive-outline">Revoke</Button>}
         title="Revoke this grant?"
@@ -142,15 +171,31 @@ function GrantList({ grants, agent, sort, dir, onAgent, onSort, onRevoke }: { gr
   );
 }
 
+const subscribeGrants = (refresh: () => void) => window.leash.onGrantStatus(refresh);
+const subscribeLog = (refresh: () => void) => {
+  const offPending = window.leash.onPending(refresh);
+  const offGrants = window.leash.onGrantStatus(refresh);
+  return () => {
+    offPending();
+    offGrants();
+  };
+};
+const NO_GRANTS = { grants: [] as Grant[], lockdown: false };
+const NO_DECISIONS: DecisionRow[] = [];
+const NO_SUGGESTIONS: RuleSuggestion[] = [];
+
 export function GrantsPage() {
-  const [grants, setGrants] = useState<Grant[]>([]);
-  const [decisions, setDecisions] = useState<DecisionRow[]>([]);
+  const { grants, lockdown } = useLeashData(async () => {
+    const [list, status] = await Promise.all([window.leash.listGrants(), window.leash.grantStatus()]);
+    return { grants: list, lockdown: status.lockdown };
+  }, subscribeGrants, NO_GRANTS, 15000);
+  const decisions = useLeashData(() => window.leash.listDecisions(), subscribeLog, NO_DECISIONS, 10000);
+  const suggestions = useLeashData(() => window.leash.listSuggestions(), subscribeGrants, NO_SUGGESTIONS, 60000);
+  const pending = usePending();
   const [tab, setTab] = useState("active");
   const [agent, setAgent] = useState("all");
   const [sort, setSort] = useState<GrantSortKey>("approved");
   const [dir, setDir] = useState<SortDir>("desc");
-  const [lockdown, setLockdown] = useState(false);
-  const [pending, setPending] = useState<PendingRequest[]>([]);
   const [now, setNow] = useState(() => Date.now());
   const pickSort = (next: GrantSortKey) => {
     if (next === sort) setDir((value) => (value === "desc" ? "asc" : "desc"));
@@ -159,25 +204,22 @@ export function GrantsPage() {
       setDir(next === "approved" ? "desc" : "asc");
     }
   };
-  const load = () => {
-    void window.leash.listGrants().then(setGrants);
-    void window.leash.listDecisions().then(setDecisions);
-    void window.leash.grantStatus().then((status) => setLockdown(status.lockdown));
-    void window.leash.listPending().then(setPending);
-    setNow(Date.now());
-  };
   useEffect(() => {
-    load();
-    const timer = window.setInterval(load, 1000);
+    const timer = window.setInterval(() => setNow(Date.now()), 1000);
     return () => window.clearInterval(timer);
   }, []);
-  const onRevoke = (grant: Grant) => void window.leash.revokeGrant(grant.id).then(() => { toast({ title: "Grant revoked", description: grant.command ?? grant.path }); load(); });
+  const onRevoke = (grant: Grant) => void window.leash.revokeGrant(grant.id).then(() => { toast({ title: "Grant revoked", description: grant.command ?? grant.path }); });
   return (
     <PageContainer>
       <h1 className="px-3 text-lg font-semibold tracking-tight">Access</h1>
       {pending.length ? (
         <SettingsSection title="Pending">
-          {pending.map((item) => <PendingRow key={item.id} item={item} now={now} onDecide={load} />)}
+          {pending.map((item) => <PendingRow key={item.id} item={item} now={now} />)}
+        </SettingsSection>
+      ) : null}
+      {suggestions.length ? (
+        <SettingsSection title="Suggestions">
+          {suggestions.map((item) => <SuggestionRow key={item.key} item={item} />)}
         </SettingsSection>
       ) : null}
       <Tabs value={tab} onValueChange={(value) => setTab(String(value))}>
@@ -189,10 +231,12 @@ export function GrantsPage() {
         </TabsList>
         <TabsPanel value="active">
           {grants.length === 0 ? (
-            <div className="rounded-xl border border-dashed border-border/70 px-6 py-12 text-center">
-              <div className="text-3xl" aria-hidden>🗝️</div>
-              <p className="mt-2 text-sm text-muted-foreground">No grants yet</p>
-            </div>
+            <Empty className="rounded-xl border border-dashed border-border/70">
+              <EmptyHeader>
+                <EmptyMedia variant="icon"><KeyRound aria-hidden /></EmptyMedia>
+                <EmptyTitle className="text-sm font-normal text-muted-foreground">No grants yet</EmptyTitle>
+              </EmptyHeader>
+            </Empty>
           ) : (
             <GrantList grants={grants} agent={agent} sort={sort} dir={dir} onAgent={setAgent} onSort={pickSort} onRevoke={onRevoke} />
           )}
@@ -203,14 +247,14 @@ export function GrantsPage() {
               description="Every agent loses the folder access it has now."
               effects={REVOKE_ALL_EFFECTS}
               confirmLabel="Revoke all"
-              onConfirm={() => void window.leash.revokeAll().then((result) => { toastRevoked(result.revoked); load(); })}
+              onConfirm={() => void window.leash.revokeAll().then((result) => { toastRevoked(result.revoked); })}
             />
             <Button
               variant={lockdown ? "destructive" : "outline"}
               disabled={!lockdown}
               aria-pressed={lockdown}
               className={lockdown ? undefined : "text-muted-foreground disabled:opacity-100"}
-              onClick={() => void window.leash.unlock().then(() => { toast({ title: "Lockdown ended" }); load(); })}
+              onClick={() => void window.leash.unlock().then(() => { toast({ title: "Lockdown ended" }); })}
             >
               {lockdown ? <Lock /> : <LockOpen />}
               {lockdown ? "End lockdown" : "Lockdown off"}
@@ -221,13 +265,13 @@ export function GrantsPage() {
         <TabsPanel value="automatic"><AutomaticAllows /></TabsPanel>
         <TabsPanel value="log">
           <SettingsSection title="Decisions, last 30 days">
-            {decisions.length === 0 ? <p className="px-4 py-4 text-sm text-muted-foreground"><span aria-hidden className="mr-2">🗒️</span>No decisions yet</p> : null}
+            {decisions.length === 0 ? <p className="flex items-center gap-2 px-4 py-4 text-sm text-muted-foreground"><ScrollText className="size-4" aria-hidden />No decisions yet</p> : null}
             {decisions.map((row) => (
               <div key={row.id} className="flex items-center gap-3 px-4 py-2.5 text-sm whitespace-nowrap">
                 <span className="shrink-0 font-mono text-xs text-muted-foreground tabular-nums">{new Date(row.ts).toLocaleString()}</span>
                 <span className="shrink-0"><Agent agent={row.agent} /></span>
                 <span className="shrink-0 font-mono text-xs">{row.tool}</span>
-                <span className={cn(pill, "shrink-0", VERDICT[row.verdict] ?? "bg-muted text-muted-foreground")}>{row.verdict}</span>
+                <VerdictPill verdict={row.verdict} />
                 <span className="min-w-0 flex-1 truncate font-mono text-xs" title={decisionTarget(row)}>{decisionTarget(row)}</span>
                 {row.reason ? <span className="max-w-[40%] shrink-0 truncate text-xs text-muted-foreground" title={row.reason}>{row.reason}</span> : null}
                 {row.durationMs !== null ? <span className="shrink-0 text-xs text-muted-foreground tabular-nums">{row.durationMs} ms</span> : null}

@@ -4,7 +4,7 @@ import { DatabaseSync } from "node:sqlite";
 import { ignoredMatchSql } from "../shared/ignored";
 import { eventBucket } from "../shared/noise";
 import { MAIN_RETENTION_DAYS, NOISE_RETENTION_DAYS } from "../shared/retention";
-import type { HistoryEvent, HistoryRow } from "../shared/types";
+import type { HistoryEvent, HistoryRow, HistorySummary } from "../shared/types";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 const EVENT_COLS = "id, ts, agent, pid, exe, kind, path, dest_path, sha256, before_blob, after_blob, sensitive, source, minute_key";
@@ -311,4 +311,28 @@ export function dropIgnored(db: DatabaseSync, prefixes: readonly string[]): void
 export function pruneHistory(db: DatabaseSync, now: number, mainDays = MAIN_RETENTION_DAYS, noiseDays = NOISE_RETENTION_DAYS): void {
   db.prepare("DELETE FROM events WHERE ts < ?").run(now - mainDays * DAY_MS);
   db.prepare("DELETE FROM noise WHERE ts < ?").run(now - noiseDays * DAY_MS);
+}
+
+export function historyEvent(db: DatabaseSync, id: number): { path: string; kind: string } | null {
+  const sql = "SELECT path, kind FROM events WHERE id = ?";
+  const row = (db.prepare(sql).get(id) ?? (hasNoiseTable(db) ? db.prepare(sql.replace("events", "noise")).get(id) : undefined)) as { path: string; kind: string } | undefined;
+  return row ?? null;
+}
+
+export function summarizeHistory(db: DatabaseSync, from: number): Omit<HistorySummary, "blocked"> {
+  const rows = db.prepare("SELECT agent, kind, COUNT(*) AS n FROM events WHERE ts >= ? GROUP BY agent, kind").all(from) as unknown as { agent: string; kind: string; n: number }[];
+  const agents = new Map<string, HistorySummary["agents"][number]>();
+  let total = 0;
+  for (const { agent, kind, n } of rows) {
+    const entry = agents.get(agent) ?? { agent, reads: 0, writes: 0, execs: 0, net: 0, other: 0 };
+    agents.set(agent, entry);
+    total += n;
+    if (kind === "read") entry.reads += n;
+    else if (kind === "write" || kind === "create" || kind === "delete" || kind === "rename") entry.writes += n;
+    else if (kind === "exec") entry.execs += n;
+    else if (kind === "net") entry.net += n;
+    else entry.other += n;
+  }
+  const sensitive = (db.prepare("SELECT COUNT(*) AS n FROM events WHERE ts >= ? AND sensitive = 1").get(from) as { n: number }).n;
+  return { from, total, sensitive, agents: [...agents.values()] };
 }
