@@ -236,20 +236,43 @@ export function startRuntime(options: { userData: string; openApproval: () => vo
     setSetting(db, "auto_allow_off", JSON.stringify([...off]));
     return autoAllowRows();
   });
+  const releaseCovered = () => {
+    const options = {
+      now: Date.now(),
+      lockdown: getSetting(db, "lockdown", "0") === "1",
+      protectedRoots: protectedRoots(home),
+      home,
+      autoAllowOff: parseAutoAllowOff(getSetting(db, "auto_allow_off", "[]")),
+      rules: listRules(db),
+    };
+    for (const coveredId of coveredPending(broker.list(), listGrants(db), options)) {
+      const timeout = timeouts.get(coveredId);
+      if (timeout) clearTimeout(timeout);
+      timeouts.delete(coveredId);
+      broker.decide(coveredId, { decision: "allow" });
+    }
+  };
   ipcMain.handle("rules:list", () => listRules(db));
   ipcMain.handle("rules:create", (_event, input: { kind: unknown; agent: unknown; value: unknown }) => {
     const result = createRule(db, input, home, Date.now());
-    if (!result.error) publishClaudeRules(db, join(claudeRoot(), "settings.json"), home, snapshots.find((snapshot) => snapshot.id === "claude-code")?.enforcement === "rules");
+    if (!result.error) {
+      publishClaudeRules(db, join(claudeRoot(), "settings.json"), home, snapshots.find((snapshot) => snapshot.id === "claude-code")?.enforcement === "rules");
+      releaseCovered();
+    }
     return result;
   });
   ipcMain.handle("rules:update", (_event, id: number, input: { kind: unknown; agent: unknown; value: unknown }) => {
     const result = updateRule(db, id, input, home, Date.now());
-    if (!result.error) publishClaudeRules(db, join(claudeRoot(), "settings.json"), home, snapshots.find((snapshot) => snapshot.id === "claude-code")?.enforcement === "rules");
+    if (!result.error) {
+      publishClaudeRules(db, join(claudeRoot(), "settings.json"), home, snapshots.find((snapshot) => snapshot.id === "claude-code")?.enforcement === "rules");
+      releaseCovered();
+    }
     return result;
   });
   ipcMain.handle("rules:delete", (_event, id: number) => {
     const rules = deleteRule(db, id);
     publishClaudeRules(db, join(claudeRoot(), "settings.json"), home, snapshots.find((snapshot) => snapshot.id === "claude-code")?.enforcement === "rules");
+    releaseCovered();
     return rules;
   });
   ipcMain.handle("decisions:list", () => listDecisions(db));
@@ -269,22 +292,6 @@ export function startRuntime(options: { userData: string; openApproval: () => vo
   ipcMain.handle("history:text", (_event, id: number) => withHistory((historyDb) => historyText(historyDb, id)));
   ipcMain.handle("approval:list", () => broker.list());
   ipcMain.handle("approval:close", () => options.closeApproval());
-  const releaseCovered = () => {
-    const options = {
-      now: Date.now(),
-      lockdown: getSetting(db, "lockdown", "0") === "1",
-      protectedRoots: protectedRoots(home),
-      home,
-      autoAllowOff: parseAutoAllowOff(getSetting(db, "auto_allow_off", "[]")),
-      rules: listRules(db),
-    };
-    for (const coveredId of coveredPending(broker.list(), listGrants(db), options)) {
-      const timeout = timeouts.get(coveredId);
-      if (timeout) clearTimeout(timeout);
-      timeouts.delete(coveredId);
-      broker.decide(coveredId, { decision: "allow" });
-    }
-  };
   ipcMain.handle("approval:decide", (_event, id: string, decision: "allow" | "deny", ttlSeconds: number | null, scopePath?: string) => {
     const pending = broker.list().find((item) => item.id === id);
     const timeout = timeouts.get(id);

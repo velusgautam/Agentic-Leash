@@ -16,6 +16,9 @@ describe("decide", () => {
   it("denies a protected root", () => {
     expect(decide(req({ paths: ["/secret/grants.db"] }), [], opts).kind).toBe("deny");
   });
+  it("denies a forever folder rule on a protected root", () => {
+    expect(decide(req({ paths: ["/secret/x"] }), [], { ...opts, rules: [rule({ value: "/secret" })] }).kind).toBe("deny");
+  });
   it("prompts when the grant is expired", () => {
     expect(decide(req({}), [grant({ expiresAt: 500 })], opts).kind).toBe("prompt");
   });

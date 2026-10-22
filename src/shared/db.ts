@@ -103,7 +103,7 @@ export function upsertGrant(db: DatabaseSync, grant: GrantWrite): number {
 
 export function upsertCommandGrant(db: DatabaseSync, grant: { agent: string; command: string; createdAt: number; expiresAt: number | null }): number {
   const existing = db
-    .prepare("SELECT id, created_at, expires_at FROM grants WHERE agent = ? AND command = ? AND access = 'write' AND source = 'leash' ORDER BY id LIMIT 1")
+    .prepare("SELECT id, created_at, expires_at FROM grants WHERE agent = ? AND command = ? AND path = '' AND command IS NOT NULL AND access = 'write' AND source = 'leash' ORDER BY id LIMIT 1")
     .get(grant.agent, grant.command) as { id: number; created_at: number; expires_at: number | null } | undefined;
   if (!existing) {
     return insertGrant(db, { agent: grant.agent, path: "", access: "write", source: "leash", createdAt: grant.createdAt, expiresAt: grant.expiresAt, command: grant.command });
