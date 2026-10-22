@@ -14,6 +14,11 @@ describe("helper uninstall", () => {
     expect(script).toContain("/Library/Application Support/AgenticLeash");
     expect(script).toContain("/bin/rm -rf");
   });
+
+  it("stops the daemon before deleting its history and logs", () => {
+    const script = helperUninstallScript();
+    expect(script.indexOf("/bin/launchctl bootout system")).toBeLessThan(script.indexOf("/bin/rm -rf '/Library/Application Support/AgenticLeash'"));
+  });
 });
 
 describe("history optimization", () => {

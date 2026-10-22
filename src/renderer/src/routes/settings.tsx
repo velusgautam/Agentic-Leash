@@ -102,9 +102,10 @@ function General() {
 
 const UNINSTALL_EFFECTS = [
   "Removes this app's hooks from Claude, Cursor, Codex, Gemini, and Hermes.",
+  "Deletes the backup (.bak) files next to those agent configs.",
   "Removes the login item and the sweep agent.",
-  "In the installed app, removes the history helper. macOS asks for your password.",
-  "Deletes grants and settings for this app.",
+  "In the installed app, removes the history helper with its history database and log. macOS asks for your password.",
+  "Deletes grants, settings, caches, logs, and preferences for this app.",
   "In the installed app, moves Agentic Leash to the Trash and quits.",
 ];
 

@@ -28,11 +28,12 @@ import { addIgnored, deleteIgnored, listIgnored, setIgnoredEnabled } from "../sh
 import { MAIN_RETENTION_DAYS, NOISE_RETENTION_DAYS, parseRetentionDays, retentionDays } from "../shared/retention";
 import { coveredPending } from "../hook/decide";
 import { grantRoot, parentFolders } from "../shared/parents";
-import { helperInstallScript, helperOptimizeScript, helperUninstallScript, installSweepAgent, sweepAgentPath, sweepServiceTarget } from "./helperInstall";
-import { LOGIN_AGENT_LABEL, loginAgentPath } from "./loginItem";
+import { helperInstallScript, helperOptimizeScript, helperUninstallScript, installSweepAgent, sweepServiceTarget } from "./helperInstall";
+import { LOGIN_AGENT_LABEL } from "./loginItem";
 import { publishClaudeRules } from "./rulesMode";
 import { guiQuitScript, parsePs, percentiles, restartTargets } from "./system";
 import { readUiState, writeUiState } from "./uiState";
+import { removeLeftovers, uninstallLeftovers } from "./uninstall";
 import { FULL_DISK_URL, hasFullDiskAccess } from "./fullDisk";
 import { macAppPresent, rememberOnboarding, setupReady, type HelperState, type SetupAgent, type SetupStatus } from "../shared/setup";
 import { readTcc } from "./tcc";
@@ -694,11 +695,8 @@ export function startRuntime(options: { userData: string; openApproval: () => vo
         await exec("/bin/launchctl", ["bootout", sweepServiceTarget(uid)]).catch(() => undefined);
         await exec("/bin/launchctl", ["bootout", `gui/${uid}/${LOGIN_AGENT_LABEL}`]).catch(() => undefined);
       }
-      rmSync(sweepAgentPath(), { force: true });
-      rmSync(loginAgentPath(), { force: true });
     } else options.disableLoginItem();
-    rmSync(leashDir(home), { recursive: true, force: true });
-    rmSync(options.userData, { recursive: true, force: true });
+    removeLeftovers(uninstallLeftovers({ home, claudeRoot: claudeRoot(), userData: options.userData, historyDir: dirname(historyPath), systemHistory: HISTORY_DIR }));
     options.finishUninstall();
   });
 
