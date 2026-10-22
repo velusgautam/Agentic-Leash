@@ -1,6 +1,7 @@
 import { useEffect, useState, type ReactNode } from "react";
 import { useParams } from "@tanstack/react-router";
-import { FolderOpen, Globe, Lock, Plug, ShieldCheck, ShieldX } from "lucide-react";
+import { FolderOpen, Globe, Lock, Plug, ShieldCheck, ShieldX, type LucideIcon } from "lucide-react";
+import { isHookAgent } from "../../../shared/setup";
 import { revokeDue, type RevokePreset } from "../../../shared/revokeWhen";
 import type { AgentId, AgentSnapshot, Enforcement, ScheduledRevoke } from "../../../shared/types";
 import { ConfirmAction, TRUST_EFFECTS } from "~/components/ConfirmAction";
@@ -10,19 +11,13 @@ import { PageContainer, SettingsSection } from "~/components/settings";
 import { SetupButton } from "~/components/SetupButton";
 import { useSetup } from "~/components/useSetup";
 import { Button } from "~/components/ui/button";
-import { cn } from "~/lib/utils";
+import { accessTone, Pill, type PillTone } from "~/components/ui/pill";
 
-const ENFORCEMENT: Record<Enforcement, { label: string; tone: string; hint: string }> = {
-  hook: { label: "Hooks enforce", hint: "Agentic Leash asks before each tool call.", tone: "bg-emerald-500/10 text-emerald-700 dark:text-emerald-300" },
-  rules: { label: "Rules mode", hint: "Hooks are blocked here, so Agentic Leash writes the agent's own allow rules instead.", tone: "bg-amber-500/12 text-amber-700 dark:text-amber-300" },
-  "monitor-only": { label: "Monitor only", hint: "Activity is recorded but nothing is blocked.", tone: "bg-muted text-muted-foreground" },
+const ENFORCEMENT: Record<Enforcement, { label: string; tone: PillTone; hint: string }> = {
+  hook: { label: "Hooks enforce", hint: "Agentic Leash asks before each tool call.", tone: "emerald" },
+  rules: { label: "Rules mode", hint: "Hooks are blocked here, so Agentic Leash writes the agent's own allow rules instead.", tone: "amber" },
+  "monitor-only": { label: "Monitor only", hint: "Activity is recorded but nothing is blocked.", tone: "muted" },
 };
-
-function Pill({ tone, title, children }: { tone: string; title?: string; children: ReactNode }) {
-  return <span title={title} className={cn("inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-xs font-medium whitespace-nowrap", tone)}>{children}</span>;
-}
-
-const accessTone = (access: string) => (access === "write" ? "bg-amber-500/12 text-amber-700 dark:text-amber-300" : "bg-sky-500/10 text-sky-700 dark:text-sky-300");
 
 function Row({ icon, locked, children, action }: { icon: ReactNode; locked: boolean; children: ReactNode; action?: ReactNode }) {
   return (
@@ -31,7 +26,7 @@ function Row({ icon, locked, children, action }: { icon: ReactNode; locked: bool
       <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2">{children}</div>
       {locked ? (
         <span title="Set by your organization's managed policy. Can't be changed locally.">
-          <Pill tone="bg-muted text-muted-foreground"><Lock className="size-3" />Org locked</Pill>
+          <Pill><Lock className="size-3" />Org locked</Pill>
         </span>
       ) : action}
     </div>
@@ -97,8 +92,8 @@ function TrustActions({ path, dueAt, onChange }: { path: string; dueAt?: number;
   );
 }
 
-function Empty({ emoji, children }: { emoji: string; children: ReactNode }) {
-  return <p className="px-4 py-4 text-sm text-muted-foreground"><span aria-hidden className="mr-2">{emoji}</span>{children}</p>;
+function Empty({ icon: Icon, children }: { icon: LucideIcon; children: ReactNode }) {
+  return <p className="flex items-center gap-2 px-4 py-4 text-sm text-muted-foreground"><Icon className="size-4" aria-hidden />{children}</p>;
 }
 
 export function AgentPage() {
@@ -111,8 +106,12 @@ export function AgentPage() {
   };
   useEffect(() => {
     load();
-    const timer = window.setInterval(load, 1000);
-    return () => window.clearInterval(timer);
+    const off = window.leash.onAgents(load);
+    const timer = window.setInterval(load, 10000);
+    return () => {
+      off();
+      window.clearInterval(timer);
+    };
   }, [agentId]);
   const { status } = useSetup();
   const hook = status?.agents.find((item) => item.id === agentId);
@@ -127,10 +126,10 @@ export function AgentPage() {
         <div className="min-w-0 space-y-1.5">
           <h1 className="text-lg font-semibold tracking-tight">{name}</h1>
           <div className="flex flex-wrap items-center gap-2">
-            {agent?.installed ? <Pill tone="bg-emerald-500/10 text-emerald-700 dark:text-emerald-300">● Installed</Pill> : <Pill tone="bg-muted text-muted-foreground">Not installed</Pill>}
+            {agent?.installed ? <Pill tone="emerald">● Installed</Pill> : <Pill>Not installed</Pill>}
             {agent?.installed && enforcement ? <Pill tone={enforcement.tone} title={enforcement.hint}>{enforcement.label}</Pill> : null}
             {agent?.children.map((id) => (
-              <Pill key={id} tone="bg-muted text-foreground/80"><AgentIcon agent={id} className="size-3" />{AGENT_LABELS[id] ?? id}</Pill>
+              <Pill key={id} tone="subtle"><AgentIcon agent={id} className="size-3" />{AGENT_LABELS[id] ?? id}</Pill>
             ))}
           </div>
           {agent?.installed && agent.note ? <p className="text-sm text-muted-foreground">{agent.note}</p> : null}
@@ -140,7 +139,7 @@ export function AgentPage() {
       {hook && hook.hooks === false && hook.installed ? (
         <div role="status" className="mx-3 flex items-center justify-between gap-3 rounded-lg border border-border bg-muted/40 px-3 py-2 text-sm sm:mx-4">
           <span>Install hooks so this agent is asked before it reads or writes.</span>
-          {agentId === "claude-code" || agentId === "cursor" || agentId === "codex" || agentId === "gemini" || agentId === "hermes" ? <SetupButton kind="hook" actionKey={agentId} done={false} onClick={() => window.leash.installHooks(agentId)} /> : null}
+          {isHookAgent(agentId) ? <SetupButton kind="hook" actionKey={agentId} done={false} onClick={() => window.leash.installHooks(agentId)} /> : null}
         </div>
       ) : null}
       <SettingsSection title="Folders">
@@ -155,7 +154,7 @@ export function AgentPage() {
             <Pill tone={accessTone(folder.access)}>{folder.access}</Pill>
             <span className="text-xs text-muted-foreground">{folder.source}</span>
           </Row>
-        )) : <Empty emoji="📂">No folders</Empty>}
+        )) : <Empty icon={FolderOpen}>No folders</Empty>}
       </SettingsSection>
       <SettingsSection title="MCP servers">
         {agent?.mcpServers.length ? agent.mcpServers.map((server) => (
@@ -178,16 +177,16 @@ export function AgentPage() {
             <span className="font-mono text-xs text-muted-foreground">{server.command || server.url || "stdio"}</span>
             <span className="text-xs text-muted-foreground">{server.source}</span>
           </Row>
-        )) : <Empty emoji="🔌">No MCP servers</Empty>}
+        )) : <Empty icon={Plug}>No MCP servers</Empty>}
       </SettingsSection>
       <SettingsSection title="Network">
         {agent?.network.length ? agent.network.map((rule) => (
           <Row key={`${rule.source}:${rule.rule}`} icon={<Globe className="size-4" />} locked={rule.locked}>
-            <Pill tone={rule.effect === "allow" ? "bg-emerald-500/10 text-emerald-700 dark:text-emerald-300" : "bg-red-500/10 text-red-700 dark:text-red-300"}>{rule.effect}</Pill>
+            <Pill tone={rule.effect === "allow" ? "emerald" : "red"}>{rule.effect}</Pill>
             <span className="font-mono text-xs">{rule.rule}</span>
             <span className="text-xs text-muted-foreground">{rule.source}</span>
           </Row>
-        )) : <Empty emoji="🌐">No network rules</Empty>}
+        )) : <Empty icon={Globe}>No network rules</Empty>}
       </SettingsSection>
       <SettingsSection title="macOS Privacy">
         {agent?.privacy.length ? agent.privacy.map((row) => (
@@ -207,12 +206,12 @@ export function AgentPage() {
             )}
           >
             <span>{row.service.replace(/^kTCCService/, "")}</span>
-            <Pill tone={row.authValue ? "bg-emerald-500/10 text-emerald-700 dark:text-emerald-300" : "bg-red-500/10 text-red-700 dark:text-red-300"}>{row.authValue ? "granted" : "denied"}</Pill>
+            <Pill tone={row.authValue ? "emerald" : "red"}>{row.authValue ? "granted" : "denied"}</Pill>
             {row.via ? <span className="text-xs text-muted-foreground">{row.via}</span> : null}
           </Row>
         )) : (
           <div className="flex items-center justify-between gap-3 px-4 py-4">
-            <p className="text-sm text-muted-foreground"><span aria-hidden className="mr-2">🔐</span>Privacy grants show up here once Full Disk Access is on.</p>
+            <p className="flex items-center gap-2 text-sm text-muted-foreground"><Lock className="size-4 shrink-0" aria-hidden />Privacy grants show up here once Full Disk Access is on.</p>
             <FullDiskControl />
           </div>
         )}

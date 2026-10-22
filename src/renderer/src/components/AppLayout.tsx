@@ -19,6 +19,7 @@ import {
   SidebarRail,
 } from "~/components/ui/sidebar";
 import { needsAgentBanner, visibleAgent } from "../../../shared/setup";
+import { WelcomeDialog } from "~/components/WelcomeDialog";
 import { SetupScreen } from "~/components/SetupScreen";
 import { useGrantStatus } from "~/components/useGrantStatus";
 import { SetupProvider, useSetup } from "~/components/useSetup";
@@ -124,6 +125,8 @@ export function AppLayout() {
   );
 }
 
+const TAB_KEYS: Record<string, "/live" | "/grants" | "/history"> = { "1": "/live", "2": "/grants", "3": "/history" };
+
 function AppShell() {
   const { pathname } = useLocation();
   const navigate = useNavigate();
@@ -139,6 +142,9 @@ function AppShell() {
       if (event.metaKey && event.key.toLowerCase() === "k") {
         event.preventDefault();
         setPalette((open) => !open);
+      } else if (event.metaKey && !event.shiftKey && !event.altKey && !event.ctrlKey && event.key in TAB_KEYS) {
+        event.preventDefault();
+        void navigate({ to: TAB_KEYS[event.key] });
       }
     };
     window.addEventListener("keydown", onKey);
@@ -147,7 +153,7 @@ function AppShell() {
       window.removeEventListener("keydown", onKey);
       window.clearInterval(timer);
     };
-  }, []);
+  }, [navigate]);
   useEffect(() => {
     if (pathname === "/approval") return;
     const go = () => void window.leash.takeNav().then((to) => {
@@ -261,6 +267,7 @@ function AppShell() {
           </form>
         </div>
       ) : null}
+      <WelcomeDialog />
       <Toaster />
     </SidebarProvider>
   );

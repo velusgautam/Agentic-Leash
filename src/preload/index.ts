@@ -1,6 +1,6 @@
 import { contextBridge, ipcRenderer } from "electron";
 import type { LeashBridge } from "../shared/bridge";
-import type { ThemeSource } from "../shared/types";
+import type { HistoryRow, PendingRequest, ThemeSource } from "../shared/types";
 
 const leash: LeashBridge = {
   platform: process.platform,
@@ -49,6 +49,21 @@ const leash: LeashBridge = {
     const wrapped = (_event: unknown, theme: ThemeSource) => listener(theme);
     ipcRenderer.on("theme:changed", wrapped);
     return () => ipcRenderer.removeListener("theme:changed", wrapped);
+  },
+  onHistory: (listener) => {
+    const wrapped = (_event: unknown, rows: HistoryRow[]) => listener(rows);
+    ipcRenderer.on("history:changed", wrapped);
+    return () => ipcRenderer.removeListener("history:changed", wrapped);
+  },
+  onPending: (listener) => {
+    const wrapped = (_event: unknown, pending: PendingRequest[]) => listener(pending);
+    ipcRenderer.on("pending:changed", wrapped);
+    return () => ipcRenderer.removeListener("pending:changed", wrapped);
+  },
+  onAgents: (listener) => {
+    const wrapped = () => listener();
+    ipcRenderer.on("agents:changed", wrapped);
+    return () => ipcRenderer.removeListener("agents:changed", wrapped);
   },
   onGrantStatus: (listener) => {
     const wrapped = (_event: unknown, status: { count: number; lockdown: boolean }) => listener(status);

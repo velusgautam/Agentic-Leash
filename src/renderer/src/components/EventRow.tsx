@@ -3,27 +3,28 @@ import { ArrowRightLeft, Eye, FilePlus2, Globe, Pencil, ShieldAlert, SquareTermi
 import { claudeSurface } from "../../../shared/setup";
 import type { HistoryRow } from "../../../shared/types";
 import { AGENT_LABELS, AgentIcon } from "~/components/Icons";
+import { Pill, type PillTone } from "~/components/ui/pill";
 import { cn } from "~/lib/utils";
 
-const KINDS: Record<string, { icon: LucideIcon; tone: string }> = {
-  read: { icon: Eye, tone: "bg-sky-500/10 text-sky-700 dark:text-sky-300" },
-  write: { icon: Pencil, tone: "bg-amber-500/12 text-amber-700 dark:text-amber-300" },
-  create: { icon: FilePlus2, tone: "bg-emerald-500/10 text-emerald-700 dark:text-emerald-300" },
-  delete: { icon: Trash2, tone: "bg-red-500/10 text-red-700 dark:text-red-300" },
-  rename: { icon: ArrowRightLeft, tone: "bg-violet-500/10 text-violet-700 dark:text-violet-300" },
-  exec: { icon: SquareTerminal, tone: "bg-fuchsia-500/10 text-fuchsia-700 dark:text-fuchsia-300" },
-  net: { icon: Globe, tone: "bg-cyan-500/10 text-cyan-700 dark:text-cyan-300" },
+const KINDS: Record<string, { icon: LucideIcon; tone: PillTone }> = {
+  read: { icon: Eye, tone: "sky" },
+  write: { icon: Pencil, tone: "amber" },
+  create: { icon: FilePlus2, tone: "emerald" },
+  delete: { icon: Trash2, tone: "red" },
+  rename: { icon: ArrowRightLeft, tone: "violet" },
+  exec: { icon: SquareTerminal, tone: "fuchsia" },
+  net: { icon: Globe, tone: "cyan" },
 };
 
 export const EVENT_KINDS = Object.keys(KINDS);
 
 export function KindBadge({ kind }: { kind: string }) {
-  const { icon: Icon, tone } = KINDS[kind] ?? { icon: Eye, tone: "bg-muted text-muted-foreground" };
+  const { icon: Icon, tone } = KINDS[kind] ?? { icon: Eye, tone: "muted" as PillTone };
   return (
-    <span className={cn("inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-xs font-medium", tone)}>
+    <Pill tone={tone}>
       <Icon className="size-3" aria-hidden />
       {kind}
-    </span>
+    </Pill>
   );
 }
 

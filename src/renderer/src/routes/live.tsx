@@ -1,14 +1,26 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import { useVirtualizer } from "@tanstack/react-virtual";
+import { Activity, Pause, Play } from "lucide-react";
+import { Button } from "~/components/ui/button";
+import { useLeashData } from "~/hooks/useLeash";
+import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "~/components/ui/empty";
 import type { Grant, HistoryRow } from "../../../shared/types";
-import { EventList, EventRow } from "~/components/EventRow";
+import { EventRow } from "~/components/EventRow";
 import { AgentChips, KindSelect, SensitiveToggle } from "~/components/EventFilters";
 import { DetailSplit } from "~/components/DetailSplit";
 import { coveringGrant, EventDetail } from "~/components/EventDetail";
 import { HISTORY_AGENT, visibleAgent } from "../../../shared/setup";
 import { useSetup } from "~/components/useSetup";
 
+const subscribeHistory = (refresh: () => void) => window.leash.onHistory(refresh);
+const loadHistory = () => window.leash.listHistory();
+
 export function LivePage() {
-  const [rows, setRows] = useState<HistoryRow[]>([]);
+  const live = useLeashData(loadHistory, subscribeHistory, [] as HistoryRow[], 5000);
+  const [frozen, setFrozen] = useState<HistoryRow[] | null>(null);
+  const rows = frozen ?? live;
+  const newer = frozen ? live.filter((row) => row.id > Math.max(0, ...frozen.map((item) => item.id))).length : 0;
+  const parentRef = useRef<HTMLDivElement>(null);
   const [agents, setAgents] = useState<string[]>([]);
   const [kind, setKind] = useState("all");
   const [sensitiveOnly, setSensitiveOnly] = useState(false);
@@ -18,12 +30,6 @@ export function LivePage() {
   const loadGrants = () => void window.leash.listGrants().then(setGrants);
   useEffect(loadGrants, [selected?.id]);
   useEffect(() => {
-    const tick = () => void window.leash.listHistory().then(setRows);
-    tick();
-    const timer = window.setInterval(tick, 500);
-    return () => window.clearInterval(timer);
-  }, []);
-  useEffect(() => {
     setText(null);
     if (selected?.kind === "write") void window.leash.historyText(selected.id).then(setText);
   }, [selected?.id, selected?.kind]);
@@ -31,6 +37,7 @@ export function LivePage() {
   useEffect(() => {
     if (selected && !visible.some((row) => row.id === selected.id)) setSelected(null);
   }, [selected?.id, visible.map((row) => row.id).join(",")]);
+  const virtualizer = useVirtualizer({ count: visible.length, getScrollElement: () => parentRef.current, estimateSize: () => 44, overscan: 8 });
   const sensitive = rows.filter((row) => row.sensitive).length;
   const { status } = useSetup();
   const agentOptions = (status?.agents ?? []).filter(visibleAgent).map((item) => HISTORY_AGENT[item.id]).filter((id): id is string => Boolean(id));
@@ -48,6 +55,10 @@ export function LivePage() {
           Live activity
         </h1>
         <div className="flex flex-wrap items-center gap-2">
+          <Button variant="ghost" size="sm" onClick={() => setFrozen(frozen ? null : live)}>
+            {frozen ? <Play aria-hidden /> : <Pause aria-hidden />}
+            {frozen ? (newer > 0 ? `Resume · ${newer} new` : "Resume") : "Pause"}
+          </Button>
           <AgentChips choices={agentOptions} value={agents} onChange={setAgents} />
           <KindSelect value={kind} onChange={setKind} />
           <SensitiveToggle on={sensitiveOnly} count={sensitive} onToggle={() => setSensitiveOnly((value) => !value)} />
@@ -55,13 +66,27 @@ export function LivePage() {
       </div>
       }
       list={visible.length === 0 ? (
-        <div className="rounded-xl border border-dashed border-border/70 px-6 py-12 text-center">
-          <div className="text-3xl" aria-hidden>🦮</div>
-          <p className="mt-2 text-sm font-medium">All quiet</p>
-          <p className="mt-1 text-sm text-muted-foreground">File reads, writes and commands from your agents show up here once monitoring is on.</p>
-        </div>
+        <Empty className="rounded-xl border border-dashed border-border/70">
+          <EmptyHeader>
+            <EmptyMedia variant="icon"><Activity aria-hidden /></EmptyMedia>
+            <EmptyTitle className="text-sm">All quiet</EmptyTitle>
+            <EmptyDescription>File reads, writes and commands from your agents show up here once monitoring is on.</EmptyDescription>
+          </EmptyHeader>
+        </Empty>
       ) : (
-        <EventList>{visible.map((row) => <EventRow key={row.id} row={row} selected={selected?.id === row.id} onSelect={() => setSelected(row)} />)}</EventList>
+        <div ref={parentRef} className="@container/list table-frame min-h-0 flex-1 overflow-y-auto rounded-xl border border-border/60 bg-card/40 shadow-xs/5">
+          <div role="list" style={{ height: virtualizer.getTotalSize(), position: "relative" }}>
+            {virtualizer.getVirtualItems().map((item) => {
+              const row = visible[item.index];
+              if (!row) return null;
+              return (
+                <div key={row.id} data-index={item.index} ref={virtualizer.measureElement} className="border-b border-border/50" style={{ position: "absolute", top: 0, left: 0, width: "100%", transform: `translateY(${item.start}px)` }}>
+                  <EventRow row={row} selected={selected?.id === row.id} onSelect={() => setSelected(row)} />
+                </div>
+              );
+            })}
+          </div>
+        </div>
       )}
     />
   );

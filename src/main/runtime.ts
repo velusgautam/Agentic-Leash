@@ -33,6 +33,7 @@ import { readUiState, writeUiState } from "./uiState";
 import { FULL_DISK_URL, hasFullDiskAccess } from "./fullDisk";
 import { macAppPresent, rememberOnboarding, setupReady, type HelperState, type SetupAgent, type SetupStatus } from "../shared/setup";
 import { readTcc } from "./tcc";
+import { historySig } from "../shared/historySig";
 
 const exec = promisify(execFile);
 const pendingRestart = new Set<AgentId>();
@@ -88,6 +89,10 @@ async function psLines(): Promise<string[]> {
 
 const cursorStateDb = () => join(app.getPath("appData"), "Cursor/User/globalStorage/state.vscdb");
 
+const broadcast = (channel: string, payload?: unknown) => {
+  for (const window of BrowserWindow.getAllWindows()) if (!window.webContents.isDestroyed()) window.webContents.send(channel, payload);
+};
+
 export function startRuntime(options: { userData: string; openApproval: () => void; closeApproval: () => void; setPending: (count: number) => void; notify: (title: string, body: string) => void; finishUninstall: () => void; disableLoginItem: () => void; onStatus?: (status: { count: number; lockdown: boolean }) => void }): { revokeAll: () => { revoked: number }; unlock: () => void } {
   const db = openGrantsDb(grantsDbPath());
   collapseGrantDupes(db);
@@ -102,6 +107,7 @@ export function startRuntime(options: { userData: string; openApproval: () => vo
 
   const broker = new Broker((pending) => {
     options.setPending(pending.length);
+    broadcast("pending:changed", pending);
     if (pending.length) options.openApproval();
     else options.closeApproval();
     for (const item of pending) {
@@ -138,6 +144,7 @@ export function startRuntime(options: { userData: string; openApproval: () => vo
     mirrorConfigGrants(db, snapshots, home, Date.now());
     const claude = snapshots.find((snapshot) => snapshot.id === "claude-code");
     publishClaudeRules(db, join(claudeRoot(), "settings.json"), home, claude?.enforcement === "rules");
+    broadcast("agents:changed");
   };
 
   const claudeJson = () => join(home, ".claude.json");
@@ -165,7 +172,9 @@ export function startRuntime(options: { userData: string; openApproval: () => vo
       const historyDb = openHistoryDb(historyPath, true);
       const rows = listHistory(historyDb, 0, 300);
       historyDb.close();
+      const changed = historySig(rows) !== historySig(history);
       history = rows;
+      if (changed) broadcast("history:changed", rows);
       for (const row of rows) {
         if (row.sensitive && row.id > historySeen) options.notify("Sensitive path", `${row.agent} touched ${row.path}`);
       }
@@ -175,6 +184,7 @@ export function startRuntime(options: { userData: string; openApproval: () => vo
         writeUiState(options.userData, { ...readUiState(options.userData), historySeen });
       }
     } catch {
+      if (history.length) broadcast("history:changed", []);
       history = [];
     }
   };
@@ -203,7 +213,7 @@ export function startRuntime(options: { userData: string; openApproval: () => vo
   const grantStatus = () => ({ count: listGrants(db).length, lockdown: getSetting(db, "lockdown", "0") === "1" });
   const publishStatus = () => {
     const status = grantStatus();
-    for (const window of BrowserWindow.getAllWindows()) window.webContents.send("grants:status-changed", status);
+    broadcast("grants:status-changed", status);
     options.onStatus?.(status);
   };
   const revokeAll = () => {

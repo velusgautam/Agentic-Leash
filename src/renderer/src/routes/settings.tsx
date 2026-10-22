@@ -10,6 +10,7 @@ import { AGENT_LABELS } from "~/components/Icons";
 import { PageContainer, SettingsRow, SettingsSection } from "~/components/settings";
 import { FullDiskControl } from "~/components/FullDiskControl";
 import { SetupButton } from "~/components/SetupButton";
+import { isHookAgent } from "../../../shared/setup";
 import { useSetup } from "~/components/useSetup";
 import { Button } from "~/components/ui/button";
 import { Switch } from "~/components/ui/switch";
@@ -91,7 +92,7 @@ function Agents() {
     <SettingsSection title="Agents">
       {rows.map((agent) => {
         const name = AGENT_LABELS[agent.id] ?? agent.id;
-        const hookId = agent.id === "claude-code" || agent.id === "cursor" || agent.id === "codex" || agent.id === "gemini" || agent.id === "hermes" ? agent.id : null;
+        const hookId = isHookAgent(agent.id) ? agent.id : null;
         const description = agent.id === "codex"
           ? "Off hides this agent and removes its hooks. After install, run /hooks in Codex and trust Agentic Leash."
           : agent.id === "hermes"
@@ -341,7 +342,7 @@ function Appearance() {
 }
 
 function Keybindings() {
-  const rows = [["Hide to menu bar", "⌘Q"], ["Command palette", "⌘K"], ["Approval: pick duration", "1–4"], ["Approval: allow", "Return"], ["Approval: deny", "Esc"], ["Revoke all, no confirm", "⌃⌥⌘L"]];
+  const rows = [["Hide to menu bar", "⌘Q"], ["Command palette", "⌘K"], ["Approval: pick duration", "1–4"], ["Approval: allow", "Return"], ["Approval: deny", "Esc"], ["Revoke all, no confirm", "⌃⌥⌘L"], ["Go to Live", "⌘1"], ["Go to Access", "⌘2"], ["Go to History", "⌘3"], ["Search history", "⌘F"]];
   return (
     <SettingsSection title="Keybindings">
       {rows.map(([action, keys]) => <SettingsRow key={action} title={action} control={<span className="font-mono text-xs">{keys}</span>} />)}

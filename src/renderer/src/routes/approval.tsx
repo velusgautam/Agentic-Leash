@@ -1,10 +1,10 @@
 import { useEffect, useState } from "react";
 import { CheckCircle2, X } from "lucide-react";
 import { denyCountdown, pendingSecondsLeft, POPUP_TIMEOUT_S } from "../../../shared/pending";
-import type { PendingRequest } from "../../../shared/types";
 import { ApprovalChoices, allowLabel, isBroad, Kbd, PRESETS } from "~/components/ApprovalChoices";
 import { AGENT_LABELS, AgentIcon } from "~/components/Icons";
 import { Button } from "~/components/ui/button";
+import { usePending } from "~/hooks/useLeash";
 
 const ARM_MS = 600;
 
@@ -17,17 +17,12 @@ function CloseButton() {
 }
 
 export function ApprovalPage() {
-  const [pending, setPending] = useState<PendingRequest[]>([]);
+  const pending = usePending();
   const [now, setNow] = useState(() => Date.now());
   const [choice, setChoice] = useState(1);
   const [scope, setScope] = useState<string | null>(null);
-  const load = () => {
-    setNow(Date.now());
-    void window.leash.listPending().then(setPending);
-  };
   useEffect(() => {
-    load();
-    const timer = window.setInterval(load, 300);
+    const timer = window.setInterval(() => setNow(Date.now()), 1000);
     return () => window.clearInterval(timer);
   }, []);
   const current = pending[0];
