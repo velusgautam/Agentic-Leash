@@ -60,7 +60,7 @@ test("marketing screenshots", async () => {
   await shot(win, "history-diff");
 
   await win.setViewportSize({ width: 1440, height: 620 });
-  await win.getByRole("link", { name: "Grants", exact: true }).click();
+  await win.getByRole("link", { name: "Access", exact: true }).click();
   await win.getByRole("button", { name: "Expires" }).click();
   await expect(win.getByText("Forever")).toBeVisible();
   await expect(win.getByText(/\d+m/).first()).toBeVisible();
@@ -134,7 +134,7 @@ test("walkthrough frames", async () => {
   await win.waitForTimeout(1000);
   const dismiss = win.getByRole("button", { name: "Dismiss" });
   if (await dismiss.isVisible()) await dismiss.click();
-  for (const name of ["Live", "Grants", "History"]) await box(`nav${name}`, win.getByRole("link", { name, exact: true }));
+  for (const name of ["Live", "Access", "History"]) await box(`nav${name}`, win.getByRole("link", { name, exact: true }));
   await box("liveList", win.locator(".table-frame"));
   await box("sidebarAgents", win.getByText("Agents", { exact: true }).locator("xpath=.."));
   await shot(win, "02-live-a");
@@ -170,7 +170,7 @@ test("walkthrough frames", async () => {
   await expect.poll(() => win.evaluate(`window.leash.listGrants().then((rows) => rows.length)`)).toBe(4);
   socket.destroy();
 
-  await win.getByRole("link", { name: "Grants", exact: true }).click();
+  await win.getByRole("link", { name: "Access", exact: true }).click();
   const website = win.getByText("/Users/ada/Projects/website", { exact: true }).locator("xpath=ancestor::*[.//button][1]");
   await expect(website).toBeVisible();
   await box("grantNew", website);
@@ -200,7 +200,7 @@ test("walkthrough frames", async () => {
   await box("sensitiveToggle", win.getByRole("button", { name: /^Sensitive/ }));
   await shot(win, "09-sensitive");
 
-  await win.getByRole("link", { name: "Grants", exact: true }).click();
+  await win.getByRole("link", { name: "Access", exact: true }).click();
   await box("revokeButton", win.getByRole("button", { name: "Revoke all and lock down" }));
   await win.getByRole("button", { name: "Revoke all and lock down" }).click();
   const dialog = win.getByRole("alertdialog");

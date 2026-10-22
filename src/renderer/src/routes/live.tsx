@@ -1,19 +1,15 @@
 import { useEffect, useState } from "react";
-import { ShieldAlert } from "lucide-react";
 import type { Grant, HistoryRow } from "../../../shared/types";
-import { EVENT_KINDS, EventList, EventRow } from "~/components/EventRow";
+import { EventList, EventRow } from "~/components/EventRow";
+import { AgentChips, KindSelect, SensitiveToggle } from "~/components/EventFilters";
 import { DetailSplit } from "~/components/DetailSplit";
 import { coveringGrant, EventDetail } from "~/components/EventDetail";
 import { HISTORY_AGENT, visibleAgent } from "../../../shared/setup";
-import { AGENT_LABELS } from "~/components/Icons";
 import { useSetup } from "~/components/useSetup";
-import { cn } from "~/lib/utils";
-
-const select = "rounded-lg border border-border bg-card/40 px-2.5 py-1.5 text-sm";
 
 export function LivePage() {
   const [rows, setRows] = useState<HistoryRow[]>([]);
-  const [agent, setAgent] = useState("all");
+  const [agents, setAgents] = useState<string[]>([]);
   const [kind, setKind] = useState("all");
   const [sensitiveOnly, setSensitiveOnly] = useState(false);
   const [selected, setSelected] = useState<HistoryRow | null>(null);
@@ -31,7 +27,10 @@ export function LivePage() {
     setText(null);
     if (selected?.kind === "write") void window.leash.historyText(selected.id).then(setText);
   }, [selected?.id, selected?.kind]);
-  const visible = rows.filter((row) => (agent === "all" || row.agent === agent) && (kind === "all" || row.kind === kind) && (!sensitiveOnly || row.sensitive));
+  const visible = rows.filter((row) => (agents.length === 0 || agents.includes(row.agent)) && (kind === "all" || row.kind === kind) && (!sensitiveOnly || row.sensitive));
+  useEffect(() => {
+    if (selected && !visible.some((row) => row.id === selected.id)) setSelected(null);
+  }, [selected?.id, visible.map((row) => row.id).join(",")]);
   const sensitive = rows.filter((row) => row.sensitive).length;
   const { status } = useSetup();
   const agentOptions = (status?.agents ?? []).filter(visibleAgent).map((item) => HISTORY_AGENT[item.id]).filter((id): id is string => Boolean(id));
@@ -49,23 +48,9 @@ export function LivePage() {
           Live activity
         </h1>
         <div className="flex flex-wrap items-center gap-2">
-          <select aria-label="Agent" className={select} value={agent} onChange={(event) => setAgent(event.target.value)}>
-            <option value="all">All agents</option>
-            {agentOptions.map((id) => <option key={id} value={id}>{AGENT_LABELS[id] ?? id}</option>)}
-          </select>
-          <select aria-label="Kind" className={select} value={kind} onChange={(event) => setKind(event.target.value)}>
-            <option value="all">All kinds</option>
-            {EVENT_KINDS.map((item) => <option key={item} value={item}>{item}</option>)}
-          </select>
-          <button
-            type="button"
-            aria-pressed={sensitiveOnly}
-            onClick={() => setSensitiveOnly((value) => !value)}
-            className={cn("inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-sm", sensitiveOnly ? "border-destructive/40 bg-destructive/10 text-destructive" : "border-border bg-card/40")}
-          >
-            <ShieldAlert className="size-3.5" aria-hidden />
-            Sensitive{sensitive ? ` · ${sensitive}` : ""}
-          </button>
+          <AgentChips choices={agentOptions} value={agents} onChange={setAgents} />
+          <KindSelect value={kind} onChange={setKind} />
+          <SensitiveToggle on={sensitiveOnly} count={sensitive} onToggle={() => setSensitiveOnly((value) => !value)} />
         </div>
       </div>
       }

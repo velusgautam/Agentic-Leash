@@ -1,15 +1,18 @@
 import { useEffect, useState } from "react";
-import { ArrowDown, ArrowUp, FolderLock, History, Lock, LockOpen, ShieldOff, SquareTerminal, Timer, Users } from "lucide-react";
+import { ArrowDown, ArrowUp, FolderLock, Lock, LockOpen, ShieldOff, SquareTerminal, Timer, Users } from "lucide-react";
 import { decisionTarget } from "../../../shared/decisionView";
 import { viewGrants, type GrantSortKey, type SortDir } from "../../../shared/grantView";
 import { denyCountdown, pendingSecondsLeft, POPUP_TIMEOUT_S } from "../../../shared/pending";
-import type { DecisionRow, Grant, HookRequest, PendingRequest } from "../../../shared/types";
+import type { DecisionRow, Grant, PendingRequest } from "../../../shared/types";
+import { ApprovalChoices, allowLabel, isBroad, PRESETS } from "~/components/ApprovalChoices";
 import { ConfirmAction, grantEffects, REVOKE_ALL_EFFECTS } from "~/components/ConfirmAction";
 import { AGENT_LABELS, AgentIcon } from "~/components/Icons";
 import { PageContainer, SettingsSection } from "~/components/settings";
 import { Button } from "~/components/ui/button";
+import { Tabs, TabsList, TabsPanel, TabsTab } from "~/components/ui/tabs";
 import { toast, toastRevoked } from "~/components/ui/toast";
 import { cn } from "~/lib/utils";
+import { AllowList, AutomaticAllows } from "./access-parts";
 
 function remaining(expiresAt: number | null): string {
   if (expiresAt === null) return "Forever";
@@ -28,6 +31,7 @@ const VERDICT: Record<string, string> = {
 };
 
 const agentName = (agent: string) => (agent === "*" ? "All agents" : AGENT_LABELS[agent] ?? agent);
+const SOURCE_LABELS: Record<string, string> = { leash: "Agentic Leash", config: "Agent config" };
 
 function when(ts: number): string {
   return new Date(ts).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" });
@@ -42,23 +46,11 @@ function Agent({ agent }: { agent: string }) {
   );
 }
 
-const ALLOW_FOR = [
-  { label: "15 min", seconds: 15 * 60 },
-  { label: "1 hour", seconds: 60 * 60 },
-  { label: "8 hours", seconds: 8 * 60 * 60 },
-  { label: "Always", seconds: null },
-] as const;
-
-function pendingTarget(request: HookRequest): string {
-  if (request.command) return request.command;
-  if (request.url) return request.url;
-  return request.paths.join("\n");
-}
-
 function PendingRow({ item, now, onDecide }: { item: PendingRequest; now: number; onDecide: () => void }) {
   const [choice, setChoice] = useState(1);
+  const [scope, setScope] = useState<string | null>(null);
   const request = item.request;
-  const preset = ALLOW_FOR[choice] ?? ALLOW_FOR[1];
+  const preset = PRESETS[choice]!;
   return (
     <div className="flex flex-col gap-3 px-4 py-3 text-sm">
       <div className="flex flex-wrap items-center gap-2">
@@ -67,18 +59,11 @@ function PendingRow({ item, now, onDecide }: { item: PendingRequest; now: number
         <span className="font-mono text-xs">{request.tool}</span>
         <span className="ml-auto text-xs text-muted-foreground tabular-nums">{denyCountdown(pendingSecondsLeft(item.askedAt, now, POPUP_TIMEOUT_S))}</span>
       </div>
-      <pre className="max-h-24 overflow-auto rounded-lg border border-border/60 bg-muted/40 px-3 py-2 font-mono text-xs leading-relaxed break-all whitespace-pre-wrap">{pendingTarget(request)}</pre>
+      <ApprovalChoices request={request} choice={choice} onChoice={setChoice} scope={scope} onScope={setScope} />
       <div className="flex flex-wrap items-center gap-2">
-        <div role="radiogroup" aria-label={`Allow ${request.tool} for`} className="inline-flex flex-wrap rounded-lg border border-border p-0.5">
-          {ALLOW_FOR.map((option, index) => (
-            <button key={option.label} type="button" role="radio" aria-checked={choice === index} onClick={() => setChoice(index)} className={cn("rounded-md px-2.5 py-1 text-xs", choice === index ? "bg-accent font-medium" : "text-muted-foreground")}>
-              {option.label}
-            </button>
-          ))}
-        </div>
         <span className="ml-auto flex items-center gap-2">
           <Button size="sm" variant="ghost" onClick={() => void window.leash.decidePending(item.id, "deny", null).then(() => { toast({ title: "Denied" }); onDecide(); })}>Deny</Button>
-          <Button size="sm" onClick={() => void window.leash.decidePending(item.id, "allow", preset.seconds).then(() => { toast({ title: "Allowed", description: preset.label }); onDecide(); })}>Allow</Button>
+          <Button size="sm" variant={isBroad(scope, choice) ? "destructive" : "default"} onClick={() => void window.leash.decidePending(item.id, "allow", preset.seconds, scope ?? undefined).then(() => { toast({ title: "Allowed", description: preset.label }); onDecide(); })}>{allowLabel(scope, choice)}</Button>
         </span>
       </div>
     </div>
@@ -96,7 +81,7 @@ function GrantRow({ grant, mono, Icon, onRevoke }: { grant: Grant; mono: string;
           <span className={cn(pill, grant.access === "write" ? "bg-amber-500/12 text-amber-700 dark:text-amber-300" : "bg-sky-500/10 text-sky-700 dark:text-sky-300")}>{grant.access}</span>
           <span className="text-xs text-muted-foreground tabular-nums" title={when(grant.createdAt)}>Approved {when(grant.createdAt)}</span>
           <span className={cn(pill, "bg-muted text-foreground/80")} title={grant.expiresAt === null ? "Forever" : when(grant.expiresAt)}><Timer className="size-3" aria-hidden />{remaining(grant.expiresAt)}</span>
-          <span className="text-xs text-muted-foreground">{grant.source}</span>
+          <span className="text-xs text-muted-foreground">{SOURCE_LABELS[grant.source] ?? grant.source}</span>
         </div>
       </div>
       <ConfirmAction
@@ -125,7 +110,7 @@ function GrantList({ grants, agent, sort, dir, onAgent, onSort, onRevoke }: { gr
         <div className="inline-flex flex-wrap rounded-lg border border-border p-0.5">
           {["all", ...agents].map((id) => (
             <button key={id} type="button" aria-pressed={agent === id} onClick={() => onAgent(id)} className={cn("rounded-md px-2.5 py-1 text-xs", agent === id ? "bg-accent font-medium" : "text-muted-foreground")}>
-              {id === "all" ? "All" : agentName(id)}
+              {id === "all" ? "All" : id === "*" ? "Shared" : agentName(id)}
             </button>
           ))}
         </div>
@@ -160,7 +145,7 @@ function GrantList({ grants, agent, sort, dir, onAgent, onSort, onRevoke }: { gr
 export function GrantsPage() {
   const [grants, setGrants] = useState<Grant[]>([]);
   const [decisions, setDecisions] = useState<DecisionRow[]>([]);
-  const [log, setLog] = useState(false);
+  const [tab, setTab] = useState("active");
   const [agent, setAgent] = useState("all");
   const [sort, setSort] = useState<GrantSortKey>("approved");
   const [dir, setDir] = useState<SortDir>("desc");
@@ -186,63 +171,71 @@ export function GrantsPage() {
     const timer = window.setInterval(load, 1000);
     return () => window.clearInterval(timer);
   }, []);
+  const onRevoke = (grant: Grant) => void window.leash.revokeGrant(grant.id).then(() => { toast({ title: "Grant revoked", description: grant.command ?? grant.path }); load(); });
   return (
     <PageContainer>
-      <div className="flex items-center justify-between px-3">
-        <h1 className="text-lg font-semibold tracking-tight">Grants</h1>
-        <Button size="sm" variant="outline" onClick={() => setLog((value) => !value)}>
-          {log ? <FolderLock /> : <History />}
-          {log ? "Show grants" : "Decision log"}
-        </Button>
-      </div>
+      <h1 className="px-3 text-lg font-semibold tracking-tight">Access</h1>
       {pending.length ? (
         <SettingsSection title="Pending">
           {pending.map((item) => <PendingRow key={item.id} item={item} now={now} onDecide={load} />)}
         </SettingsSection>
       ) : null}
-      {log ? (
-        <SettingsSection title="Decisions, last 30 days">
-          {decisions.length === 0 ? <p className="px-4 py-4 text-sm text-muted-foreground"><span aria-hidden className="mr-2">🗒️</span>No decisions yet</p> : null}
-          {decisions.map((row) => (
-            <div key={row.id} className="flex items-center gap-3 px-4 py-2.5 text-sm whitespace-nowrap">
-              <span className="shrink-0 font-mono text-xs text-muted-foreground tabular-nums">{new Date(row.ts).toLocaleString()}</span>
-              <span className="shrink-0"><Agent agent={row.agent} /></span>
-              <span className="shrink-0 font-mono text-xs">{row.tool}</span>
-              <span className={cn(pill, "shrink-0", VERDICT[row.verdict] ?? "bg-muted text-muted-foreground")}>{row.verdict}</span>
-              <span className="min-w-0 flex-1 truncate font-mono text-xs" title={decisionTarget(row)}>{decisionTarget(row)}</span>
-              {row.reason ? <span className="max-w-[40%] shrink-0 truncate text-xs text-muted-foreground" title={row.reason}>{row.reason}</span> : null}
-              {row.durationMs !== null ? <span className="shrink-0 text-xs text-muted-foreground tabular-nums">{row.durationMs} ms</span> : null}
+      <Tabs value={tab} onValueChange={(value) => setTab(String(value))}>
+        <TabsList className="mx-3">
+          <TabsTab value="active">Active</TabsTab>
+          <TabsTab value="always">Always</TabsTab>
+          <TabsTab value="automatic">Automatic</TabsTab>
+          <TabsTab value="log">Log</TabsTab>
+        </TabsList>
+        <TabsPanel value="active">
+          {grants.length === 0 ? (
+            <div className="rounded-xl border border-dashed border-border/70 px-6 py-12 text-center">
+              <div className="text-3xl" aria-hidden>🗝️</div>
+              <p className="mt-2 text-sm text-muted-foreground">No grants yet</p>
             </div>
-          ))}
-        </SettingsSection>
-      ) : grants.length === 0 ? (
-        <div className="rounded-xl border border-dashed border-border/70 px-6 py-12 text-center">
-          <div className="text-3xl" aria-hidden>🗝️</div>
-          <p className="mt-2 text-sm text-muted-foreground">No grants yet</p>
-        </div>
-      ) : (
-        <GrantList grants={grants} agent={agent} sort={sort} dir={dir} onAgent={setAgent} onSort={pickSort} onRevoke={(grant) => void window.leash.revokeGrant(grant.id).then(() => { toast({ title: "Grant revoked", description: grant.command ?? grant.path }); load(); })} />
-      )}
-      <div className="flex flex-wrap items-center gap-2 px-3">
-        <ConfirmAction
-          trigger={<Button variant="destructive" disabled={grants.length === 0}><ShieldOff />{grants.length === 0 ? "Nothing to revoke" : "Revoke all and lock down"}</Button>}
-          title={`Revoke all ${grants.length} grants?`}
-          description="Every agent loses the folder access it has now."
-          effects={REVOKE_ALL_EFFECTS}
-          confirmLabel="Revoke all"
-          onConfirm={() => void window.leash.revokeAll().then((result) => { toastRevoked(result.revoked); load(); })}
-        />
-        <Button
-          variant={lockdown ? "destructive" : "outline"}
-          disabled={!lockdown}
-          aria-pressed={lockdown}
-          className={lockdown ? undefined : "text-muted-foreground disabled:opacity-100"}
-          onClick={() => void window.leash.unlock().then(() => { toast({ title: "Lockdown ended" }); load(); })}
-        >
-          {lockdown ? <Lock /> : <LockOpen />}
-          {lockdown ? "End lockdown" : "Lockdown off"}
-        </Button>
-      </div>
+          ) : (
+            <GrantList grants={grants} agent={agent} sort={sort} dir={dir} onAgent={setAgent} onSort={pickSort} onRevoke={onRevoke} />
+          )}
+          <div className="flex flex-wrap items-center gap-2 px-3">
+            <ConfirmAction
+              trigger={<Button variant="destructive" disabled={grants.length === 0}><ShieldOff />{grants.length === 0 ? "Nothing to revoke" : "Revoke all and lock down"}</Button>}
+              title={`Revoke all ${grants.length} grants?`}
+              description="Every agent loses the folder access it has now."
+              effects={REVOKE_ALL_EFFECTS}
+              confirmLabel="Revoke all"
+              onConfirm={() => void window.leash.revokeAll().then((result) => { toastRevoked(result.revoked); load(); })}
+            />
+            <Button
+              variant={lockdown ? "destructive" : "outline"}
+              disabled={!lockdown}
+              aria-pressed={lockdown}
+              className={lockdown ? undefined : "text-muted-foreground disabled:opacity-100"}
+              onClick={() => void window.leash.unlock().then(() => { toast({ title: "Lockdown ended" }); load(); })}
+            >
+              {lockdown ? <Lock /> : <LockOpen />}
+              {lockdown ? "End lockdown" : "Lockdown off"}
+            </Button>
+          </div>
+        </TabsPanel>
+        <TabsPanel value="always"><AllowList /></TabsPanel>
+        <TabsPanel value="automatic"><AutomaticAllows /></TabsPanel>
+        <TabsPanel value="log">
+          <SettingsSection title="Decisions, last 30 days">
+            {decisions.length === 0 ? <p className="px-4 py-4 text-sm text-muted-foreground"><span aria-hidden className="mr-2">🗒️</span>No decisions yet</p> : null}
+            {decisions.map((row) => (
+              <div key={row.id} className="flex items-center gap-3 px-4 py-2.5 text-sm whitespace-nowrap">
+                <span className="shrink-0 font-mono text-xs text-muted-foreground tabular-nums">{new Date(row.ts).toLocaleString()}</span>
+                <span className="shrink-0"><Agent agent={row.agent} /></span>
+                <span className="shrink-0 font-mono text-xs">{row.tool}</span>
+                <span className={cn(pill, "shrink-0", VERDICT[row.verdict] ?? "bg-muted text-muted-foreground")}>{row.verdict}</span>
+                <span className="min-w-0 flex-1 truncate font-mono text-xs" title={decisionTarget(row)}>{decisionTarget(row)}</span>
+                {row.reason ? <span className="max-w-[40%] shrink-0 truncate text-xs text-muted-foreground" title={row.reason}>{row.reason}</span> : null}
+                {row.durationMs !== null ? <span className="shrink-0 text-xs text-muted-foreground tabular-nums">{row.durationMs} ms</span> : null}
+              </div>
+            ))}
+          </SettingsSection>
+        </TabsPanel>
+      </Tabs>
     </PageContainer>
   );
 }

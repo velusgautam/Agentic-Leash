@@ -12,7 +12,7 @@ test("General shows Open at login, disabled outside the installed app", async ()
   await win.getByRole("link", { name: "Monitoring" }).click();
   await expect(win.getByRole("button", { name: "Available in the installed app" })).toHaveCount(2);
   await expect(win.getByRole("button", { name: "Granted" })).toHaveCount(0);
-  await win.getByRole("link", { name: "Ignored noises", exact: true }).click();
+  await win.getByRole("link", { name: "Ignored paths", exact: true }).click();
   await expect(win.getByText("/.cursor/chats", { exact: true })).toBeVisible();
   const chats = win.getByRole("switch", { name: "/.cursor/chats" });
   await expect(chats).toBeChecked();

@@ -190,7 +190,7 @@ function AppShell() {
         <SidebarRail />
       </Sidebar>
       <SidebarInset className="min-h-0 overflow-hidden">
-        <div className="drag-region flex h-13 shrink-0 items-center justify-end gap-3 px-5">{onSettings ? null : <RevokeAll count={grants.count} />}</div>
+        <div className="drag-region flex h-13 shrink-0 items-center justify-end gap-3 px-5">{onSettings || pathname === "/grants" ? null : <RevokeAll count={grants.count} />}</div>
         {status && needsAgentBanner(status.agents) ? (
           <div role="status" className="mx-5 mb-2 rounded-lg border border-border bg-muted/50 px-3 py-2 text-sm">
             Install Claude, Cursor, Codex, Gemini, or Hermes to start tracking.
@@ -244,7 +244,7 @@ function AppShell() {
             <input className="mb-2 w-full rounded-md border border-border bg-transparent px-2 py-1.5 text-sm" placeholder="Grant a folder path, then press Return" value={path} onChange={(event) => setPath(event.target.value)} autoFocus />
             <div className="flex flex-col">
               <Button type="submit" variant="ghost" className="justify-start">Grant folder for 1 hour</Button>
-              <Button type="button" variant="ghost" className="justify-start" onClick={() => { setPalette(false); void navigate({ to: "/grants" }); }}>Revoke a grant</Button>
+              <Button type="button" variant="ghost" className="justify-start" onClick={() => { setPalette(false); void navigate({ to: "/grants" }); }}>Open Access</Button>
               <Button type="button" variant="ghost" className="justify-start" onClick={() => { setPalette(false); void navigate({ to: "/agents/$agentId", params: { agentId: "claude-code" } }); }}>Jump to Claude</Button>
               <ConfirmAction
                 trigger={<Button type="button" variant="ghost-destructive" className="justify-start">Revoke all</Button>}

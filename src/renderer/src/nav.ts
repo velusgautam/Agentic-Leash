@@ -5,7 +5,6 @@ import {
   FolderLock,
   History,
   Keyboard,
-  ListChecks,
   Palette,
   Radar,
   Scale,
@@ -15,7 +14,7 @@ import {
 
 export const MAIN_NAV = [
   { to: "/live", label: "Live", icon: Activity },
-  { to: "/grants", label: "Grants", icon: FolderLock },
+  { to: "/grants", label: "Access", icon: FolderLock },
   { to: "/history", label: "History", icon: History },
 ] as const;
 
@@ -30,9 +29,8 @@ export const AGENT_NAV = [
 export const SETTINGS_SECTIONS = [
   { id: "general", label: "General", icon: Settings2 },
   { id: "agents", label: "Agents", icon: Bot },
-  { id: "allow-list", label: "Allow list", icon: ListChecks },
   { id: "monitoring", label: "Monitoring", icon: Radar },
-  { id: "ignored", label: "Ignored noises", icon: EyeOff },
+  { id: "ignored", label: "Ignored paths", icon: EyeOff },
   { id: "appearance", label: "Appearance", icon: Palette },
   { id: "keybindings", label: "Keybindings", icon: Keyboard },
   { id: "diagnostics", label: "Diagnostics", icon: Stethoscope },
