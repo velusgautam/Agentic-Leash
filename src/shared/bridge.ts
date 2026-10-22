@@ -1,6 +1,6 @@
 import type { AutoAllow } from "./autoAllow";
 import type { SetupStatus } from "./setup";
-import type { Access, AgentId, AgentSnapshot, DecisionRow, Diagnostics, Grant, HistoryRow, PendingRequest, ScheduledRevoke, ThemeSource } from "./types";
+import type { Access, AgentId, AgentSnapshot, AllowRule, DecisionRow, Diagnostics, Grant, HistoryRow, PendingRequest, ScheduledRevoke, ThemeSource } from "./types";
 
 export interface OpenAtLoginState {
   enabled: boolean;
@@ -19,6 +19,10 @@ export interface LeashBridge {
   createGrant(input: { agent: AgentId | "*"; path: string; access: Access; ttlSeconds: number | null }): Promise<void>;
   listAutoAllows(): Promise<(AutoAllow & { enabled: boolean })[]>;
   setAutoAllow(id: string, enabled: boolean): Promise<(AutoAllow & { enabled: boolean })[]>;
+  listRules(): Promise<AllowRule[]>;
+  createRule(input: { kind: AllowRule["kind"]; agent: AllowRule["agent"]; value: string }): Promise<{ rules: AllowRule[]; error: string | null }>;
+  updateRule(id: number, input: { kind: AllowRule["kind"]; agent: AllowRule["agent"]; value: string }): Promise<{ rules: AllowRule[]; error: string | null }>;
+  deleteRule(id: number): Promise<AllowRule[]>;
   unlock(): Promise<void>;
   listDecisions(): Promise<DecisionRow[]>;
   listHistory(): Promise<HistoryRow[]>;

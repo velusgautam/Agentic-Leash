@@ -2,7 +2,7 @@ import { decide } from "./decide";
 import { normaliseHook } from "./normalise";
 import { respond } from "./respond";
 import { parseAutoAllowOff } from "../shared/autoAllow";
-import { getSetting, listGrants, recordDecision } from "../shared/db";
+import { getSetting, listGrants, listRules, recordDecision } from "../shared/db";
 import { protectedRoots } from "../shared/constants";
 import type { DatabaseSync } from "node:sqlite";
 import type { HookRequest, Verdict } from "../shared/types";
@@ -19,7 +19,7 @@ export async function handlePayload(options: {
 }): Promise<{ stdout: string; exitCode: number }> {
   const started = Date.now();
   const normalised = normaliseHook(options.raw, options.entry, options.home);
-  if (normalised.kind === "ignore") return { stdout: "", exitCode: 0 };
+  if (normalised.kind === "ignore") return respond(options.entry, { kind: "pass" });
   const request = normalised.request;
   const lockdown = getSetting(options.db, "lockdown", "0") === "1";
   let verdict: Verdict = decide(request, listGrants(options.db), {
@@ -28,6 +28,7 @@ export async function handlePayload(options: {
     protectedRoots: protectedRoots(options.home),
     home: options.home,
     autoAllowOff: parseAutoAllowOff(getSetting(options.db, "auto_allow_off", "[]")),
+    rules: listRules(options.db),
   });
   let answer: HookAnswer | null = null;
   if (verdict.kind === "prompt") {

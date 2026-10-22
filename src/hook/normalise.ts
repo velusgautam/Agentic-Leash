@@ -27,7 +27,7 @@ export function normaliseHook(raw: unknown, entry: "claude" | "cursor" | "codex"
   if (entry === "claude" && typeof payload.cursor_version === "string") return { kind: "ignore" };
 
   const input = asRecord(payload.tool_input);
-  const cwd = str(payload.cwd) || str(input.cwd) || "/";
+  const cwd = str(payload.cwd) || str(input.cwd) || (Array.isArray(payload.workspace_roots) ? str(payload.workspace_roots[0]) : "") || "/";
   const event = str(payload.hook_event_name);
   const sessionId = str(payload.session_id) || str(payload.turn_id) || undefined;
   const agent = entry === "claude" ? "claude-code" : entry;
@@ -64,6 +64,7 @@ export function normaliseHook(raw: unknown, entry: "claude" | "cursor" | "codex"
     const command = str(payload.command);
     return request({ agent, event, tool: "Shell", access: "write", paths: extractShellPaths(command, cwd, home), cwd, command, sessionId });
   }
+  if (entry === "cursor" && event === "preToolUse" && str(payload.tool_name) === "Shell") return { kind: "ignore" };
   if (entry === "cursor" && event === "beforeMCPExecution") {
     return request({ agent, event, tool: str(payload.tool_name) || "MCP", access: "read", paths: [], cwd, sessionId });
   }

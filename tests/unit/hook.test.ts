@@ -22,6 +22,20 @@ describe("normalise", () => {
     const shell = normaliseHook(fixture("cursor-beforeShellExecution.json"), "cursor");
     expect(shell.kind === "request" && shell.request.command).toBe("ls spikes");
   });
+
+  it("uses the cursor workspace root when cwd is empty", () => {
+    const shell = normaliseHook({ hook_event_name: "beforeShellExecution", command: "ls /w/a/b", cwd: "", workspace_roots: ["/w/a"] }, "cursor");
+    expect(shell.kind === "request" && shell.request.paths).toEqual(["/w/a", "/w/a/b"]);
+  });
+
+  it("gates cursor shell once, at beforeShellExecution", async () => {
+    const raw = { hook_event_name: "preToolUse", tool_name: "Shell", tool_input: { command: "ls", cwd: "" }, cwd: "", workspace_roots: ["/w/a"] };
+    expect(normaliseHook(raw, "cursor")).toEqual({ kind: "ignore" });
+    const db = openGrantsDb(join("/tmp", `al-ignore-${Date.now()}.db`));
+    const result = await handlePayload({ entry: "cursor", raw, db, now: Date.now(), home: "/tmp", ask: async () => "deny" });
+    expect(JSON.parse(result.stdout).permission).toBe("allow");
+    db.close();
+  });
 });
 
 describe("codex hooks", () => {

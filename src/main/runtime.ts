@@ -6,7 +6,7 @@ import { promisify } from "node:util";
 import { app, BrowserWindow, globalShortcut, ipcMain, nativeTheme } from "electron";
 import { DEFAULT_TTL_S, grantsDbPath, HISTORY_DIR, homeDir, isClaudeBinary, IS_MAC, leashDir, POPUP_TIMEOUT_S, protectedRoots, socketPath, TCC_CLIENTS } from "../shared/constants";
 import { diagnosticsReport } from "../shared/diagnostics";
-import { cancelScheduled, collapseGrantDupes, decisionDurations, deleteGrant, deleteGrants, getSetting, listDecisions, listGrants, listScheduled, openGrantsDb, scheduleRevoke, setSetting, upsertGrant } from "../shared/db";
+import { cancelScheduled, collapseGrantDupes, createRule, decisionDurations, deleteGrant, deleteGrants, deleteRule, getSetting, listDecisions, listGrants, listRules, listScheduled, openGrantsDb, scheduleRevoke, setSetting, updateRule, upsertCommandGrant, upsertGrant } from "../shared/db";
 import { historyText, listHistory, openHistoryDb, queryHistory, type HistoryFilter } from "../helper/historyDb";
 import type { Access, AgentId, AgentSnapshot, HistoryRow, ThemeSource } from "../shared/types";
 import { loadClaude } from "./agents/claude";
@@ -236,6 +236,22 @@ export function startRuntime(options: { userData: string; openApproval: () => vo
     setSetting(db, "auto_allow_off", JSON.stringify([...off]));
     return autoAllowRows();
   });
+  ipcMain.handle("rules:list", () => listRules(db));
+  ipcMain.handle("rules:create", (_event, input: { kind: unknown; agent: unknown; value: unknown }) => {
+    const result = createRule(db, input, home, Date.now());
+    if (!result.error) publishClaudeRules(db, join(claudeRoot(), "settings.json"), home, snapshots.find((snapshot) => snapshot.id === "claude-code")?.enforcement === "rules");
+    return result;
+  });
+  ipcMain.handle("rules:update", (_event, id: number, input: { kind: unknown; agent: unknown; value: unknown }) => {
+    const result = updateRule(db, id, input, home, Date.now());
+    if (!result.error) publishClaudeRules(db, join(claudeRoot(), "settings.json"), home, snapshots.find((snapshot) => snapshot.id === "claude-code")?.enforcement === "rules");
+    return result;
+  });
+  ipcMain.handle("rules:delete", (_event, id: number) => {
+    const rules = deleteRule(db, id);
+    publishClaudeRules(db, join(claudeRoot(), "settings.json"), home, snapshots.find((snapshot) => snapshot.id === "claude-code")?.enforcement === "rules");
+    return rules;
+  });
   ipcMain.handle("decisions:list", () => listDecisions(db));
   ipcMain.handle("history:list", () => history);
   ipcMain.handle("history:query", (_event, filter: HistoryFilter) => withHistory((historyDb) => queryHistory(historyDb, filter)));
@@ -260,6 +276,7 @@ export function startRuntime(options: { userData: string; openApproval: () => vo
       protectedRoots: protectedRoots(home),
       home,
       autoAllowOff: parseAutoAllowOff(getSetting(db, "auto_allow_off", "[]")),
+      rules: listRules(db),
     };
     for (const coveredId of coveredPending(broker.list(), listGrants(db), options)) {
       const timeout = timeouts.get(coveredId);
@@ -272,9 +289,19 @@ export function startRuntime(options: { userData: string; openApproval: () => vo
     const pending = broker.list().find((item) => item.id === id);
     const timeout = timeouts.get(id);
     if (timeout) clearTimeout(timeout);
+    const ttl = ttlSeconds === undefined ? DEFAULT_TTL_S : ttlSeconds;
     if (decision === "allow" && pending) {
       const scope = typeof scopePath === "string" && parentFolders(pending.request.paths).includes(scopePath) ? scopePath : undefined;
-      allow(scope ? [scope] : pending.request.paths, pending.request.agent, pending.request.access, ttlSeconds === undefined ? DEFAULT_TTL_S : ttlSeconds, Boolean(scope));
+      allow(scope ? [scope] : pending.request.paths, pending.request.agent, pending.request.access, ttl, Boolean(scope));
+      const command = pending.request.command?.trim() ?? "";
+      if (command) {
+        upsertCommandGrant(db, {
+          agent: pending.request.agent,
+          command,
+          createdAt: Date.now(),
+          expiresAt: ttl === null ? null : Date.now() + ttl * 1000,
+        });
+      }
     }
     broker.decide(id, { decision, ttlSeconds: ttlSeconds ?? undefined });
     if (decision === "allow") releaseCovered();
