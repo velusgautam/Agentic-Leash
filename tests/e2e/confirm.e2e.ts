@@ -35,13 +35,15 @@ test("the lockdown button label follows revoke-all", async () => {
   const app = await launch();
   const win = await app.firstWindow();
   await win.evaluate(`window.leash.createGrant({ agent: "*", path: "/tmp/leash-lock", access: "write", ttlSeconds: 3600 })`);
-  await win.getByRole("link", { name: "Grants", exact: true }).click();
+  await win.getByRole("link", { name: "Access", exact: true }).click();
   await expect(win.getByRole("button", { name: "Lockdown off" })).toBeDisabled();
   await win.getByRole("button", { name: "Revoke all and lock down" }).click();
   await win.getByRole("alertdialog").getByRole("button", { name: "Revoke all" }).click();
-  const end = win.getByRole("button", { name: "End lockdown" });
+  await expect(win.getByRole("status").filter({ hasText: "Lockdown is on" })).toBeVisible();
+  const end = win.getByRole("button", { name: "End lockdown", pressed: true });
   await expect(end).toBeEnabled();
   await end.click();
+  await expect(win.getByRole("status").filter({ hasText: "Lockdown is on" })).toHaveCount(0);
   await expect(win.getByRole("button", { name: "Lockdown off" })).toBeDisabled();
   await app.close();
 });
@@ -50,7 +52,7 @@ test("revoking a grant asks first and explains the outcome", async () => {
   const app = await launch();
   const win = await app.firstWindow();
   await win.evaluate(`window.leash.createGrant({ agent: "*", path: "/tmp/leash-e2e", access: "write", ttlSeconds: 3600 })`);
-  await win.getByRole("link", { name: "Grants", exact: true }).click();
+  await win.getByRole("link", { name: "Access", exact: true }).click();
   await win.getByRole("button", { name: "Revoke", exact: true }).click();
   const dialog = win.getByRole("alertdialog");
   await expect(dialog.getByText("Revoke this grant?")).toBeVisible();

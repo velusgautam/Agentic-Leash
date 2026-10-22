@@ -43,4 +43,14 @@ describe("trayMenuTemplate", () => {
     expect(actions.review).toHaveBeenCalledOnce();
     expect(actions.open).not.toHaveBeenCalled();
   });
+
+  it("offers End lockdown only while lockdown is on", () => {
+    const actions = { open: vi.fn(), quit: vi.fn(), review: vi.fn(), unlock: vi.fn() };
+    expect(trayMenuTemplate({ ...actions, lockdown: false }).some((item) => item.id === "end-lockdown")).toBe(false);
+    const items = trayMenuTemplate({ ...actions, lockdown: true });
+    expect(items.find((item) => item.id === "lockdown")?.enabled).toBe(false);
+    click(items.find((item) => item.id === "end-lockdown"));
+    expect(actions.unlock).toHaveBeenCalledOnce();
+    expect(items.some((item) => item.id === "revoke-all")).toBe(true);
+  });
 });

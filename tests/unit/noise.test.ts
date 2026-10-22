@@ -1,8 +1,9 @@
-import { mkdtempSync } from "node:fs";
+import { existsSync, mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import { describe, expect, it } from "vitest";
-import { historyText, insertEvents, openHistoryDb, pruneHistory, queryHistory, splitHistory } from "../../src/helper/historyDb";
+import { historyText, insertEvents, openHistoryDb, optimizeHistory, pruneHistory, queryHistory, replaceHistory, splitHistory } from "../../src/helper/historyDb";
 import { eventBucket, isNoise } from "../../src/shared/noise";
 import { parseRetentionDays } from "../../src/shared/retention";
 
@@ -39,11 +40,17 @@ describe("eventBucket", () => {
     expect(eventBucket({ kind: "rename", path: "/tmp/x", destPath: "/Users/me/.ssh/id_ed25519" })).toBe("main");
   });
 
-  it("keeps scratch actions and /tmp reads for the noise table", () => {
+  it("keeps scratch writes and /tmp reads for the noise table", () => {
     expect(eventBucket({ kind: "write", path: "/tmp/payload" })).toBe("noise");
-    expect(eventBucket({ kind: "exec", path: "/tmp/payload" })).toBe("noise");
     expect(eventBucket({ kind: "read", path: "/private/tmp/stage" })).toBe("noise");
     expect(eventBucket({ kind: "write", path: "/Users/me/project/node_modules/left-pad/index.js" })).toBe("noise");
+  });
+
+  it("drops every exec while retaining network events", () => {
+    expect(eventBucket({ kind: "exec", path: "/tmp/payload" })).toBe("drop");
+    expect(eventBucket({ kind: "exec", path: "/usr/bin/git" })).toBe("drop");
+    expect(eventBucket({ kind: "exec", path: "/Users/me/.ssh/tool" })).toBe("drop");
+    expect(eventBucket({ kind: "net", path: "10.0.0.1:443" })).toBe("main");
   });
 
   it("drops junk and other noise reads", () => {
@@ -55,6 +62,14 @@ describe("eventBucket", () => {
 });
 
 describe("history tables", () => {
+  it("stores snapshots once without a duplicate blobs table", () => {
+    const history = db();
+    insertEvents(history, [{ ...row, kind: "write", path: "/Users/me/project/a.ts", beforeBlob: "before", afterBlob: "after" }]);
+    expect(history.prepare("SELECT before_blob, after_blob FROM events").get()).toEqual({ before_blob: "before", after_blob: "after" });
+    expect(history.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'blobs'").get()).toBeUndefined();
+    history.close();
+  });
+
   it("stores main and noise separately and can read them together", () => {
     const history = db();
     insertEvents(history, [
@@ -115,6 +130,84 @@ describe("history tables", () => {
     expect(indexes.some((index) => index.name === "events_ts")).toBe(true);
     history.close();
   });
+
+  it("rebuilds history without legacy blobs or exec rows", () => {
+    const dir = mkdtempSync(join(tmpdir(), "al-optimize-"));
+    const path = join(dir, "history.db");
+    const history = openHistoryDb(path);
+    history.exec("CREATE TABLE blobs (sha256 TEXT PRIMARY KEY, content BLOB NOT NULL)");
+    insertEvents(history, [
+      { ...row, ts: 2, kind: "write", path: "/Users/me/project/a.ts", beforeBlob: "a", afterBlob: "b" },
+      { ...row, ts: 3, kind: "write", path: "/tmp/payload" },
+    ]);
+    const insertExec = history.prepare(
+      `INSERT INTO events (id, ts, agent, pid, exe, kind, path, sensitive, source)
+       VALUES (?, ?, 'codex', 1, 'codex', 'exec', ?, 0, 'eslogger')`,
+    );
+    insertExec.run(20, 4, "/usr/bin/git");
+    history.prepare("INSERT INTO noise (id, ts, agent, pid, exe, kind, path, sensitive, source) VALUES (?, ?, 'codex', 1, 'codex', 'exec', ?, 0, 'eslogger')").run(21, 5, "/tmp/tool");
+    history.prepare("INSERT INTO blobs (sha256, content) VALUES ('old', 'duplicate')").run();
+    history.prepare("INSERT INTO meta (key, value) VALUES ('custom', 'kept')").run();
+    history.close();
+
+    const result = optimizeHistory(path);
+    expect(existsSync(`${path}-wal`)).toBe(false);
+    expect(existsSync(`${path}-shm`)).toBe(false);
+    const compact = openHistoryDb(path, true);
+    const rows = queryHistory(compact, { ...empty, includeNoise: true }).rows;
+    expect(rows.map((item) => item.path).sort()).toEqual(["/Users/me/project/a.ts", "/tmp/payload"]);
+    expect(rows.map((item) => item.id).sort()).toEqual([1, 2]);
+    expect(historyText(compact, rows.find((item) => item.path.endsWith("a.ts"))!.id)).toEqual({ before: "a", after: "b" });
+    expect(compact.prepare("SELECT value FROM meta WHERE key = 'custom'").get()).toEqual({ value: "kept" });
+    expect(compact.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'blobs'").get()).toBeUndefined();
+    expect(compact.prepare("SELECT count(*) AS n FROM events WHERE kind = 'exec'").get()).toEqual({ n: 0 });
+    expect((compact.prepare("PRAGMA index_list(events)").all() as { name: string }[]).some((index) => index.name === "events_ts")).toBe(true);
+    expect(result.afterBytes).toBeLessThan(result.beforeBytes);
+    compact.close();
+    expect(optimizeHistory(path).afterBytes).toBeGreaterThan(0);
+  });
+
+  it("restores the original database when replacement verification fails", () => {
+    const dir = mkdtempSync(join(tmpdir(), "al-swap-"));
+    const original = join(dir, "history.db");
+    const replacement = join(dir, "history.next.db");
+    for (const [path, value] of [[original, "original"], [replacement, "replacement"]] as const) {
+      const database = new DatabaseSync(path);
+      database.exec("CREATE TABLE marker (value TEXT)");
+      database.prepare("INSERT INTO marker VALUES (?)").run(value);
+      database.close();
+    }
+
+    expect(() => replaceHistory(original, replacement, () => {
+      throw new Error("integrity failed");
+    })).toThrow("integrity failed");
+    const restored = new DatabaseSync(original, { readOnly: true });
+    expect(restored.prepare("SELECT value FROM marker").get()).toEqual({ value: "original" });
+    restored.close();
+    expect(existsSync(replacement)).toBe(false);
+  });
+
+  it("refuses to rebuild while another WAL reader is active", () => {
+    const dir = mkdtempSync(join(tmpdir(), "al-busy-"));
+    const path = join(dir, "history.db");
+    const history = openHistoryDb(path);
+    insertEvents(history, [{ ...row, path: "/Users/me/project/a.ts" }]);
+    history.close();
+    const reader = new DatabaseSync(path);
+    reader.exec("BEGIN");
+    reader.prepare("SELECT * FROM events").all();
+    const writer = openHistoryDb(path);
+    insertEvents(writer, [{ ...row, ts: 2, path: "/Users/me/project/b.ts" }]);
+    writer.close();
+    const started = Date.now();
+    try {
+      expect(() => optimizeHistory(path)).toThrow("active history connection");
+      expect(Date.now() - started).toBeLessThan(1000);
+    } finally {
+      reader.exec("ROLLBACK");
+      reader.close();
+    }
+  }, 1_500);
 });
 
 describe("parseRetentionDays", () => {

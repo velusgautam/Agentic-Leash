@@ -8,6 +8,18 @@ export interface OpenAtLoginState {
   available: boolean;
 }
 
+export interface HistoryOptimizationInfo {
+  available: boolean;
+  sizeBytes: number;
+  requiredBytes: number;
+  freeBytes: number;
+}
+
+export interface HistoryOptimizationResult {
+  beforeBytes: number;
+  afterBytes: number;
+}
+
 export interface LeashBridge {
   platform: string;
   getOpenAtLogin(): Promise<OpenAtLoginState>;
@@ -30,6 +42,8 @@ export interface LeashBridge {
   queryHistory(filter: { from: number | null; to: number | null; agents: string[]; path: string; kind: string; sensitive: boolean; includeNoise?: boolean; offset: number; limit: number }): Promise<{ rows: HistoryRow[]; total: number }>;
   historyRetention(): Promise<{ main: number; noise: number }>;
   setHistoryRetention(which: "main" | "noise", days: number): Promise<{ main: number; noise: number }>;
+  historyOptimizationInfo(): Promise<HistoryOptimizationInfo>;
+  optimizeHistory(): Promise<HistoryOptimizationResult>;
   listIgnored(): Promise<IgnoredRow[]>;
   setIgnored(id: number, enabled: boolean): Promise<IgnoredRow[]>;
   addIgnored(prefix: string): Promise<{ rows: IgnoredRow[]; added: boolean }>;
@@ -50,6 +64,7 @@ export interface LeashBridge {
   getTheme(): Promise<ThemeSource>;
   setTheme(theme: ThemeSource): Promise<ThemeSource>;
   onTheme(listener: (theme: ThemeSource) => void): () => void;
+  onGrantStatus(listener: (status: { count: number; lockdown: boolean }) => void): () => void;
   resetTcc(service: string, bundleId: string): Promise<void>;
   removeMcp(agent: AgentId, name: string): Promise<void>;
   scheduledRevokes(): Promise<ScheduledRevoke[]>;

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { grantRoot, parentFolders } from "../../src/shared/parents";
+import { grantRoot, isHomeFolder, parentFolders } from "../../src/shared/parents";
 
 describe("grantRoot", () => {
   const dirs = new Set(["/Users/velu.gautam", "/Users/velu.gautam/.cursor", "/Users/me/proj"]);
@@ -19,6 +19,16 @@ describe("grantRoot", () => {
     expect(grantRoot("/", true, isDir)).toBe(null);
     expect(grantRoot("/Users", true, isDir)).toBe(null);
     expect(grantRoot("/Users/me.txt", false, isDir)).toBe(null);
+  });
+});
+
+describe("isHomeFolder", () => {
+  it("is true only for the home folder itself", () => {
+    expect(isHomeFolder("/Users/me")).toBe(true);
+    expect(isHomeFolder("/home/me")).toBe(true);
+    expect(isHomeFolder("/Users/me/proj")).toBe(false);
+    expect(isHomeFolder("/Users")).toBe(false);
+    expect(isHomeFolder("/tmp")).toBe(false);
   });
 });
 

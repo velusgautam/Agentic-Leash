@@ -2,10 +2,9 @@ import { useEffect, useState, type CSSProperties } from "react";
 import { useParams } from "@tanstack/react-router";
 import { Monitor, Moon, Sun } from "lucide-react";
 import licenses from "../../../../THIRD_PARTY_LICENSES.md?raw";
-import type { AutoAllow } from "../../../shared/autoAllow";
 import type { IgnoredRow } from "../../../shared/ignored";
-import type { OpenAtLoginState } from "../../../shared/bridge";
-import type { AgentId, AllowRule, Diagnostics, ThemeSource } from "../../../shared/types";
+import type { HistoryOptimizationInfo, HistoryOptimizationResult, OpenAtLoginState } from "../../../shared/bridge";
+import type { AgentId, Diagnostics, ThemeSource } from "../../../shared/types";
 import { ConfirmAction } from "~/components/ConfirmAction";
 import { AGENT_LABELS } from "~/components/Icons";
 import { PageContainer, SettingsRow, SettingsSection } from "~/components/settings";
@@ -15,7 +14,7 @@ import { useSetup } from "~/components/useSetup";
 import { Button } from "~/components/ui/button";
 import { Switch } from "~/components/ui/switch";
 import { cn } from "~/lib/utils";
-import { AGENT_NAV, SETTINGS_SECTIONS } from "~/nav";
+import { SETTINGS_SECTIONS } from "~/nav";
 import { parseRetentionDays } from "../../../shared/retention";
 import { DEFAULT_APPEARANCE, readAppearance, saveAppearance, type AppearancePrefs } from "../appearance";
 
@@ -81,35 +80,6 @@ function UninstallApp() {
         }
       />
     </SettingsSection>
-  );
-}
-
-function AutomaticAllows() {
-  const [rows, setRows] = useState<(AutoAllow & { enabled: boolean })[]>([]);
-  useEffect(() => {
-    void window.leash.listAutoAllows().then(setRows);
-  }, []);
-  const groups: { agent: string; title: string }[] = [];
-  for (const row of rows) {
-    if (!groups.some((group) => group.agent === row.agent)) groups.push({ agent: row.agent, title: row.agent === "*" ? "Every agent" : (AGENT_LABELS[row.agent] ?? row.agent) });
-  }
-  if (!rows.length) return null;
-  return (
-    <div className="space-y-6">
-      <p className="px-3 text-xs leading-normal text-muted-foreground/80 sm:px-4">Read is allowed without a prompt, at home or inside a project. Write still asks. Sensitive files still ask.</p>
-      {groups.map((group) => (
-        <SettingsSection key={group.agent} title={group.title}>
-          {rows.filter((row) => row.agent === group.agent).map((row) => (
-            <SettingsRow
-              key={row.id}
-              title={row.label}
-              description={row.folder}
-              control={<Switch aria-label={`${group.title} ${row.label}`} checked={row.enabled} onCheckedChange={(enabled) => void window.leash.setAutoAllow(row.id, enabled).then(setRows)} />}
-            />
-          ))}
-        </SettingsSection>
-      ))}
-    </div>
   );
 }
 
@@ -233,12 +203,38 @@ function IgnoredNoises() {
 
 function Monitoring() {
   const [days, setDays] = useState<{ main: number; noise: number } | null>(null);
+  const [optimization, setOptimization] = useState<HistoryOptimizationInfo | null>(null);
+  const [optimized, setOptimized] = useState<HistoryOptimizationResult | null>(null);
+  const [optimizationError, setOptimizationError] = useState<string | null>(null);
+  const [optimizing, setOptimizing] = useState(false);
   useEffect(() => {
     void window.leash.historyRetention().then(setDays);
+    void window.leash.historyOptimizationInfo().then(setOptimization);
   }, []);
   const save = (which: "main" | "noise", value: number) => {
     void window.leash.setHistoryRetention(which, value).then(setDays);
   };
+  const optimize = () => {
+    setOptimizing(true);
+    setOptimized(null);
+    setOptimizationError(null);
+    void window.leash.optimizeHistory().then((result) => {
+      setOptimized(result);
+      return window.leash.historyOptimizationInfo();
+    }).then(setOptimization).catch((caught: unknown) => {
+      setOptimizationError(caught instanceof Error ? caught.message : "History optimization stopped.");
+    }).finally(() => setOptimizing(false));
+  };
+  const formatBytes = (bytes: number) => {
+    if (bytes < 1024) return `${bytes} B`;
+    const units = ["KB", "MB", "GB", "TB"];
+    const unit = Math.min(Math.floor(Math.log(bytes) / Math.log(1024)) - 1, units.length - 1);
+    return `${(bytes / 1024 ** (unit + 1)).toFixed(unit > 0 ? 1 : 0)} ${units[unit]}`;
+  };
+  const optimizationDescription = optimizationError
+    ?? (optimized ? `Reduced history from ${formatBytes(optimized.beforeBytes)} to ${formatBytes(optimized.afterBytes)}.`
+      : optimization?.available ? `History database is ${formatBytes(optimization.sizeBytes)}. Optimization needs up to ${formatBytes(optimization.requiredBytes)} free; ${formatBytes(optimization.freeBytes)} is available.`
+        : "No history database yet.");
   const { status } = useSetup();
   const skipped = status?.helper === "skipped";
   return (
@@ -250,7 +246,21 @@ function Monitoring() {
       />
       <SettingsRow title="Full Disk Access" description="If Agentic Leash is missing from the list, click + and add Agentic Leash.app." control={<FullDiskControl />} />
       <SettingsRow title="Main history" description="Days to keep project files, network, and sensitive paths. From 5 to 365." control={days ? <DayField label="Main history days" value={days.main} onCommit={(value) => save("main", value)} /> : null} />
-      <SettingsRow title="Noise history" description="Days to keep scratch-path writes, execs, and temporary reads. From 5 to 365." control={days ? <DayField label="Noise history days" value={days.noise} onCommit={(value) => save("noise", value)} /> : null} />
+      <SettingsRow title="Noise history" description="Days to keep scratch-path writes and temporary reads. From 5 to 365." control={days ? <DayField label="Noise history days" value={days.noise} onCommit={(value) => save("noise", value)} /> : null} />
+      <SettingsRow
+        title="Optimize history"
+        description={<span aria-live="polite">{optimizationDescription}</span>}
+        control={
+          <ConfirmAction
+            trigger={<Button size="sm" variant="outline" disabled={optimizing || !optimization?.available || optimization.freeBytes < optimization.requiredBytes}>{optimizing ? "Optimizing…" : "Optimize history"}</Button>}
+            title="Optimize history?"
+            description="Agent monitoring pauses while History is rebuilt."
+            effects={["Removes existing process execution rows.", "Removes duplicate snapshot storage.", "Keeps file changes, network activity, and tool decisions."]}
+            confirmLabel="Optimize"
+            onConfirm={optimize}
+          />
+        }
+      />
     </SettingsSection>
   );
 }
@@ -383,95 +393,13 @@ function Licenses() {
   );
 }
 
-const AGENTS = [{ id: "*", label: "Global" }, ...AGENT_NAV.map((agent) => ({ id: agent.id, label: agent.label }))] as const;
-
-function AllowList() {
-  const [rules, setRules] = useState<AllowRule[]>([]);
-  const [kind, setKind] = useState<AllowRule["kind"]>("folder");
-  const [value, setValue] = useState("");
-  const [agent, setAgent] = useState<AllowRule["agent"]>("*");
-  const [editing, setEditing] = useState<number | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  useEffect(() => {
-    void window.leash.listRules().then(setRules);
-  }, []);
-  const reset = () => {
-    setKind("folder");
-    setValue("");
-    setAgent("*");
-    setEditing(null);
-    setError(null);
-  };
-  const apply = (result: { rules: AllowRule[]; error: string | null }) => {
-    setRules(result.rules);
-    if (result.error) setError(result.error);
-    else reset();
-  };
-  const save = () => {
-    const input = { kind, agent, value };
-    if (editing === null) void window.leash.createRule(input).then(apply);
-    else void window.leash.updateRule(editing, input).then(apply);
-  };
-  return (
-    <div className="space-y-6">
-      <SettingsSection title={editing === null ? "Add" : "Edit"}>
-        <div className="space-y-3 px-4 py-3">
-          <div role="radiogroup" aria-label="Kind" className="inline-flex rounded-lg border border-border p-0.5">
-            {(["folder", "command"] as const).map((item) => (
-              <button key={item} type="button" role="radio" aria-checked={kind === item} onClick={() => setKind(item)} className={cn("rounded-md px-2.5 py-1 text-xs capitalize", kind === item ? "bg-accent font-medium" : "text-muted-foreground")}>
-                {item}
-              </button>
-            ))}
-          </div>
-          <label className="block space-y-1 text-xs text-muted-foreground">
-            {kind === "folder" ? "Folder path" : "Command"}
-            <input aria-label={kind === "folder" ? "Folder path" : "Command"} className="h-8 w-full rounded-lg border border-border bg-background/60 px-2 font-mono text-sm text-foreground" value={value} onChange={(event) => setValue(event.target.value)} />
-          </label>
-          <label className="block space-y-1 text-xs text-muted-foreground">
-            Agent
-            <select aria-label="Agent" className="h-8 w-full rounded-lg border border-border bg-background px-2 text-sm text-foreground" value={agent} onChange={(event) => setAgent(event.target.value as AllowRule["agent"])}>
-              {AGENTS.map((item) => <option key={item.id} value={item.id}>{item.label}</option>)}
-            </select>
-          </label>
-          {error ? <p className="text-xs text-destructive">{error}</p> : null}
-          <div className="flex gap-2">
-            <Button size="sm" onClick={save}>{editing === null ? "Add" : "Save"}</Button>
-            {editing !== null ? <Button size="sm" variant="outline" onClick={reset}>Cancel</Button> : null}
-          </div>
-        </div>
-      </SettingsSection>
-      <SettingsSection title="Forever">
-        {rules.length === 0 ? <p className="px-4 py-4 text-sm text-muted-foreground">Nothing is allowed forever yet.</p> : null}
-        {rules.map((rule) => (
-          <div key={rule.id} className="flex items-center gap-3 px-4 py-3 text-sm">
-            <div className="min-w-0 flex-1 space-y-1">
-              <div className="text-xs capitalize text-muted-foreground">{rule.kind}</div>
-              <div className="overflow-x-auto font-mono text-xs font-medium whitespace-nowrap">{rule.value}</div>
-              <div className="text-xs text-muted-foreground">{AGENTS.find((item) => item.id === rule.agent)?.label ?? rule.agent}</div>
-            </div>
-            <Button size="sm" variant="outline" onClick={() => { setEditing(rule.id); setKind(rule.kind); setValue(rule.value); setAgent(rule.agent); setError(null); }}>Edit</Button>
-            <ConfirmAction
-              trigger={<Button size="sm" variant="destructive-outline">Delete</Button>}
-              title="Delete this allow rule?"
-              description={rule.value}
-              effects={["The next matching request opens the approval popup."]}
-              confirmLabel="Delete"
-              onConfirm={() => void window.leash.deleteRule(rule.id).then((next) => { setRules(next); if (editing === rule.id) reset(); })}
-            />
-          </div>
-        ))}
-      </SettingsSection>
-    </div>
-  );
-}
-
 export function SettingsPage() {
   const { section } = useParams({ from: "/settings/$section" });
   const entry = SETTINGS_SECTIONS.find((s) => s.id === section) ?? SETTINGS_SECTIONS[0];
   return (
     <PageContainer>
       <h1 className="px-3 text-lg font-medium sm:px-4">{entry.label}</h1>
-      {entry.id === "general" ? <><General /><UninstallApp /><AutomaticAllows /></> : entry.id === "allow-list" ? <AllowList /> : entry.id === "agents" ? <Agents /> : entry.id === "monitoring" ? <Monitoring /> : entry.id === "ignored" ? <IgnoredNoises /> : entry.id === "appearance" ? <Appearance /> : entry.id === "keybindings" ? <Keybindings /> : entry.id === "diagnostics" ? <Diagnostics /> : <Licenses />}
+      {entry.id === "general" ? <><General /><UninstallApp /></> : entry.id === "agents" ? <Agents /> : entry.id === "monitoring" ? <Monitoring /> : entry.id === "ignored" ? <IgnoredNoises /> : entry.id === "appearance" ? <Appearance /> : entry.id === "keybindings" ? <Keybindings /> : entry.id === "diagnostics" ? <Diagnostics /> : <Licenses />}
     </PageContainer>
   );
 }

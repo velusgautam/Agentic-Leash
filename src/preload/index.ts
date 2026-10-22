@@ -24,6 +24,8 @@ const leash: LeashBridge = {
   queryHistory: (filter) => ipcRenderer.invoke("history:query", filter),
   historyRetention: () => ipcRenderer.invoke("history:retention:get"),
   setHistoryRetention: (which, days) => ipcRenderer.invoke("history:retention:set", which, days),
+  historyOptimizationInfo: () => ipcRenderer.invoke("history:optimize:info"),
+  optimizeHistory: () => ipcRenderer.invoke("history:optimize:run"),
   listIgnored: () => ipcRenderer.invoke("ignored:list"),
   setIgnored: (id, enabled) => ipcRenderer.invoke("ignored:set", id, enabled),
   addIgnored: (prefix) => ipcRenderer.invoke("ignored:add", prefix),
@@ -47,6 +49,11 @@ const leash: LeashBridge = {
     const wrapped = (_event: unknown, theme: ThemeSource) => listener(theme);
     ipcRenderer.on("theme:changed", wrapped);
     return () => ipcRenderer.removeListener("theme:changed", wrapped);
+  },
+  onGrantStatus: (listener) => {
+    const wrapped = (_event: unknown, status: { count: number; lockdown: boolean }) => listener(status);
+    ipcRenderer.on("grants:status-changed", wrapped);
+    return () => ipcRenderer.removeListener("grants:status-changed", wrapped);
   },
   resetTcc: (service, bundleId) => ipcRenderer.invoke("tcc:reset", service, bundleId),
   removeMcp: (agent, name) => ipcRenderer.invoke("agents:remove-mcp", agent, name),

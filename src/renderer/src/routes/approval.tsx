@@ -1,27 +1,12 @@
 import { useEffect, useState } from "react";
 import { CheckCircle2, X } from "lucide-react";
-import { parentFolders } from "../../../shared/parents";
 import { denyCountdown, pendingSecondsLeft, POPUP_TIMEOUT_S } from "../../../shared/pending";
 import type { PendingRequest } from "../../../shared/types";
+import { ApprovalChoices, allowLabel, isBroad, Kbd, PRESETS } from "~/components/ApprovalChoices";
 import { AGENT_LABELS, AgentIcon } from "~/components/Icons";
 import { Button } from "~/components/ui/button";
-import { cn } from "~/lib/utils";
 
-const PRESETS = [
-  { key: "1", label: "15 min", seconds: 15 * 60 },
-  { key: "2", label: "1 hour", seconds: 60 * 60 },
-  { key: "3", label: "8 hours", seconds: 8 * 60 * 60 },
-  { key: "4", label: "Always", seconds: null },
-] as const;
-
-const folderLabel = (path: string) => {
-  const parts = path.split("/").filter(Boolean);
-  return parts[0] === "Users" && parts.length === 2 ? "~" : parts.at(-1) ?? path;
-};
-
-const Kbd = ({ children, className }: { children: string; className?: string }) => (
-  <kbd className={cn("rounded border border-current/20 px-1 font-sans text-[10px] leading-4 font-medium opacity-70", className)}>{children}</kbd>
-);
+const ARM_MS = 600;
 
 function CloseButton() {
   return (
@@ -50,12 +35,28 @@ export function ApprovalPage() {
     setChoice(1);
     setScope(null);
   }, [current?.id]);
+  const [armed, setArmed] = useState(false);
+  useEffect(() => {
+    let timer = 0;
+    const arm = () => {
+      window.clearTimeout(timer);
+      setArmed(false);
+      timer = window.setTimeout(() => setArmed(true), ARM_MS);
+    };
+    arm();
+    window.addEventListener("focus", arm);
+    return () => {
+      window.clearTimeout(timer);
+      window.removeEventListener("focus", arm);
+    };
+  }, [current?.id]);
+  const broad = isBroad(scope, choice);
   const allow = () => current && void window.leash.decidePending(current.id, "allow", PRESETS[choice]!.seconds, scope ?? undefined);
   const deny = () => current && void window.leash.decidePending(current.id, "deny", null);
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
       if (!current) return;
-      if (event.key === "Enter") allow();
+      if (event.key === "Enter" && armed && !broad) allow();
       if (event.key === "Escape") deny();
       const index = PRESETS.findIndex((item) => item.key === event.key);
       if (index >= 0) setChoice(index);
@@ -75,12 +76,6 @@ export function ApprovalPage() {
   }
 
   const { request } = current;
-  const folders = parentFolders(request.paths);
-  const target = request.command
-    ? { label: "Command", value: request.command }
-    : request.url
-      ? { label: "URL", value: request.url }
-      : { label: request.paths.length > 1 ? "Paths" : "Path", value: request.paths.join("\n") };
   return (
     <div className="flex h-dvh flex-col bg-popover text-popover-foreground">
       <header className="drag-region flex shrink-0 items-center gap-3 border-b border-border/60 px-4 py-3">
@@ -97,58 +92,15 @@ export function ApprovalPage() {
         <CloseButton />
       </header>
       <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto px-4 py-3 [&>*]:shrink-0">
-        <div>
-          <div className="mb-1 text-[11px] font-medium text-muted-foreground">{target.label}</div>
-          <pre className="max-h-24 overflow-auto rounded-lg border border-border/60 bg-muted/40 px-3 py-2 font-mono text-xs leading-relaxed break-all whitespace-pre-wrap">{target.value}</pre>
-        </div>
-        {folders.length ? (
-          <div>
-            <div className="mb-1 text-[11px] font-medium text-muted-foreground">Or allow this whole folder</div>
-            <div className="flex max-h-16 flex-wrap gap-1 overflow-auto">
-              {folders.map((folder) => (
-                <button
-                  key={folder}
-                  type="button"
-                  title={folder}
-                  aria-pressed={scope === folder}
-                  onClick={() => setScope((value) => (value === folder ? null : folder))}
-                  className={cn("rounded-md border px-2 py-1 font-mono text-xs", scope === folder ? "border-primary bg-primary/10 font-medium ring-1 ring-primary/30" : "border-border bg-background hover:bg-accent")}
-                >
-                  {folderLabel(folder)}
-                </button>
-              ))}
-            </div>
-          </div>
-        ) : null}
-        <div>
-          <div className="mb-1 text-[11px] font-medium text-muted-foreground">Allow for</div>
-          <div role="radiogroup" aria-label="Allow for" className="grid grid-cols-4 gap-1 rounded-lg border border-border/60 bg-muted/40 p-0.5">
-            {PRESETS.map((preset, index) => (
-              <button
-                key={preset.key}
-                type="button"
-                role="radio"
-                aria-checked={choice === index}
-                onClick={() => setChoice(index)}
-                className={cn(
-                  "flex items-center justify-center gap-1.5 rounded-md px-2 py-1 text-xs transition-colors",
-                  choice === index ? "bg-background font-medium shadow-xs ring-1 ring-border" : "text-muted-foreground hover:text-foreground",
-                )}
-              >
-                {preset.label}
-                <Kbd>{preset.key}</Kbd>
-              </button>
-            ))}
-          </div>
-        </div>
+        <ApprovalChoices request={request} choice={choice} onChoice={setChoice} scope={scope} onScope={setScope} showKeys />
       </div>
       <footer className="flex shrink-0 items-center gap-2 border-t border-border/60 bg-muted/50 px-4 py-2.5">
         <p className="mr-auto text-xs text-muted-foreground tabular-nums">{denyCountdown(pendingSecondsLeft(current.askedAt, now, POPUP_TIMEOUT_S))}</p>
         <Button size="sm" variant="ghost" className="h-8 text-sm" onClick={deny}>
           Deny <Kbd>esc</Kbd>
         </Button>
-        <Button size="sm" className="h-8 text-sm" onClick={() => allow()}>
-          Allow {scope ? `${folderLabel(scope)} ` : ""}{PRESETS[choice]!.seconds === null ? "always" : `for ${PRESETS[choice]!.label}`} <Kbd>↵</Kbd>
+        <Button size="sm" variant={broad ? "destructive" : "default"} disabled={!armed} className="h-8 text-sm" onClick={() => allow()}>
+          {allowLabel(scope, choice)} {broad ? null : <Kbd>↵</Kbd>}
         </Button>
       </footer>
     </div>

@@ -42,6 +42,8 @@ export async function handlePayload(options: {
       agent: request.agent,
       tool: request.tool,
       paths: request.paths,
+      command: request.command,
+      url: request.url,
       verdict: answer === "timeout" ? "timeout" : verdict.kind,
       reason: verdict.kind === "deny" ? verdict.reason : undefined,
       durationMs: Math.max(0, options.now - started),

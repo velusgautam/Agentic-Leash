@@ -7,8 +7,10 @@ import {
   collapseGrantDupes,
   createRule,
   deleteRule,
+  listDecisions,
   listGrants,
   openGrantsDb,
+  recordDecision,
   updateRule,
   upsertCommandGrant,
   upsertGrant,
@@ -22,6 +24,18 @@ const row = (path: string, expiresAt: number | null, createdAt = 1) => ({
   createdAt,
   expiresAt,
 });
+
+const SAFE_COMMANDS = [
+  "pwd", "whoami", "id", "id -u", "id -un", "id -g", "id -gn",
+  "uname", "uname -a", "uname -m", "arch", "hostname", "tty",
+  "sw_vers", "sw_vers -productName", "sw_vers -productVersion", "sw_vers -buildVersion",
+  "true", "false",
+  "git --version", "node --version", "npm --version", "npx --version", "pnpm --version",
+  "yarn --version", "bun --version", "deno --version", "python --version", "python3 --version",
+  "ruby --version", "go version", "rustc --version", "cargo --version", "java -version",
+  "javac -version", "swift --version", "clang --version", "tsc --version", "docker --version",
+  "gh --version", "xcodebuild -version", "xcode-select -p",
+];
 
 describe("upsertGrant", () => {
   it("refreshes the same agent, path, and access instead of inserting another row", () => {
@@ -96,23 +110,69 @@ describe("command grants", () => {
 });
 
 describe("rules", () => {
+  it("seeds exact global safe commands once and preserves deletions", () => {
+    const path = join(mkdtempSync(join(tmpdir(), "al-safe-")), "grants.db");
+    let db = openGrantsDb(path);
+    const seeded = db.prepare("SELECT value FROM rules WHERE kind = 'command' AND agent = '*' ORDER BY id").all() as { value: string }[];
+    expect(seeded.map((row) => row.value)).toEqual(SAFE_COMMANDS);
+    const removed = db.prepare("SELECT id FROM rules WHERE value = 'pwd'").get() as { id: number };
+    deleteRule(db, removed.id);
+    db.close();
+
+    db = openGrantsDb(path);
+    const values = db.prepare("SELECT value FROM rules WHERE kind = 'command' AND agent = '*'").all() as { value: string }[];
+    expect(values.map((row) => row.value)).not.toContain("pwd");
+    expect(values).toHaveLength(SAFE_COMMANDS.length - 1);
+    db.close();
+  });
+
   it("creates, rejects a duplicate, updates, and deletes", () => {
     const db = openGrantsDb(join(mkdtempSync(join(tmpdir(), "al-rules-")), "grants.db"));
     const home = "/Users/v";
     const created = createRule(db, { kind: "folder", agent: "*", value: "~/proj" }, home, 5);
     expect(created.error).toBeNull();
-    expect(created.rules[0]).toMatchObject({ kind: "folder", agent: "*", value: "/Users/v/proj", createdAt: 5 });
+    const folder = created.rules.find((rule) => rule.kind === "folder");
+    expect(folder).toMatchObject({ kind: "folder", agent: "*", value: "/Users/v/proj", createdAt: 5 });
     expect(createRule(db, { kind: "folder", agent: "*", value: "/Users/v/proj" }, home, 6).error).toBe("Already in the allow list.");
-    const id = created.rules[0]!.id;
-    expect(updateRule(db, id, { kind: "command", agent: "cursor", value: "npm test" }, home, 7)).toMatchObject({ error: null, rules: [expect.objectContaining({ kind: "command", value: "npm test", createdAt: 7 })] });
+    const id = folder!.id;
+    const updated = updateRule(db, id, { kind: "command", agent: "cursor", value: "npm test" }, home, 7);
+    expect(updated.error).toBeNull();
+    expect(updated.rules).toContainEqual(expect.objectContaining({ kind: "command", value: "npm test", createdAt: 7 }));
     expect(createRule(db, { kind: "command", agent: "cursor", value: "ls" }, home, 8).error).toBeNull();
     expect(updateRule(db, id, { kind: "command", agent: "cursor", value: "ls" }, home, 9).error).toBe("Already in the allow list.");
     expect(updateRule(db, id, { kind: "command", agent: "cursor", value: "npm test" }, home, 8).error).toBeNull();
     expect(updateRule(db, 99, { kind: "command", agent: "*", value: "ls" }, home, 8)).toMatchObject({ error: "That rule is gone." });
     const left = deleteRule(db, id);
-    expect(left.map((rule) => rule.value)).toEqual(["ls"]);
+    expect(left.map((rule) => rule.value)).toContain("ls");
     expect(deleteRule(db, id)).toEqual(left);
-    expect(deleteRule(db, left[0]!.id)).toEqual([]);
+    const ls = left.find((rule) => rule.value === "ls")!;
+    expect(deleteRule(db, ls.id).map((rule) => rule.value)).not.toContain("ls");
+    db.close();
+  });
+});
+
+describe("decisions", () => {
+  it("stores the command, url and paths behind each decision", () => {
+    const db = openGrantsDb(join(mkdtempSync(join(tmpdir(), "al-dec-")), "grants.db"));
+    recordDecision(db, { ts: 1, agent: "cursor", tool: "Bash", paths: [], verdict: "deny", reason: "Denied in Agentic Leash", command: "rm -rf x" });
+    recordDecision(db, { ts: 2, agent: "cursor", tool: "Write", paths: ["/a", "/b"], verdict: "pass" });
+    recordDecision(db, { ts: 3, agent: "cursor", tool: "WebFetch", paths: [], verdict: "pass", url: "https://x.dev" });
+    const [web, write, bash] = listDecisions(db);
+    expect(web).toMatchObject({ url: "https://x.dev", command: null });
+    expect(write).toMatchObject({ paths: '["/a","/b"]', command: null, url: null, reason: null });
+    expect(bash).toMatchObject({ command: "rm -rf x", url: null, reason: "Denied in Agentic Leash" });
+    db.close();
+  });
+
+  it("adds command and url to a pre-existing decisions table", () => {
+    const path = join(mkdtempSync(join(tmpdir(), "al-olddec-")), "grants.db");
+    const raw = new DatabaseSync(path);
+    raw.exec("CREATE TABLE decisions (id INTEGER PRIMARY KEY, ts INTEGER NOT NULL, agent TEXT NOT NULL, tool TEXT NOT NULL, paths TEXT NOT NULL, verdict TEXT NOT NULL, reason TEXT, grant_id INTEGER, duration_ms INTEGER)");
+    raw.prepare("INSERT INTO decisions (ts, agent, tool, paths, verdict) VALUES (?, ?, ?, ?, ?)").run(1, "cursor", "Write", '["/p"]', "pass");
+    raw.close();
+    const db = openGrantsDb(path);
+    recordDecision(db, { ts: 2, agent: "cursor", tool: "Bash", paths: [], verdict: "pass", command: "ls" });
+    expect(listDecisions(db).map((row) => [row.command, row.url])).toEqual([["ls", null], [null, null]]);
     db.close();
   });
 });

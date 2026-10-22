@@ -22,14 +22,19 @@ export function trayMenuTemplate({
   pending = 0,
   revokeAll,
   review,
+  lockdown = false,
+  unlock,
 }: {
   open: () => void;
   quit: () => void;
   pending?: number;
   revokeAll?: () => void;
   review: () => void;
+  lockdown?: boolean;
+  unlock?: () => void;
 }): MenuItemConstructorOptions[] {
   return [
+    ...(lockdown ? [{ id: "lockdown", label: "Lockdown is on", enabled: false }, { id: "end-lockdown", label: "End lockdown", click: unlock }, { type: "separator" } as const] : []),
     { id: "open", label: "Open Agentic Leash", click: open },
     { id: "pending", label: pending ? `Pending requests (${pending})` : "Pending requests", enabled: pending > 0, click: review },
     { id: "revoke-all", label: "Revoke all", click: revokeAll },

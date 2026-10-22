@@ -19,7 +19,9 @@ let tray: Tray | null = null;
 let quitting = false;
 let pendingCount = 0;
 let pendingNav: string | null = null;
+let lockdown = false;
 let revokeAll = (): { revoked: number } => ({ revoked: 0 });
+let unlock = (): void => undefined;
 
 function createWindow(visible: boolean): BrowserWindow {
   const window = new BrowserWindow({
@@ -49,7 +51,8 @@ function loadRenderer(window: BrowserWindow, hash = ""): void {
 
 function refreshTray(): void {
   if (!tray) return;
-  tray.setTitle(pendingCount ? String(pendingCount) : "");
+  tray.setTitle(lockdown ? (pendingCount ? `🔒 ${pendingCount}` : "🔒") : pendingCount ? String(pendingCount) : "");
+  tray.setToolTip(lockdown ? "Agentic Leash — lockdown on" : "Agentic Leash");
   tray.setContextMenu(
     Menu.buildFromTemplate(
       trayMenuTemplate({
@@ -58,6 +61,8 @@ function refreshTray(): void {
         pending: pendingCount,
         review: showGrants,
         revokeAll: () => void confirmRevokeAll(),
+        lockdown,
+        unlock,
       }),
     ),
   );
@@ -231,12 +236,16 @@ if (!app.requestSingleInstanceLock()) {
     tray = new Tray(isMac ? trayIcon : nativeImage.createFromPath(appIcon).resize({ width: 16, height: 16 }));
     tray.setToolTip("Agentic Leash");
     if (!isMac) tray.on("click", showWindow);
-    ({ revokeAll } = startRuntime({
+    ({ revokeAll, unlock } = startRuntime({
       userData: app.getPath("userData"),
       openApproval,
       closeApproval,
       setPending: (count) => {
         pendingCount = count;
+        refreshTray();
+      },
+      onStatus: (status) => {
+        lockdown = status.lockdown;
         refreshTray();
       },
       notify: (title, body) => new Notification({ title, body }).show(),

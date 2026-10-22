@@ -1,12 +1,12 @@
 import { useEffect, useRef, useState } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
-import { CalendarClock, Eye, EyeOff, Search, ShieldAlert, X } from "lucide-react";
+import { CalendarClock, Eye, EyeOff, Search, X } from "lucide-react";
 import type { Grant, HistoryRow } from "../../../shared/types";
 import { DetailSplit } from "~/components/DetailSplit";
 import { coveringGrant, EventDetail } from "~/components/EventDetail";
-import { EVENT_KINDS, EventRow } from "~/components/EventRow";
+import { AgentChips, control, KindSelect, SensitiveToggle } from "~/components/EventFilters";
+import { EventRow } from "~/components/EventRow";
 import { HISTORY_AGENT, visibleAgent } from "../../../shared/setup";
-import { AGENT_LABELS, AgentIcon } from "~/components/Icons";
 import { useSetup } from "~/components/useSetup";
 import { cn } from "~/lib/utils";
 
@@ -37,8 +37,6 @@ function localValue(ms: number | null): string {
   const pad = (n: number) => String(n).padStart(2, "0");
   return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
 }
-
-const control = "h-8 rounded-lg border border-border bg-background/60 text-sm shadow-xs/5 outline-none focus-visible:ring-2 focus-visible:ring-ring";
 
 export function HistoryPage() {
   const { status } = useSetup();
@@ -98,7 +96,6 @@ export function HistoryPage() {
     setSensitive(false);
     setIncludeNoise(false);
   };
-  const toggleAgent = (agent: string) => setAgents((current) => (current.includes(agent) ? current.filter((item) => item !== agent) : [...current, agent]));
 
   const toolbar = (
     <div className="space-y-3">
@@ -112,21 +109,8 @@ export function HistoryPage() {
         </label>
       </div>
       <div className="flex flex-wrap items-center gap-2">
-        <div role="group" aria-label="Agents" className="flex h-8 items-center gap-0.5 rounded-lg border border-border bg-muted/40 p-0.5">
-          <button type="button" aria-pressed={agents.length === 0} onClick={() => setAgents([])} className={cn("h-full rounded-md px-2.5 text-xs", agents.length === 0 ? "bg-background font-medium shadow-xs ring-1 ring-border" : "text-muted-foreground hover:text-foreground")}>
-            All agents
-          </button>
-          {agentChoices.map((agent) => (
-            <button key={agent} type="button" aria-pressed={agents.includes(agent)} onClick={() => toggleAgent(agent)} className={cn("flex h-full items-center gap-1.5 rounded-md px-2.5 text-xs", agents.includes(agent) ? "bg-background font-medium shadow-xs ring-1 ring-border" : "text-muted-foreground hover:text-foreground")}>
-              <AgentIcon agent={agent} className="size-3.5" />
-              {AGENT_LABELS[agent] ?? agent}
-            </button>
-          ))}
-        </div>
-        <select aria-label="Kind" className={cn(control, "px-2.5")} value={kind} onChange={(event) => setKind(event.target.value)}>
-          <option value="all">All kinds</option>
-          {EVENT_KINDS.map((item) => <option key={item} value={item}>{item[0]!.toUpperCase() + item.slice(1)}</option>)}
-        </select>
+        <AgentChips choices={agentChoices} value={agents} onChange={setAgents} />
+        <KindSelect value={kind} onChange={setKind} />
         <label className={cn(control, "flex items-center gap-1.5 pl-2.5")}>
           <CalendarClock className="size-3.5 text-muted-foreground" aria-hidden />
           <select aria-label="Time range" className="h-full bg-transparent pr-2 outline-none" value={range} onChange={(event) => pickRange(event.target.value as Range)}>
@@ -140,13 +124,10 @@ export function HistoryPage() {
             <input aria-label="To" className="bg-transparent outline-none" type="datetime-local" value={localValue(to)} onChange={(event) => setTo(event.target.value ? new Date(event.target.value).getTime() : null)} />
           </div>
         ) : null}
-        <button type="button" aria-pressed={sensitive} onClick={() => setSensitive((value) => !value)} className={cn(control, "inline-flex items-center gap-1.5 px-2.5", sensitive && "border-destructive/40 bg-destructive/10 text-destructive")}>
-          <ShieldAlert className="size-3.5" aria-hidden />
-          Sensitive
-        </button>
+        <SensitiveToggle on={sensitive} onToggle={() => setSensitive((value) => !value)} />
         <button type="button" aria-pressed={includeNoise} title="Shows scratch-path writes, execs, and /tmp reads." onClick={() => setIncludeNoise((value) => !value)} className={cn(control, "inline-flex items-center gap-1.5 px-2.5", includeNoise && "border-primary/40 bg-primary/10")}>
           {includeNoise ? <Eye className="size-3.5" aria-hidden /> : <EyeOff className="size-3.5" aria-hidden />}
-          Include noise
+          Show temp files and execs
         </button>
         {filtered ? <button type="button" className="ml-1 text-xs text-muted-foreground underline-offset-2 hover:text-foreground hover:underline" onClick={clear}>Clear filters</button> : null}
       </div>

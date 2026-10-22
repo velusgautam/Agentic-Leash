@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, statSync, watch, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, statfsSync, statSync, watch, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { promisify } from "node:util";
@@ -7,7 +7,7 @@ import { app, BrowserWindow, globalShortcut, ipcMain, nativeTheme } from "electr
 import { DEFAULT_TTL_S, grantsDbPath, HISTORY_DIR, homeDir, isClaudeBinary, IS_MAC, leashDir, POPUP_TIMEOUT_S, protectedRoots, socketPath, TCC_CLIENTS } from "../shared/constants";
 import { diagnosticsReport } from "../shared/diagnostics";
 import { cancelScheduled, collapseGrantDupes, createRule, decisionDurations, deleteGrant, deleteGrants, deleteRule, getSetting, listDecisions, listGrants, listRules, listScheduled, openGrantsDb, scheduleRevoke, setSetting, updateRule, upsertCommandGrant, upsertGrant } from "../shared/db";
-import { historyText, listHistory, openHistoryDb, queryHistory, type HistoryFilter } from "../helper/historyDb";
+import { historyStorageBytes, historyText, listHistory, openHistoryDb, optimizeHistory, queryHistory, type HistoryFilter } from "../helper/historyDb";
 import type { Access, AgentId, AgentSnapshot, HistoryRow, ThemeSource } from "../shared/types";
 import { loadClaude } from "./agents/claude";
 import { cursorWatchPaths, cursorWorkers, loadCursor } from "./agents/cursor";
@@ -25,7 +25,7 @@ import { addIgnored, deleteIgnored, listIgnored, setIgnoredEnabled } from "../sh
 import { MAIN_RETENTION_DAYS, NOISE_RETENTION_DAYS, parseRetentionDays, retentionDays } from "../shared/retention";
 import { coveredPending } from "../hook/decide";
 import { grantRoot, parentFolders } from "../shared/parents";
-import { helperInstallScript, helperUninstallScript, installSweepAgent, sweepAgentPath, sweepServiceTarget } from "./helperInstall";
+import { helperInstallScript, helperOptimizeScript, helperUninstallScript, installSweepAgent, sweepAgentPath, sweepServiceTarget } from "./helperInstall";
 import { LOGIN_AGENT_LABEL, loginAgentPath } from "./loginItem";
 import { publishClaudeRules } from "./rulesMode";
 import { guiQuitScript, parsePs, percentiles, restartTargets } from "./system";
@@ -88,13 +88,15 @@ async function psLines(): Promise<string[]> {
 
 const cursorStateDb = () => join(app.getPath("appData"), "Cursor/User/globalStorage/state.vscdb");
 
-export function startRuntime(options: { userData: string; openApproval: () => void; closeApproval: () => void; setPending: (count: number) => void; notify: (title: string, body: string) => void; finishUninstall: () => void; disableLoginItem: () => void }): { revokeAll: () => { revoked: number } } {
+export function startRuntime(options: { userData: string; openApproval: () => void; closeApproval: () => void; setPending: (count: number) => void; notify: (title: string, body: string) => void; finishUninstall: () => void; disableLoginItem: () => void; onStatus?: (status: { count: number; lockdown: boolean }) => void }): { revokeAll: () => { revoked: number }; unlock: () => void } {
   const db = openGrantsDb(grantsDbPath());
   collapseGrantDupes(db);
   const home = homeDir();
+  const historyPath = join(process.env.AGENTIC_LEASH_HISTORY_DIR || HISTORY_DIR, "history.db");
   let snapshots: AgentSnapshot[] = [];
   let history: HistoryRow[] = [];
   let historySeen = readUiState(options.userData).historySeen ?? 0;
+  let historyPaused = false;
   let uninstalling = false;
   const timeouts = new Map<string, NodeJS.Timeout>();
 
@@ -158,9 +160,9 @@ export function startRuntime(options: { userData: string; openApproval: () => vo
   }, 30_000);
 
   const pollHistory = () => {
-    if (uninstalling) return;
+    if (uninstalling || historyPaused) return;
     try {
-      const historyDb = openHistoryDb(join(process.env.AGENTIC_LEASH_HISTORY_DIR || HISTORY_DIR, "history.db"), true);
+      const historyDb = openHistoryDb(historyPath, true);
       const rows = listHistory(historyDb, 0, 300);
       historyDb.close();
       history = rows;
@@ -190,12 +192,19 @@ export function startRuntime(options: { userData: string; openApproval: () => vo
   };
 
   const withHistory = <T,>(read: (historyDb: ReturnType<typeof openHistoryDb>) => T): T => {
-    const historyDb = openHistoryDb(join(process.env.AGENTIC_LEASH_HISTORY_DIR || HISTORY_DIR, "history.db"), true);
+    if (historyPaused) throw new Error("History is being optimized.");
+    const historyDb = openHistoryDb(historyPath, true);
     try {
       return read(historyDb);
     } finally {
       historyDb.close();
     }
+  };
+  const grantStatus = () => ({ count: listGrants(db).length, lockdown: getSetting(db, "lockdown", "0") === "1" });
+  const publishStatus = () => {
+    const status = grantStatus();
+    for (const window of BrowserWindow.getAllWindows()) window.webContents.send("grants:status-changed", status);
+    options.onStatus?.(status);
   };
   const revokeAll = () => {
     const grants = listGrants(db);
@@ -204,26 +213,31 @@ export function startRuntime(options: { userData: string; openApproval: () => vo
     setSetting(db, "lockdown", "1");
     publishClaudeRules(db, join(claudeRoot(), "settings.json"), home, snapshots.find((snapshot) => snapshot.id === "claude-code")?.enforcement === "rules");
     rescan();
+    publishStatus();
     return { revoked: grants.length };
+  };
+  const unlock = () => {
+    setSetting(db, "lockdown", "0");
+    publishClaudeRules(db, join(claudeRoot(), "settings.json"), home, snapshots.find((snapshot) => snapshot.id === "claude-code")?.enforcement === "rules");
+    publishStatus();
   };
 
   ipcMain.handle("agents:list", () => snapshots);
   ipcMain.handle("grants:list", () => listGrants(db));
-  ipcMain.handle("grants:status", () => ({ count: listGrants(db).length, lockdown: getSetting(db, "lockdown", "0") === "1" }));
+  ipcMain.handle("grants:status", () => grantStatus());
   ipcMain.handle("grants:revoke", (_event, id: number) => {
     const grant = listGrants(db).find((item) => item.id === id);
     if (grant) revokeStoredGrant(home, grant);
     deleteGrant(db, id);
     rescan();
+    publishStatus();
   });
   ipcMain.handle("grants:revoke-all", () => revokeAll());
   ipcMain.handle("grants:create", (_event, input: { agent: AgentId | "*"; path: string; access: Access; ttlSeconds: number | null }) => {
     allow([input.path], input.agent, input.access, input.ttlSeconds, true);
+    publishStatus();
   });
-  ipcMain.handle("grants:unlock", () => {
-    setSetting(db, "lockdown", "0");
-    publishClaudeRules(db, join(claudeRoot(), "settings.json"), home, snapshots.find((snapshot) => snapshot.id === "claude-code")?.enforcement === "rules");
-  });
+  ipcMain.handle("grants:unlock", () => unlock());
   const autoAllowRows = () => {
     const off = new Set(parseAutoAllowOff(getSetting(db, "auto_allow_off", "[]")));
     return AUTO_ALLOWS.map((rule) => ({ ...rule, enabled: !off.has(rule.id) }));
@@ -290,6 +304,41 @@ export function startRuntime(options: { userData: string; openApproval: () => vo
     setSetting(db, which === "main" ? "history_days" : "noise_days", String(parsed));
     return retentionState();
   });
+  const optimizationInfo = () => {
+    const historyDir = dirname(historyPath);
+    if (!existsSync(historyPath)) {
+      const disk = existsSync(historyDir) ? statfsSync(historyDir) : null;
+      return { available: false, sizeBytes: 0, requiredBytes: 0, freeBytes: disk ? disk.bavail * disk.bsize : 0 };
+    }
+    const sizeBytes = historyStorageBytes(historyPath);
+    const disk = statfsSync(historyDir);
+    return { available: true, sizeBytes, requiredBytes: sizeBytes + 64 * 1024 * 1024, freeBytes: disk.bavail * disk.bsize };
+  };
+  let optimizingHistory = false;
+  ipcMain.handle("history:optimize:info", () => optimizationInfo());
+  ipcMain.handle("history:optimize:run", async () => {
+    if (optimizingHistory) throw new Error("History optimization is already running.");
+    const info = optimizationInfo();
+    if (!info.available) throw new Error("There is no history database to optimize.");
+    if (info.freeBytes < info.requiredBytes) throw new Error("Not enough free disk space to optimize history safely.");
+    optimizingHistory = true;
+    historyPaused = true;
+    try {
+      let result;
+      if (IS_MAC && app.isPackaged) {
+        const helperScript = hookScript().replace("leash-hook.js", "leash-helper.js");
+        await exec("/usr/bin/osascript", ["-e", helperOptimizeScript(process.execPath, helperScript, historyPath)]);
+        result = { beforeBytes: info.sizeBytes, afterBytes: historyStorageBytes(historyPath) };
+      } else {
+        result = optimizeHistory(historyPath);
+      }
+      pollHistory();
+      return result;
+    } finally {
+      historyPaused = false;
+      optimizingHistory = false;
+    }
+  });
   ipcMain.handle("ignored:list", () => listIgnored(db));
   ipcMain.handle("ignored:set", (_event, id: number, enabled: boolean) => {
     if (!Number.isInteger(id) || typeof enabled !== "boolean") return listIgnored(db);
@@ -326,7 +375,10 @@ export function startRuntime(options: { userData: string; openApproval: () => vo
       }
     }
     broker.decide(id, { decision, ttlSeconds: ttlSeconds ?? undefined });
-    if (decision === "allow") releaseCovered();
+    if (decision === "allow") {
+      releaseCovered();
+      publishStatus();
+    }
   });
   // Agents that aren't running read the new config on their next start, so they drop out here.
   const staleTargets = async () => {
@@ -555,13 +607,17 @@ export function startRuntime(options: { userData: string; openApproval: () => vo
   });
 
   try {
-    globalShortcut.register(IS_MAC ? "Control+Alt+Command+L" : "Control+Alt+Shift+L", () => void revokeAll());
+    globalShortcut.register(IS_MAC ? "Control+Alt+Command+L" : "Control+Alt+Shift+L", () => {
+      const { revoked } = revokeAll();
+      options.notify("Lockdown is on", `Revoked ${revoked} grants. Agent tool calls are blocked until you end lockdown.`);
+    });
   } catch {
     /* shortcut already owned */
   }
   void ensureSweepAgent();
   nativeTheme.themeSource = readUiState(options.userData).theme ?? "system";
-  return { revokeAll };
+  publishStatus();
+  return { revokeAll, unlock };
 }
 
 export function leashDataDir(): string {

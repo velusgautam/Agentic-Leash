@@ -1,14 +1,14 @@
 import { expect, test } from "@playwright/test";
 import { launch } from "./launch";
 
-const SECTIONS = ["General", "Agents", "Allow list", "Monitoring", "Ignored noises", "Appearance", "Keybindings", "Diagnostics", "Licenses"];
+const SECTIONS = ["General", "Agents", "Monitoring", "Ignored paths", "Appearance", "Keybindings", "Diagnostics", "Licenses"];
 
 test("sidebar navigates pages, agents and settings", async () => {
   const app = await launch();
   const win = await app.firstWindow();
   await expect(win.getByText("Live activity")).toBeVisible();
 
-  await win.getByRole("link", { name: "Grants", exact: true }).click();
+  await win.getByRole("link", { name: "Access", exact: true }).click();
   await expect(win.getByText("No grants yet")).toBeVisible();
 
   await win.getByRole("link", { name: "History", exact: true }).click();

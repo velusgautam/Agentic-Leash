@@ -49,6 +49,28 @@ export function helperUninstallScript(): string {
   return `do shell script "/bin/launchctl bootout system '${plist}' || true; /bin/rm -f '${plist}'; /bin/rm -rf '${dir}'" with administrator privileges`;
 }
 
+function shellQuote(value: string): string {
+  return `'${value.replace(/'/g, "'\\''")}'`;
+}
+
+export function helperOptimizeCommand(
+  execPath: string,
+  scriptPath: string,
+  historyPath: string,
+  tools: { launchctl?: string; env?: string; plist?: string } = {},
+): string {
+  const plist = tools.plist ?? "/Library/LaunchDaemons/com.agenticleash.helper.plist";
+  const service = "system/com.agenticleash.helper";
+  const launchctl = shellQuote(tools.launchctl ?? "/bin/launchctl");
+  const env = shellQuote(tools.env ?? "/usr/bin/env");
+  return `if ${launchctl} print ${service} >/dev/null 2>&1; then ${launchctl} bootout system ${shellQuote(plist)} || exit $?; fi; result=0; ${env} ELECTRON_RUN_AS_NODE=1 ${shellQuote(execPath)} ${shellQuote(scriptPath)} '--optimize' ${shellQuote(historyPath)} || result=$?; restart=0; ${launchctl} bootstrap system ${shellQuote(plist)} || restart=$?; if [ "$result" -ne 0 ]; then exit $result; fi; exit $restart`;
+}
+
+export function helperOptimizeScript(execPath: string, scriptPath: string, historyPath: string): string {
+  const command = helperOptimizeCommand(execPath, scriptPath, historyPath);
+  return `do shell script "${command.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}" with administrator privileges`;
+}
+
 export function sweepAgentPath(home = homedir()): string {
   return join(home, "Library", "LaunchAgents", "com.agenticleash.sweep.plist");
 }

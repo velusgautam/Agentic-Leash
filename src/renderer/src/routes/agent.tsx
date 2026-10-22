@@ -12,14 +12,14 @@ import { useSetup } from "~/components/useSetup";
 import { Button } from "~/components/ui/button";
 import { cn } from "~/lib/utils";
 
-const ENFORCEMENT: Record<Enforcement, { label: string; tone: string }> = {
-  hook: { label: "Hooks enforce", tone: "bg-emerald-500/10 text-emerald-700 dark:text-emerald-300" },
-  rules: { label: "Rules mode", tone: "bg-amber-500/12 text-amber-700 dark:text-amber-300" },
-  "monitor-only": { label: "Monitor only", tone: "bg-muted text-muted-foreground" },
+const ENFORCEMENT: Record<Enforcement, { label: string; tone: string; hint: string }> = {
+  hook: { label: "Hooks enforce", hint: "Agentic Leash asks before each tool call.", tone: "bg-emerald-500/10 text-emerald-700 dark:text-emerald-300" },
+  rules: { label: "Rules mode", hint: "Hooks are blocked here, so Agentic Leash writes the agent's own allow rules instead.", tone: "bg-amber-500/12 text-amber-700 dark:text-amber-300" },
+  "monitor-only": { label: "Monitor only", hint: "Activity is recorded but nothing is blocked.", tone: "bg-muted text-muted-foreground" },
 };
 
-function Pill({ tone, children }: { tone: string; children: ReactNode }) {
-  return <span className={cn("inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-xs font-medium whitespace-nowrap", tone)}>{children}</span>;
+function Pill({ tone, title, children }: { tone: string; title?: string; children: ReactNode }) {
+  return <span title={title} className={cn("inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-xs font-medium whitespace-nowrap", tone)}>{children}</span>;
 }
 
 const accessTone = (access: string) => (access === "write" ? "bg-amber-500/12 text-amber-700 dark:text-amber-300" : "bg-sky-500/10 text-sky-700 dark:text-sky-300");
@@ -71,7 +71,7 @@ function TrustActions({ path, dueAt, onChange }: { path: string; dueAt?: number;
         confirmLabel="Revoke"
         onConfirm={() => void window.leash.revokeTrust(path).then(done)}
       />
-      <Button size="sm" variant="outline" aria-expanded={open} onClick={() => setOpen((value) => !value)}>Revoke 🕰️</Button>
+      <Button size="sm" variant="outline" aria-expanded={open} onClick={() => setOpen((value) => !value)}>Revoke later…</Button>
       {open ? (
         <span className="absolute top-9 right-0 z-20 flex w-56 flex-col gap-1 rounded-lg border border-border bg-popover p-1.5 text-popover-foreground shadow-md">
           {PRESETS.map((item) => (
@@ -128,7 +128,7 @@ export function AgentPage() {
           <h1 className="text-lg font-semibold tracking-tight">{name}</h1>
           <div className="flex flex-wrap items-center gap-2">
             {agent?.installed ? <Pill tone="bg-emerald-500/10 text-emerald-700 dark:text-emerald-300">● Installed</Pill> : <Pill tone="bg-muted text-muted-foreground">Not installed</Pill>}
-            {agent?.installed && enforcement ? <Pill tone={enforcement.tone}>{enforcement.label}</Pill> : null}
+            {agent?.installed && enforcement ? <Pill tone={enforcement.tone} title={enforcement.hint}>{enforcement.label}</Pill> : null}
             {agent?.children.map((id) => (
               <Pill key={id} tone="bg-muted text-foreground/80"><AgentIcon agent={id} className="size-3" />{AGENT_LABELS[id] ?? id}</Pill>
             ))}

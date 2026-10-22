@@ -5,6 +5,18 @@ import { ensureIgnored } from "./ignored";
 import { validateRule } from "./rules";
 import type { Access, AgentId, AllowRule, DecisionRow, Grant, ScheduledRevoke } from "./types";
 
+const SAFE_COMMANDS = [
+  "pwd", "whoami", "id", "id -u", "id -un", "id -g", "id -gn",
+  "uname", "uname -a", "uname -m", "arch", "hostname", "tty",
+  "sw_vers", "sw_vers -productName", "sw_vers -productVersion", "sw_vers -buildVersion",
+  "true", "false",
+  "git --version", "node --version", "npm --version", "npx --version", "pnpm --version",
+  "yarn --version", "bun --version", "deno --version", "python --version", "python3 --version",
+  "ruby --version", "go version", "rustc --version", "cargo --version", "java -version",
+  "javac -version", "swift --version", "clang --version", "tsc --version", "docker --version",
+  "gh --version", "xcodebuild -version", "xcode-select -p",
+];
+
 const SCHEMA = `
 CREATE TABLE IF NOT EXISTS grants (
   id INTEGER PRIMARY KEY,
@@ -39,7 +51,9 @@ CREATE TABLE IF NOT EXISTS decisions (
   verdict TEXT NOT NULL,
   reason TEXT,
   grant_id INTEGER,
-  duration_ms INTEGER
+  duration_ms INTEGER,
+  command TEXT,
+  url TEXT
 );
 CREATE TABLE IF NOT EXISTS ignored_noise (
   id INTEGER PRIMARY KEY,
@@ -58,6 +72,21 @@ interface GrantSql {
   created_at: number;
   expires_at: number | null;
   command: string | null;
+}
+
+function ensureSafeCommandRules(db: DatabaseSync): void {
+  if (getSetting(db, "safe_command_seed_v1")) return;
+  const insert = db.prepare("INSERT OR IGNORE INTO rules (kind, agent, value, created_at) VALUES ('command', '*', ?, ?)");
+  db.exec("BEGIN");
+  try {
+    const now = Date.now();
+    for (const command of SAFE_COMMANDS) insert.run(command, now);
+    setSetting(db, "safe_command_seed_v1", "1");
+    db.exec("COMMIT");
+  } catch (error) {
+    db.exec("ROLLBACK");
+    throw error;
+  }
 }
 
 function toGrant(row: GrantSql): Grant {
@@ -81,7 +110,10 @@ export function openGrantsDb(path: string): DatabaseSync {
   db.exec(SCHEMA);
   const cols = db.prepare("PRAGMA table_info(grants)").all() as { name: string }[];
   if (!cols.some((col) => col.name === "command")) db.exec("ALTER TABLE grants ADD COLUMN command TEXT");
+  const decisionCols = db.prepare("PRAGMA table_info(decisions)").all() as { name: string }[];
+  for (const name of ["command", "url"]) if (!decisionCols.some((col) => col.name === name)) db.exec(`ALTER TABLE decisions ADD COLUMN ${name} TEXT`);
   ensureIgnored(db);
+  ensureSafeCommandRules(db);
   return db;
 }
 
@@ -173,11 +205,11 @@ export function setSetting(db: DatabaseSync, key: string, value: string): void {
 
 export function recordDecision(
   db: DatabaseSync,
-  row: { ts: number; agent: string; tool: string; paths: string[]; verdict: string; reason?: string; grantId?: number; durationMs?: number },
+  row: { ts: number; agent: string; tool: string; paths: string[]; verdict: string; reason?: string; grantId?: number; durationMs?: number; command?: string; url?: string },
 ): void {
   db.prepare(
-    "INSERT INTO decisions (ts, agent, tool, paths, verdict, reason, grant_id, duration_ms) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-  ).run(row.ts, row.agent, row.tool, JSON.stringify(row.paths), row.verdict, row.reason ?? null, row.grantId ?? null, row.durationMs ?? null);
+    "INSERT INTO decisions (ts, agent, tool, paths, verdict, reason, grant_id, duration_ms, command, url) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+  ).run(row.ts, row.agent, row.tool, JSON.stringify(row.paths), row.verdict, row.reason ?? null, row.grantId ?? null, row.durationMs ?? null, row.command ?? null, row.url ?? null);
 }
 
 export function listDecisions(db: DatabaseSync, limit = 200): DecisionRow[] {
@@ -191,6 +223,8 @@ export function listDecisions(db: DatabaseSync, limit = 200): DecisionRow[] {
     reason: string | null;
     grant_id: number | null;
     duration_ms: number | null;
+    command: string | null;
+    url: string | null;
   }[];
   return rows.map((row) => ({
     id: row.id,
@@ -202,6 +236,8 @@ export function listDecisions(db: DatabaseSync, limit = 200): DecisionRow[] {
     reason: row.reason,
     grantId: row.grant_id,
     durationMs: row.duration_ms,
+    command: row.command ?? null,
+    url: row.url ?? null,
   }));
 }
 
