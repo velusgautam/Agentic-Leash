@@ -374,6 +374,7 @@ export function appliedIgnoredKey(db: DatabaseSync): string {
 
 export function dropIgnored(db: DatabaseSync, prefixes: readonly string[]): void {
   const tables = ["events", ...(hasTable(db, "noise") ? ["noise"] : [])];
+  const hashes: (string | null)[] = [];
   db.exec("BEGIN");
   try {
     // One scan per table per chunk; chunks keep the OR chain under SQLite's expression depth limit.
@@ -381,8 +382,9 @@ export function dropIgnored(db: DatabaseSync, prefixes: readonly string[]): void
       const matches = prefixes.slice(start, start + IGNORED_CHUNK).map(ignoredMatchSql);
       const where = matches.map((match) => match.sql).join(" OR ");
       const args = matches.flatMap((match) => match.args);
-      for (const table of tables) db.prepare(`DELETE FROM ${table} WHERE ${where}`).run(...args);
+      for (const table of tables) for (const gone of db.prepare(`DELETE FROM ${table} WHERE ${where} RETURNING before_hash, after_hash`).all(...args) as Hashed[]) hashes.push(gone.before_hash, gone.after_hash);
     }
+    freeBlobs(db, hashes);
     db.prepare("INSERT OR REPLACE INTO meta (key, value) VALUES ('ignored-applied', ?)").run(ignoredKey(prefixes));
     db.exec("COMMIT");
   } catch (error) {

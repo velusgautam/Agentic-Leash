@@ -153,4 +153,18 @@ describe("dropIgnored", () => {
     expect(appliedIgnoredKey(history)).toBe(ignoredKey([]));
     history.close();
   });
+
+  it("frees the blobs of dropped rows but keeps shared ones", () => {
+    const history = openHistoryDb(join(mkdtempSync(join(tmpdir(), "al-ignored-hist-")), "history.db"));
+    const row = { ts: 1, agent: "cursor" as const, pid: 1, exe: "cursor", sensitive: false, source: "eslogger" as const };
+    insertEvents(history, [
+      { ...row, kind: "write", path: `${home}/Work/other/b.ts`, beforeBlob: "gone before", afterBlob: "shared" },
+      { ...row, ts: 2, kind: "write", path: `${home}/Work/studio/a.ts`, beforeBlob: "kept before", afterBlob: "shared" },
+    ]);
+    dropIgnored(history, [`${home}/Work/other`]);
+    expect((history.prepare("SELECT count(*) AS n FROM blobs").get() as { n: number }).n).toBe(2);
+    dropIgnored(history, [`${home}/Work/studio`]);
+    expect((history.prepare("SELECT count(*) AS n FROM blobs").get() as { n: number }).n).toBe(0);
+    history.close();
+  });
 });
