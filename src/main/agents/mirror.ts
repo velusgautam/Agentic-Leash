@@ -9,7 +9,7 @@ export function configGrantRows(snapshots: AgentSnapshot[], home: string, now: n
     if (snapshot.enforcement === "monitor-only" && snapshot.id !== "claude-code" && snapshot.id !== "cursor") continue;
     for (const folder of snapshot.folders) {
       if (folder.locked || !isConcretePath(folder.path)) continue;
-      rows.push({ agent: snapshot.id, path: normalise(folder.path, home, home), access: folder.access, source: "config", createdAt: now, expiresAt: null });
+      rows.push({ agent: snapshot.id, path: normalise(folder.path, home, home), access: folder.access, source: "config", createdAt: now, expiresAt: null, command: null });
     }
   }
   return rows;

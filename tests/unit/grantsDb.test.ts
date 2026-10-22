@@ -1,8 +1,18 @@
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import { describe, expect, it } from "vitest";
-import { collapseGrantDupes, listGrants, openGrantsDb, upsertGrant } from "../../src/shared/db";
+import {
+  collapseGrantDupes,
+  createRule,
+  deleteRule,
+  listGrants,
+  openGrantsDb,
+  updateRule,
+  upsertCommandGrant,
+  upsertGrant,
+} from "../../src/shared/db";
 
 const row = (path: string, expiresAt: number | null, createdAt = 1) => ({
   agent: "cursor",
@@ -48,6 +58,61 @@ describe("collapseGrantDupes", () => {
     const grants = listGrants(db);
     expect(grants).toHaveLength(1);
     expect(grants[0]?.expiresAt).toBe(null);
+    db.close();
+  });
+});
+
+describe("command grants", () => {
+  it("reads a pre-command database as command null", () => {
+    const path = join(mkdtempSync(join(tmpdir(), "al-old-")), "grants.db");
+    const raw = new DatabaseSync(path);
+    raw.exec("CREATE TABLE grants (id INTEGER PRIMARY KEY, agent TEXT NOT NULL, path TEXT NOT NULL, access TEXT NOT NULL, source TEXT NOT NULL, created_at INTEGER NOT NULL, expires_at INTEGER)");
+    raw.prepare("INSERT INTO grants (agent, path, access, source, created_at, expires_at) VALUES (?, ?, ?, ?, ?, ?)").run("cursor", "/proj", "write", "leash", 1, null);
+    raw.close();
+    const db = openGrantsDb(path);
+    expect(listGrants(db)[0]).toMatchObject({ path: "/proj", command: null });
+    db.close();
+  });
+
+  it("keeps a command row off the folder upsert and refreshes its expiry", () => {
+    const db = openGrantsDb(join(mkdtempSync(join(tmpdir(), "al-cmd-")), "grants.db"));
+    upsertCommandGrant(db, { agent: "cursor", command: "npm test", createdAt: 1, expiresAt: 10 });
+    upsertCommandGrant(db, { agent: "cursor", command: "npm test", createdAt: 2, expiresAt: null });
+    upsertGrant(db, row("", 5, 3));
+    const grants = listGrants(db);
+    expect(grants.filter((grant) => grant.command === "npm test")).toEqual([expect.objectContaining({ path: "", expiresAt: null, createdAt: 1 })]);
+    expect(grants.filter((grant) => grant.command == null)).toHaveLength(1);
+    db.close();
+  });
+
+  it("does not collapse two commands that share an empty path", () => {
+    const db = openGrantsDb(join(mkdtempSync(join(tmpdir(), "al-cmd-")), "grants.db"));
+    upsertCommandGrant(db, { agent: "cursor", command: "npm test", createdAt: 1, expiresAt: 10 });
+    upsertCommandGrant(db, { agent: "cursor", command: "npm test --watch", createdAt: 1, expiresAt: 10 });
+    collapseGrantDupes(db);
+    expect(listGrants(db)).toHaveLength(2);
+    db.close();
+  });
+});
+
+describe("rules", () => {
+  it("creates, rejects a duplicate, updates, and deletes", () => {
+    const db = openGrantsDb(join(mkdtempSync(join(tmpdir(), "al-rules-")), "grants.db"));
+    const home = "/Users/v";
+    const created = createRule(db, { kind: "folder", agent: "*", value: "~/proj" }, home, 5);
+    expect(created.error).toBeNull();
+    expect(created.rules[0]).toMatchObject({ kind: "folder", agent: "*", value: "/Users/v/proj", createdAt: 5 });
+    expect(createRule(db, { kind: "folder", agent: "*", value: "/Users/v/proj" }, home, 6).error).toBe("Already in the allow list.");
+    const id = created.rules[0]!.id;
+    expect(updateRule(db, id, { kind: "command", agent: "cursor", value: "npm test" }, home, 7)).toMatchObject({ error: null, rules: [expect.objectContaining({ kind: "command", value: "npm test", createdAt: 7 })] });
+    expect(createRule(db, { kind: "command", agent: "cursor", value: "ls" }, home, 8).error).toBeNull();
+    expect(updateRule(db, id, { kind: "command", agent: "cursor", value: "ls" }, home, 9).error).toBe("Already in the allow list.");
+    expect(updateRule(db, id, { kind: "command", agent: "cursor", value: "npm test" }, home, 8).error).toBeNull();
+    expect(updateRule(db, 99, { kind: "command", agent: "*", value: "ls" }, home, 8)).toMatchObject({ error: "That rule is gone." });
+    const left = deleteRule(db, id);
+    expect(left.map((rule) => rule.value)).toEqual(["ls"]);
+    expect(deleteRule(db, id)).toEqual(left);
+    expect(deleteRule(db, left[0]!.id)).toEqual([]);
     db.close();
   });
 });

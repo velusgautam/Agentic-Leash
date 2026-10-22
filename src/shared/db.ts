@@ -1,7 +1,8 @@
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import { DatabaseSync } from "node:sqlite";
-import type { Access, AgentId, DecisionRow, Grant, ScheduledRevoke } from "./types";
+import { validateRule } from "./rules";
+import type { Access, AgentId, AllowRule, DecisionRow, Grant, ScheduledRevoke } from "./types";
 
 const SCHEMA = `
 CREATE TABLE IF NOT EXISTS grants (
@@ -11,9 +12,18 @@ CREATE TABLE IF NOT EXISTS grants (
   access TEXT NOT NULL CHECK (access IN ('read','write')),
   source TEXT NOT NULL CHECK (source IN ('leash','config')),
   created_at INTEGER NOT NULL,
-  expires_at INTEGER
+  expires_at INTEGER,
+  command TEXT
 );
 CREATE INDEX IF NOT EXISTS grants_live ON grants (agent, expires_at);
+CREATE TABLE IF NOT EXISTS rules (
+  id INTEGER PRIMARY KEY,
+  kind TEXT NOT NULL CHECK (kind IN ('folder','command')),
+  agent TEXT NOT NULL,
+  value TEXT NOT NULL,
+  created_at INTEGER NOT NULL,
+  UNIQUE (kind, agent, value)
+);
 CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS scheduled_revokes (
   path TEXT PRIMARY KEY,
@@ -40,6 +50,7 @@ interface GrantSql {
   source: string;
   created_at: number;
   expires_at: number | null;
+  command: string | null;
 }
 
 function toGrant(row: GrantSql): Grant {
@@ -51,6 +62,7 @@ function toGrant(row: GrantSql): Grant {
     source: row.source as "leash" | "config",
     createdAt: row.created_at,
     expiresAt: row.expires_at,
+    command: row.command ?? null,
   };
 }
 
@@ -60,6 +72,8 @@ export function openGrantsDb(path: string): DatabaseSync {
   db.exec("PRAGMA busy_timeout = 5000");
   db.exec("PRAGMA journal_mode = WAL");
   db.exec(SCHEMA);
+  const cols = db.prepare("PRAGMA table_info(grants)").all() as { name: string }[];
+  if (!cols.some((col) => col.name === "command")) db.exec("ALTER TABLE grants ADD COLUMN command TEXT");
   return db;
 }
 
@@ -67,18 +81,18 @@ export function listGrants(db: DatabaseSync): Grant[] {
   return db.prepare("SELECT * FROM grants ORDER BY id").all().map((row) => toGrant(row as unknown as GrantSql));
 }
 
-type GrantWrite = { agent: string; path: string; access: Access; source: "leash" | "config"; createdAt: number; expiresAt: number | null };
+type GrantWrite = { agent: string; path: string; access: Access; source: "leash" | "config"; createdAt: number; expiresAt: number | null; command?: string | null };
 
 export function insertGrant(db: DatabaseSync, grant: GrantWrite): number {
   const result = db
-    .prepare("INSERT INTO grants (agent, path, access, source, created_at, expires_at) VALUES (?, ?, ?, ?, ?, ?)")
-    .run(grant.agent, grant.path, grant.access, grant.source, grant.createdAt, grant.expiresAt);
+    .prepare("INSERT INTO grants (agent, path, access, source, created_at, expires_at, command) VALUES (?, ?, ?, ?, ?, ?, ?)")
+    .run(grant.agent, grant.path, grant.access, grant.source, grant.createdAt, grant.expiresAt, grant.command ?? null);
   return Number(result.lastInsertRowid);
 }
 
 export function upsertGrant(db: DatabaseSync, grant: GrantWrite): number {
   const existing = db
-    .prepare("SELECT id, created_at, expires_at FROM grants WHERE agent = ? AND path = ? AND access = ? AND source = ? ORDER BY id LIMIT 1")
+    .prepare("SELECT id, created_at, expires_at FROM grants WHERE agent = ? AND path = ? AND access = ? AND source = ? AND command IS NULL ORDER BY id LIMIT 1")
     .get(grant.agent, grant.path, grant.access, grant.source) as { id: number; created_at: number; expires_at: number | null } | undefined;
   if (!existing) return insertGrant(db, grant);
   const expiresAt = existing.expires_at === null || grant.expiresAt === null ? null : Math.max(existing.expires_at, grant.expiresAt);
@@ -87,10 +101,23 @@ export function upsertGrant(db: DatabaseSync, grant: GrantWrite): number {
   return existing.id;
 }
 
+export function upsertCommandGrant(db: DatabaseSync, grant: { agent: string; command: string; createdAt: number; expiresAt: number | null }): number {
+  const existing = db
+    .prepare("SELECT id, created_at, expires_at FROM grants WHERE agent = ? AND command = ? AND access = 'write' AND source = 'leash' ORDER BY id LIMIT 1")
+    .get(grant.agent, grant.command) as { id: number; created_at: number; expires_at: number | null } | undefined;
+  if (!existing) {
+    return insertGrant(db, { agent: grant.agent, path: "", access: "write", source: "leash", createdAt: grant.createdAt, expiresAt: grant.expiresAt, command: grant.command });
+  }
+  const expiresAt = existing.expires_at === null || grant.expiresAt === null ? null : Math.max(existing.expires_at, grant.expiresAt);
+  if (expiresAt === existing.expires_at) return existing.id;
+  db.prepare("UPDATE grants SET created_at = ?, expires_at = ? WHERE id = ?").run(existing.created_at, expiresAt, existing.id);
+  return existing.id;
+}
+
 export function collapseGrantDupes(db: DatabaseSync): void {
   const groups = new Map<string, Grant[]>();
   for (const grant of listGrants(db)) {
-    const key = `${grant.source}\0${grant.agent}\0${grant.access}\0${grant.path}`;
+    const key = `${grant.source}\0${grant.agent}\0${grant.access}\0${grant.path}\0${grant.command ?? ""}`;
     const group = groups.get(key);
     if (group) group.push(grant);
     else groups.set(key, [grant]);
@@ -178,4 +205,46 @@ export function decisionDurations(db: DatabaseSync): number[] {
 
 export function pruneDecisions(db: DatabaseSync, olderThan: number): number {
   return Number(db.prepare("DELETE FROM decisions WHERE ts < ?").run(olderThan).changes);
+}
+
+function ruleRows(db: DatabaseSync): AllowRule[] {
+  const rows = db.prepare("SELECT id, kind, agent, value, created_at FROM rules ORDER BY id").all() as {
+    id: number;
+    kind: AllowRule["kind"];
+    agent: AllowRule["agent"];
+    value: string;
+    created_at: number;
+  }[];
+  return rows.map((row) => ({ id: row.id, kind: row.kind, agent: row.agent, value: row.value, createdAt: row.created_at }));
+}
+
+export function listRules(db: DatabaseSync): AllowRule[] {
+  return ruleRows(db);
+}
+
+export function createRule(db: DatabaseSync, input: { kind: unknown; agent: unknown; value: unknown }, home: string, now: number): { rules: AllowRule[]; error: string | null } {
+  const parsed = validateRule(input, home);
+  if (!parsed.ok) return { rules: ruleRows(db), error: parsed.error };
+  if (ruleRows(db).some((rule) => rule.kind === parsed.kind && rule.agent === parsed.agent && rule.value === parsed.value)) {
+    return { rules: ruleRows(db), error: "Already in the allow list." };
+  }
+  db.prepare("INSERT INTO rules (kind, agent, value, created_at) VALUES (?, ?, ?, ?)").run(parsed.kind, parsed.agent, parsed.value, now);
+  return { rules: ruleRows(db), error: null };
+}
+
+export function updateRule(db: DatabaseSync, id: number, input: { kind: unknown; agent: unknown; value: unknown }, home: string, now: number): { rules: AllowRule[]; error: string | null } {
+  const parsed = validateRule(input, home);
+  if (!parsed.ok) return { rules: ruleRows(db), error: parsed.error };
+  const rows = ruleRows(db);
+  if (!rows.some((rule) => rule.id === id)) return { rules: rows, error: "That rule is gone." };
+  if (rows.some((rule) => rule.id !== id && rule.kind === parsed.kind && rule.agent === parsed.agent && rule.value === parsed.value)) {
+    return { rules: rows, error: "Already in the allow list." };
+  }
+  db.prepare("UPDATE rules SET kind = ?, agent = ?, value = ?, created_at = ? WHERE id = ?").run(parsed.kind, parsed.agent, parsed.value, now, id);
+  return { rules: ruleRows(db), error: null };
+}
+
+export function deleteRule(db: DatabaseSync, id: number): AllowRule[] {
+  db.prepare("DELETE FROM rules WHERE id = ?").run(id);
+  return ruleRows(db);
 }
