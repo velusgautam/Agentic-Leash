@@ -28,7 +28,7 @@ import { addIgnored, deleteIgnored, listIgnored, setIgnoredEnabled } from "../sh
 import { MAIN_RETENTION_DAYS, NOISE_RETENTION_DAYS, parseRetentionDays, retentionDays } from "../shared/retention";
 import { coveredPending } from "../hook/decide";
 import { grantRoot, parentFolders } from "../shared/parents";
-import { helperInstallScript, helperOptimizeScript, helperUninstallScript, installSweepAgent, sweepServiceTarget } from "./helperInstall";
+import { helperInstallScript, helperMaintenanceScript, helperUninstallScript, installSweepAgent, sweepServiceTarget } from "./helperInstall";
 import { LOGIN_AGENT_LABEL } from "./loginItem";
 import { publishClaudeRules } from "./rulesMode";
 import { guiQuitScript, parsePs, percentiles, restartTargets } from "./system";
@@ -394,7 +394,7 @@ export function startRuntime(options: { userData: string; openApproval: () => vo
       let result;
       if (IS_MAC && app.isPackaged) {
         const helperScript = hookScript().replace("leash-hook.js", "leash-helper.js");
-        await exec("/usr/bin/osascript", ["-e", helperOptimizeScript(process.execPath, helperScript, historyPath)]);
+        await exec("/usr/bin/osascript", ["-e", helperMaintenanceScript(process.execPath, helperScript, ["--optimize", historyPath])]);
         result = { beforeBytes: info.sizeBytes, afterBytes: historyStorageBytes(historyPath) };
       } else {
         result = optimizeHistory(historyPath);
