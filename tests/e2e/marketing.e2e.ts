@@ -20,15 +20,15 @@ test("marketing screenshots", async () => {
   const before = "export function remaining(expiresAt: number | null): string {\n  if (expiresAt === null) return \"Forever\";\n  return \"1h\";\n}\n";
   const after = "export function remaining(expiresAt: number | null): string {\n  if (expiresAt === null) return \"Forever\";\n  const seconds = Math.max(0, Math.round((expiresAt - Date.now()) / 1000));\n  if (seconds >= 3600) return `${Math.floor(seconds / 3600)}h`;\n  return `${seconds}s`;\n}\n";
   insertEvents(db, [
-    { pid: 1, exe: cli, source: "eslogger", sensitive: false, ts: now - 12000, agent: "claude", kind: "read", path: "/Users/ada/Projects/leash/package.json" },
-    { pid: 1, exe: desktop, source: "eslogger", sensitive: false, ts: now - 11000, agent: "claude", kind: "write", path: "/Users/ada/Projects/leash/README.md", beforeBlob: "# Agentic Leash\n\n", afterBlob: "# Agentic Leash\n\nSee and control what AI coding agents can touch.\n" },
-    { pid: 1, exe: "/Users/ada/.local/bin/cursor-agent", source: "eslogger", sensitive: false, ts: now - 10000, agent: "cursor-agent", kind: "write", path: "/Users/ada/Projects/leash/src/shared/grantView.ts", beforeBlob: before, afterBlob: after },
+    { pid: 1, exe: cli, source: "eslogger", sensitive: false, ts: now - 12000, agent: "claude-code", kind: "read", path: "/Users/ada/Projects/leash/package.json" },
+    { pid: 1, exe: desktop, source: "eslogger", sensitive: false, ts: now - 11000, agent: "claude-code", kind: "write", path: "/Users/ada/Projects/leash/README.md", beforeBlob: "# Agentic Leash\n\n", afterBlob: "# Agentic Leash\n\nSee and control what AI coding agents can touch.\n" },
+    { pid: 1, exe: "/Users/ada/.local/bin/cursor-agent", source: "eslogger", sensitive: false, ts: now - 10000, agent: "cursor", kind: "write", path: "/Users/ada/Projects/leash/src/shared/grantView.ts", beforeBlob: before, afterBlob: after },
     { pid: 1, exe: "/Users/ada/.local/bin/codex", source: "eslogger", sensitive: false, ts: now - 9000, agent: "codex", kind: "exec", path: "/usr/bin/git" },
     { pid: 1, exe: "/Users/ada/.local/bin/gemini", source: "eslogger", sensitive: false, ts: now - 8000, agent: "gemini", kind: "read", path: "/Users/ada/Projects/leash/src/main/index.ts" },
     { pid: 1, exe: "/Users/ada/.local/bin/hermes", source: "eslogger", sensitive: false, ts: now - 7000, agent: "hermes", kind: "create", path: "/Users/ada/Projects/leash/src/helper/net.ts" },
-    { pid: 1, exe: desktop, source: "eslogger", sensitive: false, ts: now - 6000, agent: "claude", kind: "net", path: "api.anthropic.com:443" },
-    { pid: 1, exe: cli, source: "eslogger", sensitive: true, ts: now - 5000, agent: "claude", kind: "read", path: "/Users/ada/.ssh/config" },
-    { pid: 1, exe: desktop, source: "eslogger", sensitive: true, ts: now - 4000, agent: "claude", kind: "read", path: "/Users/ada/.aws/credentials" },
+    { pid: 1, exe: desktop, source: "eslogger", sensitive: false, ts: now - 6000, agent: "claude-code", kind: "net", path: "api.anthropic.com:443" },
+    { pid: 1, exe: cli, source: "eslogger", sensitive: true, ts: now - 5000, agent: "claude-code", kind: "read", path: "/Users/ada/.ssh/config" },
+    { pid: 1, exe: desktop, source: "eslogger", sensitive: true, ts: now - 4000, agent: "claude-code", kind: "read", path: "/Users/ada/.aws/credentials" },
   ]);
   db.close();
 
