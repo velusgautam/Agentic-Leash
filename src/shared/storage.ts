@@ -5,6 +5,9 @@ export const PRUNE_START = 0.5;
 export const PRUNE_STOP = 0.45;
 export const SCRATCH_READ_FLOOR_DAYS = 1;
 export const PROJECT_READ_FLOOR_DAYS = 7;
+export const HARD_CAP_STOP = 0.9;
+
+export type PurgeMode = "all" | "reads" | "noise" | "older";
 
 export function parseCapGb(value: string): number | null {
   if (!/^\d+$/.test(value.trim())) return null;

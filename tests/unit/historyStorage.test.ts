@@ -1,9 +1,10 @@
-import { existsSync, mkdtempSync, statSync } from "node:fs";
+import { randomBytes } from "node:crypto";
+import { chmodSync, existsSync, mkdtempSync, readdirSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { describe, expect, it } from "vitest";
-import { checkpointHistory, historyText, insertEvents, openHistoryDb, optimizeHistory, pruneHistory, queryHistory } from "../../src/helper/historyDb";
+import { checkpointHistory, historyCounts, historyText, historyUsage, insertEvents, openHistoryDb, optimizeHistory, pruneBySize, pruneHistory, purgeHistory, queryHistory, readHistoryStats, resetHistory, writeHistoryStats } from "../../src/helper/historyDb";
 import { capBytes, formatBytes, parseCapGb, rearmDismissed, storageWarning, type HistoryStats } from "../../src/shared/storage";
 
 const empty = { from: null, to: null, agents: [], path: "", kind: "all", sensitive: false, offset: 0, limit: 50, includeNoise: true };
@@ -152,5 +153,257 @@ describe("rearmDismissed", () => {
     expect(rearmDismissed(stats(45), 50)).toBe(50);
     expect(rearmDismissed(stats(39), 50)).toBe(40);
     expect(rearmDismissed(null, 50)).toBe(50);
+  });
+});
+
+type Table = "events" | "noise";
+
+function seed(db: DatabaseSync, table: Table, kind: string, rows: number, ts: (index: number) => number, sensitive = false) {
+  let id = count(db, "SELECT max(coalesce((SELECT max(id) FROM events), 0), coalesce((SELECT max(id) FROM noise), 0)) AS n");
+  const insert = db.prepare(`INSERT INTO ${table} (id, ts, agent, pid, exe, kind, path, sensitive, source) VALUES (?, ?, 'codex', 1, 'codex', ?, ?, ?, 'eslogger')`);
+  db.exec("BEGIN");
+  for (let index = 0; index < rows; index += 1) insert.run((id += 1), ts(index), kind, `/Users/me/project/${table}/${kind}/${id}.ts`, sensitive ? 1 : 0);
+  db.exec("COMMIT");
+}
+
+function rows(db: DatabaseSync, table: Table, where: string): number {
+  return count(db, `SELECT count(*) AS n FROM ${table} WHERE ${where}`);
+}
+
+function capAt(db: DatabaseSync, path: string, fraction: number): number {
+  checkpointHistory(db);
+  return Math.ceil(historyUsage(db, path) / fraction);
+}
+
+describe("pruneBySize", () => {
+  const now = 100 * day;
+  const fresh = () => {
+    const path = historyPath();
+    return { path, db: openHistoryDb(path) };
+  };
+
+  it("creates incremental auto-vacuum databases with kind indexes", () => {
+    const { db } = fresh();
+    expect(db.prepare("PRAGMA auto_vacuum").get()).toEqual({ auto_vacuum: 2 });
+    for (const name of ["events_kind", "noise_kind"]) expect(count(db, `SELECT count(*) AS n FROM sqlite_master WHERE type = 'index' AND name = '${name}'`)).toBe(1);
+    db.close();
+  });
+
+  it("measures live pages plus the WAL", () => {
+    const { path, db } = fresh();
+    seed(db, "noise", "read", 2000, (index) => index);
+    checkpointHistory(db);
+    const full = historyUsage(db, path);
+    db.exec("DELETE FROM noise");
+    checkpointHistory(db);
+    expect(historyUsage(db, path)).toBeLessThan(full / 4);
+    db.close();
+  });
+
+  it("deletes nothing under half the cap", () => {
+    const { path, db } = fresh();
+    seed(db, "noise", "read", 2000, (index) => now - 2 * day - index);
+    expect(pruneBySize(db, path, capAt(db, path, 0.4), now)).toEqual({ deleted: 0, hardCap: false });
+    expect(rows(db, "noise", "1 = 1")).toBe(2000);
+    db.close();
+  });
+
+  it("deletes scratch reads older than a day first, in batches, and stops under 45%", () => {
+    const { path, db } = fresh();
+    seed(db, "noise", "read", 6000, (index) => now - 2 * day - index);
+    seed(db, "noise", "read", 20, (index) => now - index * 1000);
+    seed(db, "events", "read", 20, () => now - 30 * day);
+    seed(db, "events", "write", 20, () => now - 30 * day);
+    const cap = capAt(db, path, 0.6);
+    expect(pruneBySize(db, path, cap, now)).toEqual({ deleted: 5000, hardCap: false });
+    expect(rows(db, "noise", "1 = 1")).toBe(1020);
+    expect(count(db, "SELECT min(ts) AS n FROM noise")).toBe(now - 2 * day - 999);
+    expect(rows(db, "events", "1 = 1")).toBe(40);
+    expect(historyUsage(db, path)).toBeLessThan(cap * 0.45);
+    db.close();
+  });
+
+  it("deletes non-sensitive project reads older than a week before sensitive ones", () => {
+    const { path, db } = fresh();
+    seed(db, "events", "read", 4000, (index) => now - 8 * day - index);
+    seed(db, "events", "read", 20, () => now - 8 * day, true);
+    seed(db, "events", "read", 20, () => now - 6 * day);
+    pruneBySize(db, path, capAt(db, path, 0.6), now);
+    expect(rows(db, "events", "sensitive = 1")).toBe(20);
+    expect(rows(db, "events", "sensitive = 0")).toBe(20);
+    db.close();
+  });
+
+  it("deletes sensitive project reads older than a week before exec rows", () => {
+    const { path, db } = fresh();
+    seed(db, "events", "read", 4000, (index) => now - 8 * day - index, true);
+    seed(db, "events", "read", 20, () => now - 6 * day, true);
+    seed(db, "events", "exec", 10, () => now - 30 * day);
+    seed(db, "noise", "exec", 10, () => now - 30 * day);
+    pruneBySize(db, path, capAt(db, path, 0.6), now);
+    expect(rows(db, "events", "kind = 'read'")).toBe(20);
+    expect(rows(db, "events", "kind = 'exec'") + rows(db, "noise", "kind = 'exec'")).toBe(20);
+    db.close();
+  });
+
+  it("deletes exec rows from both tables before any write", () => {
+    const { path, db } = fresh();
+    seed(db, "events", "exec", 3000, (index) => now - index);
+    seed(db, "noise", "exec", 3000, (index) => now - index);
+    seed(db, "noise", "write", 1000, () => now - 30 * day);
+    seed(db, "events", "write", 1000, () => now - 30 * day);
+    pruneBySize(db, path, capAt(db, path, 0.99), now);
+    expect(rows(db, "events", "kind = 'exec'") + rows(db, "noise", "kind = 'exec'")).toBe(0);
+    expect(rows(db, "events", "kind = 'write'") + rows(db, "noise", "kind = 'write'")).toBe(2000);
+    db.close();
+  });
+
+  it("deletes scratch writes before project writes, oldest first", () => {
+    const { path, db } = fresh();
+    seed(db, "noise", "write", 8000, (index) => now - 8000 + index);
+    seed(db, "events", "write", 20, () => now - 30 * day);
+    expect(pruneBySize(db, path, capAt(db, path, 0.55), now)).toEqual({ deleted: 5000, hardCap: false });
+    expect(count(db, "SELECT min(ts) AS n FROM noise")).toBe(now - 3000);
+    expect(rows(db, "events", "1 = 1")).toBe(20);
+    db.close();
+  });
+
+  it("keeps sensitive writes and floored reads through every step", () => {
+    const { path, db } = fresh();
+    seed(db, "events", "write", 4000, (index) => now - 60 * day + index, true);
+    seed(db, "events", "write", 2000, (index) => now - 50 * day + index);
+    seed(db, "noise", "write", 20, () => now - 50 * day);
+    seed(db, "noise", "read", 20, () => now - 1000);
+    seed(db, "events", "read", 20, () => now - 6 * day);
+    seed(db, "events", "read", 20, () => now - 6 * day, true);
+    expect(pruneBySize(db, path, capAt(db, path, 0.9), now)).toEqual({ deleted: 2020, hardCap: false });
+    expect(rows(db, "events", "kind = 'write'")).toBe(4000);
+    expect(rows(db, "events", "kind = 'write' AND sensitive = 0")).toBe(0);
+    expect(rows(db, "noise", "1 = 1")).toBe(20);
+    expect(rows(db, "events", "kind = 'read'")).toBe(40);
+    db.close();
+  });
+
+  it("stops once orphaned snapshot space is reclaimed instead of deleting later steps", () => {
+    const { path, db } = fresh();
+    insertEvents(db, Array.from({ length: 50 }, (_, index) => ({ ...row, kind: "read" as const, ts: now - 10 * day + index, path: `/Users/me/project/big-${index}.ts`, afterBlob: randomBytes(10_000).toString("hex") })));
+    seed(db, "events", "read", 1000, (index) => now - 10 * day + index, true);
+    expect(pruneBySize(db, path, capAt(db, path, 0.6), now)).toEqual({ deleted: 50, hardCap: false });
+    expect(rows(db, "events", "sensitive = 1")).toBe(1000);
+    expect(count(db, "SELECT count(*) AS n FROM blobs")).toBe(0);
+    db.close();
+  });
+
+  it("drops the floors over the cap, deleting strictly oldest first across both tables", () => {
+    const { path, db } = fresh();
+    seed(db, "noise", "read", 6000, (index) => now - (2 * index + 1) * 1000);
+    seed(db, "events", "write", 6000, (index) => now - 2 * index * 1000, true);
+    const cap = capAt(db, path, 1.05);
+    expect(pruneBySize(db, path, cap, now)).toEqual({ deleted: 5000, hardCap: true });
+    expect(historyUsage(db, path)).toBeLessThan(cap * 0.9);
+    expect(rows(db, "noise", "1 = 1")).toBeLessThan(6000);
+    expect(rows(db, "events", "1 = 1")).toBeLessThan(6000);
+    expect(count(db, "SELECT min(ts) AS n FROM (SELECT ts FROM events UNION ALL SELECT ts FROM noise)")).toBe(now - 6999 * 1000);
+    expect(pruneBySize(db, path, cap, now)).toEqual({ deleted: 0, hardCap: false });
+    db.close();
+  });
+
+  it("shrinks the file after deleting", () => {
+    const { path, db } = fresh();
+    seed(db, "noise", "read", 6000, (index) => now - 2 * day - index);
+    const cap = capAt(db, path, 0.6);
+    const before = statSync(path).size;
+    pruneBySize(db, path, cap, now);
+    expect(statSync(path).size).toBeLessThan(before / 2);
+    db.close();
+  });
+});
+
+describe("history stats", () => {
+  it("round-trips stats through meta and counts rows by kind", () => {
+    const db = openHistoryDb(historyPath());
+    expect(readHistoryStats(db)).toBeNull();
+    seed(db, "events", "read", 3, () => 1, true);
+    seed(db, "events", "write", 2, () => 1);
+    seed(db, "noise", "read", 1, () => 1);
+    const counts = historyCounts(db);
+    expect(counts).toEqual(
+      expect.arrayContaining([
+        { table: "events", kind: "read", sensitive: true, rows: 3 },
+        { table: "events", kind: "write", sensitive: false, rows: 2 },
+        { table: "noise", kind: "read", sensitive: false, rows: 1 },
+      ]),
+    );
+    expect(counts).toHaveLength(3);
+    const value: HistoryStats = { usedBytes: 1, fileBytes: 2, capBytes: 3, counts, prunedAt: 4, prunedRows: 5, hardCap: true };
+    writeHistoryStats(db, value);
+    expect(readHistoryStats(db)).toEqual(value);
+    db.close();
+  });
+});
+
+describe("purgeHistory", () => {
+  const now = 100 * day;
+  const seeded = () => {
+    const db = openHistoryDb(historyPath());
+    insertEvents(db, [{ ...row, ts: now - 40 * day, path: "/Users/me/project/a.ts", beforeBlob: "a", afterBlob: "b" }]);
+    seed(db, "events", "read", 3, () => now - 40 * day);
+    seed(db, "events", "read", 2, () => now - day, true);
+    seed(db, "events", "exec", 2, () => now - day);
+    seed(db, "events", "write", 1, () => now - day, true);
+    seed(db, "noise", "read", 4, () => now - day);
+    seed(db, "noise", "write", 5, () => now - 40 * day);
+    return db;
+  };
+
+  it("deletes every non-sensitive read", () => {
+    const db = seeded();
+    expect(purgeHistory(db, "reads", now)).toBe(7);
+    expect(rows(db, "events", "kind = 'read'")).toBe(2);
+    expect(rows(db, "noise", "kind = 'read'")).toBe(0);
+    db.close();
+  });
+
+  it("deletes every scratch row and exec row", () => {
+    const db = seeded();
+    expect(purgeHistory(db, "noise", now)).toBe(11);
+    expect(rows(db, "noise", "1 = 1")).toBe(0);
+    expect(rows(db, "events", "kind = 'exec'")).toBe(0);
+    expect(rows(db, "events", "1 = 1")).toBe(7);
+    db.close();
+  });
+
+  it("deletes rows older than the given days, sensitive or not, with their snapshots", () => {
+    const db = seeded();
+    expect(purgeHistory(db, "older", now, 30)).toBe(9);
+    expect(rows(db, "events", "1 = 1")).toBe(5);
+    expect(rows(db, "noise", "1 = 1")).toBe(4);
+    expect(count(db, "SELECT count(*) AS n FROM blobs")).toBe(0);
+    expect(() => purgeHistory(db, "older", now)).toThrow();
+    db.close();
+  });
+});
+
+describe("resetHistory", () => {
+  it("replaces history with an empty incremental database and keeps the file mode", () => {
+    const path = historyPath();
+    const legacy = new DatabaseSync(path);
+    legacy.exec("PRAGMA journal_mode = WAL");
+    legacy.exec("CREATE TABLE events (id INTEGER PRIMARY KEY, ts INTEGER NOT NULL, agent TEXT NOT NULL, pid INTEGER NOT NULL, exe TEXT NOT NULL, kind TEXT NOT NULL, path TEXT NOT NULL, dest_path TEXT, sha256 TEXT, before_blob TEXT, after_blob TEXT, sensitive INTEGER NOT NULL DEFAULT 0, source TEXT NOT NULL, minute_key TEXT)");
+    legacy.exec("INSERT INTO events (id, ts, agent, pid, exe, kind, path, source) VALUES (1, 1, 'codex', 1, 'codex', 'write', '/Users/me/project/a.ts', 'eslogger')");
+    legacy.close();
+    chmodSync(path, 0o640);
+    const dir = dirname(path);
+    for (const file of [`${path}.optimize-1-2`, `${path}.backup-1-2`, `${path}.optimize-1-2-wal`, join(dir, "other.db")]) writeFileSync(file, "x");
+    const result = resetHistory(path);
+    expect(result.beforeBytes).toBeGreaterThan(0);
+    expect(result.afterBytes).toBeGreaterThan(0);
+    expect(readdirSync(dir).sort()).toEqual(["history.db", "other.db"]);
+    expect(statSync(path).mode & 0o777).toBe(0o640);
+    const db = openHistoryDb(path, true);
+    expect(db.prepare("PRAGMA auto_vacuum").get()).toEqual({ auto_vacuum: 2 });
+    expect(count(db, "SELECT count(*) AS n FROM events")).toBe(0);
+    expect(count(db, "SELECT count(*) AS n FROM noise")).toBe(0);
+    db.close();
   });
 });

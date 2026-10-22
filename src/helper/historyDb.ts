@@ -1,10 +1,11 @@
-import { chmodSync, chownSync, existsSync, mkdirSync, renameSync, rmSync, statSync } from "node:fs";
-import { dirname } from "node:path";
+import { chmodSync, chownSync, existsSync, mkdirSync, readdirSync, renameSync, rmSync, statSync } from "node:fs";
+import { basename, dirname, join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { deflateRawSync, inflateRawSync } from "node:zlib";
 import { ignoredMatchSql } from "../shared/ignored";
 import { eventBucket } from "../shared/noise";
 import { MAIN_RETENTION_DAYS, NOISE_RETENTION_DAYS } from "../shared/retention";
+import { HARD_CAP_STOP, PROJECT_READ_FLOOR_DAYS, PRUNE_START, PRUNE_STOP, SCRATCH_READ_FLOOR_DAYS, type HistoryStats, type PurgeMode } from "../shared/storage";
 import type { HistoryEvent, HistoryRow, HistorySummary } from "../shared/types";
 import { sha256 } from "./classify";
 
@@ -35,9 +36,11 @@ CREATE TABLE IF NOT EXISTS events (${EVENT_TABLE});
 CREATE UNIQUE INDEX IF NOT EXISTS events_read_collapse ON events (minute_key) WHERE minute_key IS NOT NULL;
 CREATE INDEX IF NOT EXISTS events_path ON events (path, ts);
 CREATE INDEX IF NOT EXISTS events_ts ON events (ts);
+CREATE INDEX IF NOT EXISTS events_kind ON events (kind, sensitive, ts);
 CREATE TABLE IF NOT EXISTS noise (${EVENT_TABLE});
 CREATE UNIQUE INDEX IF NOT EXISTS noise_read_collapse ON noise (minute_key) WHERE minute_key IS NOT NULL;
 CREATE INDEX IF NOT EXISTS noise_ts ON noise (ts);
+CREATE INDEX IF NOT EXISTS noise_kind ON noise (kind, sensitive, ts);
 CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS blobs (hash TEXT PRIMARY KEY, size INTEGER NOT NULL, data BLOB NOT NULL);
 `;
@@ -53,6 +56,7 @@ export function openHistoryDb(path: string, readOnly = false): DatabaseSync {
   const db = new DatabaseSync(path, { readOnly });
   db.exec("PRAGMA busy_timeout = 5000");
   if (!readOnly) {
+    db.exec("PRAGMA auto_vacuum = INCREMENTAL");
     db.exec("PRAGMA journal_mode = WAL");
     db.exec("PRAGMA journal_size_limit = 67108864");
     if (hasTable(db, "blobs") && !hasColumn(db, "blobs", "hash")) db.exec("DROP TABLE blobs");
@@ -382,4 +386,113 @@ export function summarizeHistory(db: DatabaseSync, from: number): Omit<HistorySu
   }
   const sensitive = (db.prepare("SELECT COUNT(*) AS n FROM events WHERE ts >= ? AND sensitive = 1").get(from) as { n: number }).n;
   return { from, total, sensitive, agents: [...agents.values()] };
+}
+
+const BATCH = 5000;
+
+export function historyUsage(db: DatabaseSync, path: string): number {
+  const pragma = (name: string) => Number(Object.values(db.prepare(`PRAGMA ${name}`).get() as Record<string, number>)[0]);
+  const wal = `${path}-wal`;
+  return (pragma("page_count") - pragma("freelist_count")) * pragma("page_size") + (existsSync(wal) ? statSync(wal).size : 0);
+}
+
+function deleteOldest(db: DatabaseSync): number {
+  const rows = db.prepare(`SELECT id, ts, 'events' AS source FROM events UNION ALL SELECT id, ts, 'noise' AS source FROM noise ORDER BY ts LIMIT ${BATCH}`).all() as { id: number; source: string }[];
+  db.exec("BEGIN");
+  try {
+    for (const table of ["events", "noise"]) db.prepare(`DELETE FROM ${table} WHERE id IN (SELECT value FROM json_each(?))`).run(JSON.stringify(rows.filter((row) => row.source === table).map((row) => row.id)));
+    db.exec("COMMIT");
+  } catch (error) {
+    db.exec("ROLLBACK");
+    throw error;
+  }
+  return rows.length;
+}
+
+export function pruneBySize(db: DatabaseSync, path: string, cap: number, now: number): { deleted: number; hardCap: boolean } {
+  const used = () => {
+    checkpointHistory(db);
+    return historyUsage(db, path);
+  };
+  if (used() < cap * PRUNE_START) return { deleted: 0, hardCap: false };
+  let deleted = 0;
+  let pending = 0;
+  const sweep = () => {
+    if (pending) deleteOrphanBlobs(db);
+    pending = 0;
+  };
+  const drain = (batch: () => number, stop: number): boolean => {
+    for (let round = 1; ; round += 1) {
+      const n = batch();
+      deleted += n;
+      pending += n;
+      if (n < BATCH || round % 10 === 0) sweep();
+      if (n && used() < stop) return true;
+      if (n < BATCH) return false;
+    }
+  };
+  const scratch = now - SCRATCH_READ_FLOOR_DAYS * DAY_MS;
+  const project = now - PROJECT_READ_FLOOR_DAYS * DAY_MS;
+  const steps: { table: string; where: string; args: number[] }[] = [
+    { table: "noise", where: "kind = 'read' AND ts < ?", args: [scratch] },
+    { table: "events", where: "kind = 'read' AND sensitive = 0 AND ts < ?", args: [project] },
+    { table: "events", where: "kind = 'read' AND sensitive = 1 AND ts < ?", args: [project] },
+    { table: "events", where: "kind = 'exec' AND sensitive = 0", args: [] },
+    { table: "noise", where: "kind = 'exec' AND sensitive = 0", args: [] },
+    { table: "noise", where: "kind <> 'read' AND sensitive = 0", args: [] },
+    { table: "events", where: "kind <> 'read' AND sensitive = 0", args: [] },
+  ];
+  const done = steps.some(({ table, where, args }) => {
+    const statement = db.prepare(`DELETE FROM ${table} WHERE id IN (SELECT id FROM ${table} WHERE ${where} ORDER BY ts LIMIT ${BATCH})`);
+    return drain(() => Number(statement.run(...args).changes), cap * PRUNE_STOP);
+  });
+  const hardCap = !done && used() >= cap;
+  if (hardCap) drain(() => deleteOldest(db), cap * HARD_CAP_STOP);
+  sweep();
+  if (deleted) {
+    db.exec("PRAGMA incremental_vacuum");
+    checkpointHistory(db);
+  }
+  return { deleted, hardCap };
+}
+
+export function historyCounts(db: DatabaseSync): HistoryStats["counts"] {
+  return (["events", "noise"] as const).flatMap((table) => (hasTable(db, table) ? (db.prepare(`SELECT kind, sensitive, count(*) AS n FROM ${table} GROUP BY kind, sensitive`).all() as { kind: string; sensitive: number; n: number }[]).map((row) => ({ table, kind: row.kind, sensitive: row.sensitive === 1, rows: Number(row.n) })) : []));
+}
+
+export function writeHistoryStats(db: DatabaseSync, stats: HistoryStats): void {
+  db.prepare("INSERT OR REPLACE INTO meta (key, value) VALUES ('storage-stats', ?)").run(JSON.stringify(stats));
+}
+
+export function readHistoryStats(db: DatabaseSync): HistoryStats | null {
+  const row = hasTable(db, "meta") ? (db.prepare("SELECT value FROM meta WHERE key = 'storage-stats'").get() as { value: string } | undefined) : undefined;
+  try {
+    return row ? (JSON.parse(row.value) as HistoryStats) : null;
+  } catch {
+    return null;
+  }
+}
+
+export function purgeHistory(db: DatabaseSync, mode: Exclude<PurgeMode, "all">, now: number, days?: number): number {
+  if (mode === "older" && !(days && days > 0)) throw new Error("Purging older history needs a number of days.");
+  const cutoff = now - (days ?? 0) * DAY_MS;
+  const plan: [string, string, number[]][] = mode === "reads" ? [["events", "kind = 'read' AND sensitive = 0", []], ["noise", "kind = 'read' AND sensitive = 0", []]] : mode === "noise" ? [["noise", "1 = 1", []], ["events", "kind = 'exec'", []]] : [["events", "ts < ?", [cutoff]], ["noise", "ts < ?", [cutoff]]];
+  const deleted = plan.reduce((total, [table, where, args]) => total + Number(db.prepare(`DELETE FROM ${table} WHERE ${where}`).run(...args).changes), 0);
+  if (deleted) deleteOrphanBlobs(db);
+  return deleted;
+}
+
+export function resetHistory(path: string): HistoryOptimization {
+  const before = existsSync(path) ? statSync(path) : null;
+  const beforeBytes = historyStorageBytes(path);
+  const dir = dirname(path);
+  const name = basename(path);
+  const stale = (file: string) => file === name || file === `${name}-wal` || file === `${name}-shm` || file.startsWith(`${name}.optimize-`) || file.startsWith(`${name}.backup-`);
+  if (existsSync(dir)) for (const file of readdirSync(dir)) if (stale(file)) rmSync(join(dir, file), { force: true });
+  openHistoryDb(path).close();
+  if (before) {
+    chmodSync(path, before.mode);
+    if (process.platform !== "win32") chownSync(path, before.uid, before.gid);
+  }
+  return { beforeBytes, afterBytes: historyStorageBytes(path) };
 }
