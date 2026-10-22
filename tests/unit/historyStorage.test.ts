@@ -171,9 +171,9 @@ function rows(db: DatabaseSync, table: Table, where: string): number {
   return count(db, `SELECT count(*) AS n FROM ${table} WHERE ${where}`);
 }
 
-function capAt(db: DatabaseSync, path: string, fraction: number): number {
+function capAt(db: DatabaseSync, fraction: number): number {
   checkpointHistory(db);
-  return Math.ceil(historyUsage(db, path) / fraction);
+  return Math.ceil(historyUsage(db) / fraction);
 }
 
 describe("pruneBySize", () => {
@@ -190,94 +190,112 @@ describe("pruneBySize", () => {
     db.close();
   });
 
-  it("measures live pages plus the WAL", () => {
-    const { path, db } = fresh();
+  it("measures live pages", () => {
+    const { db } = fresh();
     seed(db, "noise", "read", 2000, (index) => index);
     checkpointHistory(db);
-    const full = historyUsage(db, path);
+    const full = historyUsage(db);
     db.exec("DELETE FROM noise");
     checkpointHistory(db);
-    expect(historyUsage(db, path)).toBeLessThan(full / 4);
+    expect(historyUsage(db)).toBeLessThan(full / 4);
+    db.close();
+  });
+
+  it("does not count WAL bytes while a reader blocks the checkpoint", () => {
+    const { path, db } = fresh();
+    seed(db, "noise", "read", 500, (index) => index);
+    checkpointHistory(db);
+    const reader = new DatabaseSync(path);
+    reader.exec("BEGIN");
+    reader.prepare("SELECT count(*) FROM noise").get();
+    seed(db, "noise", "read", 2000, (index) => index);
+    checkpointHistory(db);
+    const wal = statSync(`${path}-wal`).size;
+    const pragma = (name: string) => Number(Object.values(db.prepare(`PRAGMA ${name}`).get() as Record<string, number>)[0]);
+    expect(wal).toBeGreaterThan(0);
+    expect(historyUsage(db)).toBe((pragma("page_count") - pragma("freelist_count")) * pragma("page_size"));
+    reader.exec("COMMIT");
+    reader.close();
     db.close();
   });
 
   it("deletes nothing under half the cap", () => {
-    const { path, db } = fresh();
+    const { db } = fresh();
     seed(db, "noise", "read", 2000, (index) => now - 2 * day - index);
-    expect(pruneBySize(db, path, capAt(db, path, 0.4), now)).toEqual({ deleted: 0, hardCap: false });
+    expect(pruneBySize(db, capAt(db, 0.4), now)).toEqual({ deleted: 0, hardCap: false });
     expect(rows(db, "noise", "1 = 1")).toBe(2000);
     db.close();
   });
 
   it("deletes scratch reads older than a day first, in batches, and stops under 45%", () => {
-    const { path, db } = fresh();
+    const { db } = fresh();
     seed(db, "noise", "read", 6000, (index) => now - 2 * day - index);
     seed(db, "noise", "read", 20, (index) => now - index * 1000);
     seed(db, "events", "read", 20, () => now - 30 * day);
     seed(db, "events", "write", 20, () => now - 30 * day);
-    const cap = capAt(db, path, 0.6);
-    expect(pruneBySize(db, path, cap, now)).toEqual({ deleted: 5000, hardCap: false });
+    const cap = capAt(db, 0.6);
+    expect(pruneBySize(db, cap, now)).toEqual({ deleted: 5000, hardCap: false });
     expect(rows(db, "noise", "1 = 1")).toBe(1020);
     expect(count(db, "SELECT min(ts) AS n FROM noise")).toBe(now - 2 * day - 999);
     expect(rows(db, "events", "1 = 1")).toBe(40);
-    expect(historyUsage(db, path)).toBeLessThan(cap * 0.45);
+    expect(historyUsage(db)).toBeLessThan(cap * 0.45);
     db.close();
   });
 
   it("deletes non-sensitive project reads older than a week before sensitive ones", () => {
-    const { path, db } = fresh();
+    const { db } = fresh();
     seed(db, "events", "read", 4000, (index) => now - 8 * day - index);
     seed(db, "events", "read", 20, () => now - 8 * day, true);
     seed(db, "events", "read", 20, () => now - 6 * day);
-    pruneBySize(db, path, capAt(db, path, 0.6), now);
+    pruneBySize(db, capAt(db, 0.6), now);
     expect(rows(db, "events", "sensitive = 1")).toBe(20);
     expect(rows(db, "events", "sensitive = 0")).toBe(20);
     db.close();
   });
 
   it("deletes sensitive project reads older than a week before exec rows", () => {
-    const { path, db } = fresh();
+    const { db } = fresh();
     seed(db, "events", "read", 4000, (index) => now - 8 * day - index, true);
     seed(db, "events", "read", 20, () => now - 6 * day, true);
     seed(db, "events", "exec", 10, () => now - 30 * day);
     seed(db, "noise", "exec", 10, () => now - 30 * day);
-    pruneBySize(db, path, capAt(db, path, 0.6), now);
+    pruneBySize(db, capAt(db, 0.6), now);
     expect(rows(db, "events", "kind = 'read'")).toBe(20);
     expect(rows(db, "events", "kind = 'exec'") + rows(db, "noise", "kind = 'exec'")).toBe(20);
     db.close();
   });
 
   it("deletes exec rows from both tables before any write", () => {
-    const { path, db } = fresh();
+    const { db } = fresh();
     seed(db, "events", "exec", 3000, (index) => now - index);
     seed(db, "noise", "exec", 3000, (index) => now - index);
     seed(db, "noise", "write", 1000, () => now - 30 * day);
     seed(db, "events", "write", 1000, () => now - 30 * day);
-    pruneBySize(db, path, capAt(db, path, 0.99), now);
+    pruneBySize(db, capAt(db, 0.99), now);
     expect(rows(db, "events", "kind = 'exec'") + rows(db, "noise", "kind = 'exec'")).toBe(0);
     expect(rows(db, "events", "kind = 'write'") + rows(db, "noise", "kind = 'write'")).toBe(2000);
     db.close();
   });
 
   it("deletes scratch writes before project writes, oldest first", () => {
-    const { path, db } = fresh();
+    const { db } = fresh();
     seed(db, "noise", "write", 8000, (index) => now - 8000 + index);
     seed(db, "events", "write", 20, () => now - 30 * day);
-    expect(pruneBySize(db, path, capAt(db, path, 0.55), now)).toEqual({ deleted: 5000, hardCap: false });
+    expect(pruneBySize(db, capAt(db, 0.55), now)).toEqual({ deleted: 5000, hardCap: false });
     expect(count(db, "SELECT min(ts) AS n FROM noise")).toBe(now - 3000);
     expect(rows(db, "events", "1 = 1")).toBe(20);
     db.close();
   });
 
   it("keeps sensitive writes and floored reads through every step", () => {
-    const { path, db } = fresh();
+    const { db } = fresh();
     seed(db, "events", "write", 4000, (index) => now - 60 * day + index, true);
     seed(db, "events", "write", 2000, (index) => now - 50 * day + index);
     seed(db, "noise", "write", 20, () => now - 50 * day);
     seed(db, "noise", "read", 20, () => now - 1000);
     seed(db, "events", "read", 20, () => now - 6 * day);
     seed(db, "events", "read", 20, () => now - 6 * day, true);
-    expect(pruneBySize(db, path, capAt(db, path, 0.9), now)).toEqual({ deleted: 2020, hardCap: false });
+    expect(pruneBySize(db, capAt(db, 0.9), now)).toEqual({ deleted: 2020, hardCap: false });
     expect(rows(db, "events", "kind = 'write'")).toBe(4000);
     expect(rows(db, "events", "kind = 'write' AND sensitive = 0")).toBe(0);
     expect(rows(db, "noise", "1 = 1")).toBe(20);
@@ -286,35 +304,47 @@ describe("pruneBySize", () => {
   });
 
   it("stops once orphaned snapshot space is reclaimed instead of deleting later steps", () => {
-    const { path, db } = fresh();
+    const { db } = fresh();
     insertEvents(db, Array.from({ length: 50 }, (_, index) => ({ ...row, kind: "read" as const, ts: now - 10 * day + index, path: `/Users/me/project/big-${index}.ts`, afterBlob: randomBytes(10_000).toString("hex") })));
     seed(db, "events", "read", 1000, (index) => now - 10 * day + index, true);
-    expect(pruneBySize(db, path, capAt(db, path, 0.6), now)).toEqual({ deleted: 50, hardCap: false });
+    expect(pruneBySize(db, capAt(db, 0.6), now)).toEqual({ deleted: 50, hardCap: false });
     expect(rows(db, "events", "sensitive = 1")).toBe(1000);
     expect(count(db, "SELECT count(*) AS n FROM blobs")).toBe(0);
     db.close();
   });
 
+  it("stops at the target once the deleted rows' snapshots are freed", () => {
+    const { db } = fresh();
+    insertEvents(db, Array.from({ length: 200 }, (_, index) => ({ ...row, kind: "read" as const, ts: now - 20 * day + index, path: `/Users/me/project/big-${index}.ts`, afterBlob: randomBytes(40_000).toString("hex") })));
+    seed(db, "events", "read", 14_800, (index) => now - 10 * day + index);
+    const cap = capAt(db, 0.6);
+    expect(pruneBySize(db, cap, now)).toEqual({ deleted: 5000, hardCap: false });
+    expect(rows(db, "events", "1 = 1")).toBe(10_000);
+    expect(count(db, "SELECT count(*) AS n FROM blobs")).toBe(0);
+    expect(historyUsage(db)).toBeLessThan(cap * 0.45);
+    db.close();
+  });
+
   it("drops the floors over the cap, deleting strictly oldest first across both tables", () => {
-    const { path, db } = fresh();
+    const { db } = fresh();
     seed(db, "noise", "read", 6000, (index) => now - (2 * index + 1) * 1000);
     seed(db, "events", "write", 6000, (index) => now - 2 * index * 1000, true);
-    const cap = capAt(db, path, 1.05);
-    expect(pruneBySize(db, path, cap, now)).toEqual({ deleted: 5000, hardCap: true });
-    expect(historyUsage(db, path)).toBeLessThan(cap * 0.9);
+    const cap = capAt(db, 1.05);
+    expect(pruneBySize(db, cap, now)).toEqual({ deleted: 5000, hardCap: true });
+    expect(historyUsage(db)).toBeLessThan(cap * 0.9);
     expect(rows(db, "noise", "1 = 1")).toBeLessThan(6000);
     expect(rows(db, "events", "1 = 1")).toBeLessThan(6000);
     expect(count(db, "SELECT min(ts) AS n FROM (SELECT ts FROM events UNION ALL SELECT ts FROM noise)")).toBe(now - 6999 * 1000);
-    expect(pruneBySize(db, path, cap, now)).toEqual({ deleted: 0, hardCap: false });
+    expect(pruneBySize(db, cap, now)).toEqual({ deleted: 0, hardCap: false });
     db.close();
   });
 
   it("shrinks the file after deleting", () => {
     const { path, db } = fresh();
     seed(db, "noise", "read", 6000, (index) => now - 2 * day - index);
-    const cap = capAt(db, path, 0.6);
+    const cap = capAt(db, 0.6);
     const before = statSync(path).size;
-    pruneBySize(db, path, cap, now);
+    pruneBySize(db, cap, now);
     expect(statSync(path).size).toBeLessThan(before / 2);
     db.close();
   });

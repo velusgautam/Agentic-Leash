@@ -390,43 +390,48 @@ export function summarizeHistory(db: DatabaseSync, from: number): Omit<HistorySu
 
 const BATCH = 5000;
 
-export function historyUsage(db: DatabaseSync, path: string): number {
+export function historyUsage(db: DatabaseSync): number {
   const pragma = (name: string) => Number(Object.values(db.prepare(`PRAGMA ${name}`).get() as Record<string, number>)[0]);
-  const wal = `${path}-wal`;
-  return (pragma("page_count") - pragma("freelist_count")) * pragma("page_size") + (existsSync(wal) ? statSync(wal).size : 0);
+  return (pragma("page_count") - pragma("freelist_count")) * pragma("page_size");
 }
 
-function deleteOldest(db: DatabaseSync): number {
+type Batch = { n: number; hashes: (string | null)[] };
+type Hashed = { before_hash: string | null; after_hash: string | null };
+
+function freeBlobs(db: DatabaseSync, hashes: (string | null)[]): void {
+  const unique = [...new Set(hashes.filter((hash): hash is string => hash !== null))];
+  if (unique.length) db.prepare(`DELETE FROM blobs WHERE hash IN (SELECT value FROM json_each(?)) AND hash NOT IN (${REFERENCED})`).run(JSON.stringify(unique));
+}
+
+function deleteOldest(db: DatabaseSync): Batch {
   const rows = db.prepare(`SELECT id, ts, 'events' AS source FROM events UNION ALL SELECT id, ts, 'noise' AS source FROM noise ORDER BY ts LIMIT ${BATCH}`).all() as { id: number; source: string }[];
+  const hashes: (string | null)[] = [];
   db.exec("BEGIN");
   try {
-    for (const table of ["events", "noise"]) db.prepare(`DELETE FROM ${table} WHERE id IN (SELECT value FROM json_each(?))`).run(JSON.stringify(rows.filter((row) => row.source === table).map((row) => row.id)));
+    for (const table of ["events", "noise"]) {
+      const ids = JSON.stringify(rows.filter((row) => row.source === table).map((row) => row.id));
+      for (const gone of db.prepare(`DELETE FROM ${table} WHERE id IN (SELECT value FROM json_each(?)) RETURNING before_hash, after_hash`).all(ids) as Hashed[]) hashes.push(gone.before_hash, gone.after_hash);
+    }
     db.exec("COMMIT");
   } catch (error) {
     db.exec("ROLLBACK");
     throw error;
   }
-  return rows.length;
+  return { n: rows.length, hashes };
 }
 
-export function pruneBySize(db: DatabaseSync, path: string, cap: number, now: number): { deleted: number; hardCap: boolean } {
+export function pruneBySize(db: DatabaseSync, cap: number, now: number): { deleted: number; hardCap: boolean } {
   const used = () => {
     checkpointHistory(db);
-    return historyUsage(db, path);
+    return historyUsage(db);
   };
   if (used() < cap * PRUNE_START) return { deleted: 0, hardCap: false };
   let deleted = 0;
-  let pending = 0;
-  const sweep = () => {
-    if (pending) deleteOrphanBlobs(db);
-    pending = 0;
-  };
-  const drain = (batch: () => number, stop: number): boolean => {
-    for (let round = 1; ; round += 1) {
-      const n = batch();
+  const drain = (batch: () => Batch, stop: number): boolean => {
+    for (;;) {
+      const { n, hashes } = batch();
       deleted += n;
-      pending += n;
-      if (n < BATCH || round % 10 === 0) sweep();
+      freeBlobs(db, hashes);
       if (n && used() < stop) return true;
       if (n < BATCH) return false;
     }
@@ -443,12 +448,14 @@ export function pruneBySize(db: DatabaseSync, path: string, cap: number, now: nu
     { table: "events", where: "kind <> 'read' AND sensitive = 0", args: [] },
   ];
   const done = steps.some(({ table, where, args }) => {
-    const statement = db.prepare(`DELETE FROM ${table} WHERE id IN (SELECT id FROM ${table} WHERE ${where} ORDER BY ts LIMIT ${BATCH})`);
-    return drain(() => Number(statement.run(...args).changes), cap * PRUNE_STOP);
+    const statement = db.prepare(`DELETE FROM ${table} WHERE id IN (SELECT id FROM ${table} WHERE ${where} ORDER BY ts LIMIT ${BATCH}) RETURNING before_hash, after_hash`);
+    return drain(() => {
+      const gone = statement.all(...args) as Hashed[];
+      return { n: gone.length, hashes: gone.flatMap((row) => [row.before_hash, row.after_hash]) };
+    }, cap * PRUNE_STOP);
   });
   const hardCap = !done && used() >= cap;
   if (hardCap) drain(() => deleteOldest(db), cap * HARD_CAP_STOP);
-  sweep();
   if (deleted) {
     db.exec("PRAGMA incremental_vacuum");
     checkpointHistory(db);

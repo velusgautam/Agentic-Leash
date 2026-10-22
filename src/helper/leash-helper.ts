@@ -108,8 +108,8 @@ export function startHelper(historyPath: string, eslogger = "/usr/bin/eslogger")
     const cap = capBytes(capValue);
     const deleted = pruneHistory(db, now, main, noise);
     checkpointHistory(db);
-    const pass = pruneBySize(db, historyPath, cap, now);
-    const usedBytes = historyUsage(db, historyPath);
+    const pass = pruneBySize(db, cap, now);
+    const usedBytes = historyUsage(db);
     const rows = deleted + pass.deleted;
     if (rows || now - countedAt >= COUNTS_EVERY_MS) {
       stats.counts = historyCounts(db);
@@ -126,7 +126,7 @@ export function startHelper(historyPath: string, eslogger = "/usr/bin/eslogger")
   const timer = setInterval(() => {
     if (!queue.length) return;
     insertEvents(db, queue.splice(0), ignored);
-    if (armed && historyUsage(db, historyPath) >= stats.capBytes * PRUNE_START) prune();
+    if (armed && historyUsage(db) >= stats.capBytes * PRUNE_START) prune();
   }, 250);
   const netTimer = setInterval(() => {
     grants = grantPaths(Date.now());
