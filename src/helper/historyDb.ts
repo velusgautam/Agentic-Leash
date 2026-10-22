@@ -45,6 +45,7 @@ CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS blobs (hash TEXT PRIMARY KEY, size INTEGER NOT NULL, data BLOB NOT NULL);
 `;
 
+const UNREFERENCED = ["events", "noise"].flatMap((table) => ["before_hash", "after_hash"].map((col) => `NOT EXISTS (SELECT 1 FROM ${table} WHERE ${col} = blobs.hash)`)).join(" AND ");
 const REFERENCED = ["events", "noise"].flatMap((table) => ["before_hash", "after_hash"].map((col) => `SELECT ${col} FROM ${table} WHERE ${col} IS NOT NULL`)).join(" UNION ");
 
 function hasColumn(db: DatabaseSync, table: string, column: string, schema = "main"): boolean {
@@ -62,6 +63,7 @@ export function openHistoryDb(path: string, readOnly = false): DatabaseSync {
     if (hasTable(db, "blobs") && !hasColumn(db, "blobs", "hash")) db.exec("DROP TABLE blobs");
     db.exec(SCHEMA);
     for (const table of ["events", "noise"]) for (const col of ["before_hash", "after_hash"]) if (!hasColumn(db, table, col)) db.exec(`ALTER TABLE ${table} ADD COLUMN ${col} TEXT`);
+    for (const table of ["events", "noise"]) for (const col of ["before_hash", "after_hash"]) db.exec(`CREATE INDEX IF NOT EXISTS ${table}_${col} ON ${table} (${col}) WHERE ${col} IS NOT NULL`);
   }
   return db;
 }
@@ -355,7 +357,7 @@ export function dropIgnored(db: DatabaseSync, prefixes: readonly string[]): void
 }
 
 export function deleteOrphanBlobs(db: DatabaseSync): number {
-  return Number(db.prepare(`DELETE FROM blobs WHERE hash NOT IN (${REFERENCED})`).run().changes);
+  return Number(db.prepare(`DELETE FROM blobs WHERE ${UNREFERENCED}`).run().changes);
 }
 
 export function pruneHistory(db: DatabaseSync, now: number, mainDays = MAIN_RETENTION_DAYS, noiseDays = NOISE_RETENTION_DAYS): number {
@@ -395,15 +397,14 @@ export function historyUsage(db: DatabaseSync): number {
   return (pragma("page_count") - pragma("freelist_count")) * pragma("page_size");
 }
 
-type Batch = { n: number; hashes: (string | null)[] };
 type Hashed = { before_hash: string | null; after_hash: string | null };
 
 function freeBlobs(db: DatabaseSync, hashes: (string | null)[]): void {
   const unique = [...new Set(hashes.filter((hash): hash is string => hash !== null))];
-  if (unique.length) db.prepare(`DELETE FROM blobs WHERE hash IN (SELECT value FROM json_each(?)) AND hash NOT IN (${REFERENCED})`).run(JSON.stringify(unique));
+  if (unique.length) db.prepare(`DELETE FROM blobs WHERE hash IN (SELECT value FROM json_each(?)) AND ${UNREFERENCED}`).run(JSON.stringify(unique));
 }
 
-function deleteOldest(db: DatabaseSync): Batch {
+function deleteOldest(db: DatabaseSync): number {
   const rows = db.prepare(`SELECT id, ts, 'events' AS source FROM events UNION ALL SELECT id, ts, 'noise' AS source FROM noise ORDER BY ts LIMIT ${BATCH}`).all() as { id: number; source: string }[];
   const hashes: (string | null)[] = [];
   db.exec("BEGIN");
@@ -412,12 +413,13 @@ function deleteOldest(db: DatabaseSync): Batch {
       const ids = JSON.stringify(rows.filter((row) => row.source === table).map((row) => row.id));
       for (const gone of db.prepare(`DELETE FROM ${table} WHERE id IN (SELECT value FROM json_each(?)) RETURNING before_hash, after_hash`).all(ids) as Hashed[]) hashes.push(gone.before_hash, gone.after_hash);
     }
+    freeBlobs(db, hashes);
     db.exec("COMMIT");
   } catch (error) {
     db.exec("ROLLBACK");
     throw error;
   }
-  return { n: rows.length, hashes };
+  return rows.length;
 }
 
 export function pruneBySize(db: DatabaseSync, cap: number, now: number): { deleted: number; hardCap: boolean } {
@@ -427,11 +429,10 @@ export function pruneBySize(db: DatabaseSync, cap: number, now: number): { delet
   };
   if (used() < cap * PRUNE_START) return { deleted: 0, hardCap: false };
   let deleted = 0;
-  const drain = (batch: () => Batch, stop: number): boolean => {
+  const drain = (batch: () => number, stop: number): boolean => {
     for (;;) {
-      const { n, hashes } = batch();
+      const n = batch();
       deleted += n;
-      freeBlobs(db, hashes);
       if (n && used() < stop) return true;
       if (n < BATCH) return false;
     }
@@ -450,8 +451,16 @@ export function pruneBySize(db: DatabaseSync, cap: number, now: number): { delet
   const done = steps.some(({ table, where, args }) => {
     const statement = db.prepare(`DELETE FROM ${table} WHERE id IN (SELECT id FROM ${table} WHERE ${where} ORDER BY ts LIMIT ${BATCH}) RETURNING before_hash, after_hash`);
     return drain(() => {
-      const gone = statement.all(...args) as Hashed[];
-      return { n: gone.length, hashes: gone.flatMap((row) => [row.before_hash, row.after_hash]) };
+      db.exec("BEGIN");
+      try {
+        const gone = statement.all(...args) as Hashed[];
+        freeBlobs(db, gone.flatMap((row) => [row.before_hash, row.after_hash]));
+        db.exec("COMMIT");
+        return gone.length;
+      } catch (error) {
+        db.exec("ROLLBACK");
+        throw error;
+      }
     }, cap * PRUNE_STOP);
   });
   const hardCap = !done && used() >= cap;

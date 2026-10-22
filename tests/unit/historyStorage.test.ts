@@ -197,7 +197,7 @@ describe("pruneBySize", () => {
     const full = historyUsage(db);
     db.exec("DELETE FROM noise");
     checkpointHistory(db);
-    expect(historyUsage(db)).toBeLessThan(full / 4);
+    expect(historyUsage(db)).toBeLessThan(full / 3);
     db.close();
   });
 
@@ -210,12 +210,13 @@ describe("pruneBySize", () => {
     reader.prepare("SELECT count(*) FROM noise").get();
     seed(db, "noise", "read", 2000, (index) => index);
     checkpointHistory(db);
-    const wal = statSync(`${path}-wal`).size;
-    const pragma = (name: string) => Number(Object.values(db.prepare(`PRAGMA ${name}`).get() as Record<string, number>)[0]);
-    expect(wal).toBeGreaterThan(0);
-    expect(historyUsage(db)).toBe((pragma("page_count") - pragma("freelist_count")) * pragma("page_size"));
+    expect(statSync(`${path}-wal`).size).toBeGreaterThan(0);
+    const blocked = historyUsage(db);
     reader.exec("COMMIT");
     reader.close();
+    checkpointHistory(db);
+    expect(statSync(`${path}-wal`).size).toBe(0);
+    expect(historyUsage(db)).toBe(blocked);
     db.close();
   });
 
