@@ -7,12 +7,13 @@ import { LOGIN_AGENT_LABEL, loginAgentPath } from "./loginItem";
 
 export type LeftoverOptions = { home: string; claudeRoot: string; userData: string; historyDir: string; systemHistory: string };
 
-const ownHistoryFile = (name: string) => /^(history\.db(-wal|-shm|\.optimize-.*|\.backup-.*)?|helper\.log(\.1)?)$/.test(name);
+const ownHistoryFile = (name: string) => /^(history\.db(-wal|-shm|-journal|\.(optimize|backup)-\d+-\d+(-wal|-shm|-journal)?)?|helper\.log(\.1)?)$/.test(name);
 
 function historyFiles(dir: string): string[] {
   if (!existsSync(dir)) return [];
   const names = readdirSync(dir);
-  return [...names.filter(ownHistoryFile).map((name) => join(dir, name)), ...(names.every(ownHistoryFile) ? [dir] : [])];
+  const ours = names.filter(ownHistoryFile);
+  return [...ours.map((name) => join(dir, name)), ...(ours.length && ours.length === names.length ? [dir] : [])];
 }
 
 export function uninstallLeftovers({ home, userData, historyDir, systemHistory }: LeftoverOptions): string[] {

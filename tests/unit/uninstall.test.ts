@@ -2,7 +2,7 @@ import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { backupTargets, writeWithBackup, writtenBackups } from "../../src/main/backup";
 import { mergeHermesConfig, removeHermesConfig } from "../../src/main/hermesHooks";
 import { mergeClaudeHooks, mergeCodexHooks, mergeCursorHooks, mergeGeminiHooks, removeClaudeHooks, removeCodexHooks, removeCursorHooks, removeGeminiHooks } from "../../src/main/hookInstall";
@@ -15,13 +15,15 @@ function seed(path: string, text = "x"): void {
   writeFileSync(path, text);
 }
 
+afterEach(() => vi.unstubAllEnvs());
+
 function setup() {
   const root = mkdtempSync(join(tmpdir(), "al-uninstall-"));
   const home = join(root, "home");
   const claudeRoot = join(home, ".claude");
   const userData = join(home, "Library/Application Support/Agentic Leash");
   const systemHistory = join(root, "system-history");
-  process.env.AGENTIC_LEASH_HOME = home;
+  vi.stubEnv("AGENTIC_LEASH_HOME", home);
   return { root, home, claudeRoot, userData, systemHistory };
 }
 
@@ -124,7 +126,7 @@ describe("removeLeftovers", () => {
   it("only removes the files the app created in a custom history dir", () => {
     const { home, claudeRoot, userData, systemHistory } = setup();
     const historyDir = join(home, "work");
-    const ours = ["history.db", "history.db-wal", "history.db-shm", "history.db.optimize-1-2", "history.db.optimize-1-2-wal", "history.db.backup-1-2", "helper.log", "helper.log.1"];
+    const ours = ["history.db", "history.db-wal", "history.db-shm", "history.db-journal", "history.db.optimize-1-2", "history.db.optimize-1-2-wal", "history.db.backup-1-2", "helper.log", "helper.log.1"];
     for (const name of ours) seed(join(historyDir, name));
     seed(join(historyDir, "notes.txt"), "mine");
     seed(join(historyDir, "sub/keep.txt"), "mine");
@@ -134,6 +136,24 @@ describe("removeLeftovers", () => {
     for (const name of ours) expect(existsSync(join(historyDir, name)), name).toBe(false);
     expect(readFileSync(join(historyDir, "notes.txt"), "utf8")).toBe("mine");
     expect(existsSync(join(historyDir, "sub/keep.txt"))).toBe(true);
+  });
+
+  it("keeps a folder that only looks like a history backup", () => {
+    const { home, claudeRoot, userData, systemHistory } = setup();
+    const historyDir = join(home, "work");
+    seed(join(historyDir, "history.db.backup-foo/data"), "mine");
+    seed(join(historyDir, "history.db"));
+    removeLeftovers(uninstallLeftovers({ home, claudeRoot, userData, historyDir, systemHistory }));
+    expect(readFileSync(join(historyDir, "history.db.backup-foo/data"), "utf8")).toBe("mine");
+    expect(existsSync(join(historyDir, "history.db"))).toBe(false);
+  });
+
+  it("keeps an empty custom history dir", () => {
+    const { home, claudeRoot, userData, systemHistory } = setup();
+    const historyDir = join(home, "empty");
+    mkdirSync(historyDir, { recursive: true });
+    removeLeftovers(uninstallLeftovers({ home, claudeRoot, userData, historyDir, systemHistory }));
+    expect(existsSync(historyDir)).toBe(true);
   });
 
   it("ignores a missing custom history dir", () => {
@@ -153,6 +173,18 @@ describe("removeLeftovers", () => {
     removeLeftovers(uninstallLeftovers({ home, claudeRoot, userData, historyDir: systemHistory, systemHistory }));
     expect(existsSync(`${ours}.bak`)).toBe(false);
     expect(readFileSync(`${theirs}.bak`, "utf8")).toBe("user backup");
+  });
+
+  it("ignores tampered backup entries", () => {
+    const { home, claudeRoot, userData, systemHistory } = setup();
+    const dir = join(home, "precious.bak");
+    seed(join(dir, "file"));
+    seed(join(home, "notes.txt"));
+    seed(join(home, ".agentic-leash/backups.json"), JSON.stringify([dir, join(home, "notes.txt"), 7]));
+    expect(writtenBackups(home)).toEqual([]);
+    removeLeftovers(uninstallLeftovers({ home, claudeRoot, userData, historyDir: systemHistory, systemHistory }));
+    expect(existsSync(join(dir, "file"))).toBe(true);
+    expect(existsSync(join(home, "notes.txt"))).toBe(true);
   });
 
   it("keeps other files in a shared Hermes agent-hooks dir", () => {
