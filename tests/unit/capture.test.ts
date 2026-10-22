@@ -55,7 +55,7 @@ describe("content cache", () => {
     expect(readText(file)).toBeNull();
     expect(readText("/dev/tty")).toBeNull();
     writeFileSync(file, "local\n");
-    execFileSync("git", ["init"], { cwd: dir });
+    execFileSync("git", ["init", "-b", "main"], { cwd: dir });
     execFileSync("git", ["add", "note.txt"], { cwd: dir });
     execFileSync("git", ["-c", "user.email=a@b.c", "-c", "user.name=t", "-c", "commit.gpgsign=false", "commit", "-m", "init"], { cwd: dir });
     writeFileSync(file, "changed");

@@ -16,7 +16,8 @@ concurrency:
 jobs:
   unit:
     name: unit
-    runs-on: ubuntu-latest
+    # plutil, used to lint LaunchAgent plists, ships with macOS.
+    runs-on: macos-latest
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v7
