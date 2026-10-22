@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, statSync, watch, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, statfsSync, statSync, watch, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { promisify } from "node:util";
@@ -7,7 +7,7 @@ import { app, BrowserWindow, globalShortcut, ipcMain, nativeTheme } from "electr
 import { DEFAULT_TTL_S, grantsDbPath, HISTORY_DIR, homeDir, isClaudeBinary, IS_MAC, leashDir, POPUP_TIMEOUT_S, protectedRoots, socketPath, TCC_CLIENTS } from "../shared/constants";
 import { diagnosticsReport } from "../shared/diagnostics";
 import { cancelScheduled, collapseGrantDupes, createRule, decisionDurations, deleteGrant, deleteGrants, deleteRule, getSetting, listDecisions, listGrants, listRules, listScheduled, openGrantsDb, scheduleRevoke, setSetting, updateRule, upsertCommandGrant, upsertGrant } from "../shared/db";
-import { historyText, listHistory, openHistoryDb, queryHistory, type HistoryFilter } from "../helper/historyDb";
+import { historyStorageBytes, historyText, listHistory, openHistoryDb, optimizeHistory, queryHistory, type HistoryFilter } from "../helper/historyDb";
 import type { Access, AgentId, AgentSnapshot, HistoryRow, ThemeSource } from "../shared/types";
 import { loadClaude } from "./agents/claude";
 import { cursorWatchPaths, cursorWorkers, loadCursor } from "./agents/cursor";
@@ -25,7 +25,7 @@ import { addIgnored, deleteIgnored, listIgnored, setIgnoredEnabled } from "../sh
 import { MAIN_RETENTION_DAYS, NOISE_RETENTION_DAYS, parseRetentionDays, retentionDays } from "../shared/retention";
 import { coveredPending } from "../hook/decide";
 import { grantRoot, parentFolders } from "../shared/parents";
-import { helperInstallScript, helperUninstallScript, installSweepAgent, sweepAgentPath, sweepServiceTarget } from "./helperInstall";
+import { helperInstallScript, helperOptimizeScript, helperUninstallScript, installSweepAgent, sweepAgentPath, sweepServiceTarget } from "./helperInstall";
 import { LOGIN_AGENT_LABEL, loginAgentPath } from "./loginItem";
 import { publishClaudeRules } from "./rulesMode";
 import { guiQuitScript, parsePs, percentiles, restartTargets } from "./system";
@@ -92,9 +92,11 @@ export function startRuntime(options: { userData: string; openApproval: () => vo
   const db = openGrantsDb(grantsDbPath());
   collapseGrantDupes(db);
   const home = homeDir();
+  const historyPath = join(process.env.AGENTIC_LEASH_HISTORY_DIR || HISTORY_DIR, "history.db");
   let snapshots: AgentSnapshot[] = [];
   let history: HistoryRow[] = [];
   let historySeen = readUiState(options.userData).historySeen ?? 0;
+  let historyPaused = false;
   let uninstalling = false;
   const timeouts = new Map<string, NodeJS.Timeout>();
 
@@ -158,9 +160,9 @@ export function startRuntime(options: { userData: string; openApproval: () => vo
   }, 30_000);
 
   const pollHistory = () => {
-    if (uninstalling) return;
+    if (uninstalling || historyPaused) return;
     try {
-      const historyDb = openHistoryDb(join(process.env.AGENTIC_LEASH_HISTORY_DIR || HISTORY_DIR, "history.db"), true);
+      const historyDb = openHistoryDb(historyPath, true);
       const rows = listHistory(historyDb, 0, 300);
       historyDb.close();
       history = rows;
@@ -190,7 +192,8 @@ export function startRuntime(options: { userData: string; openApproval: () => vo
   };
 
   const withHistory = <T,>(read: (historyDb: ReturnType<typeof openHistoryDb>) => T): T => {
-    const historyDb = openHistoryDb(join(process.env.AGENTIC_LEASH_HISTORY_DIR || HISTORY_DIR, "history.db"), true);
+    if (historyPaused) throw new Error("History is being optimized.");
+    const historyDb = openHistoryDb(historyPath, true);
     try {
       return read(historyDb);
     } finally {
@@ -300,6 +303,41 @@ export function startRuntime(options: { userData: string; openApproval: () => vo
     if (parsed === null) return retentionState();
     setSetting(db, which === "main" ? "history_days" : "noise_days", String(parsed));
     return retentionState();
+  });
+  const optimizationInfo = () => {
+    const historyDir = dirname(historyPath);
+    if (!existsSync(historyPath)) {
+      const disk = existsSync(historyDir) ? statfsSync(historyDir) : null;
+      return { available: false, sizeBytes: 0, requiredBytes: 0, freeBytes: disk ? disk.bavail * disk.bsize : 0 };
+    }
+    const sizeBytes = historyStorageBytes(historyPath);
+    const disk = statfsSync(historyDir);
+    return { available: true, sizeBytes, requiredBytes: sizeBytes + 64 * 1024 * 1024, freeBytes: disk.bavail * disk.bsize };
+  };
+  let optimizingHistory = false;
+  ipcMain.handle("history:optimize:info", () => optimizationInfo());
+  ipcMain.handle("history:optimize:run", async () => {
+    if (optimizingHistory) throw new Error("History optimization is already running.");
+    const info = optimizationInfo();
+    if (!info.available) throw new Error("There is no history database to optimize.");
+    if (info.freeBytes < info.requiredBytes) throw new Error("Not enough free disk space to optimize history safely.");
+    optimizingHistory = true;
+    historyPaused = true;
+    try {
+      let result;
+      if (IS_MAC && app.isPackaged) {
+        const helperScript = hookScript().replace("leash-hook.js", "leash-helper.js");
+        await exec("/usr/bin/osascript", ["-e", helperOptimizeScript(process.execPath, helperScript, historyPath)]);
+        result = { beforeBytes: info.sizeBytes, afterBytes: historyStorageBytes(historyPath) };
+      } else {
+        result = optimizeHistory(historyPath);
+      }
+      pollHistory();
+      return result;
+    } finally {
+      historyPaused = false;
+      optimizingHistory = false;
+    }
   });
   ipcMain.handle("ignored:list", () => listIgnored(db));
   ipcMain.handle("ignored:set", (_event, id: number, enabled: boolean) => {

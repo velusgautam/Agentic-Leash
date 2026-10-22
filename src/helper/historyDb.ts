@@ -1,10 +1,9 @@
-import { mkdirSync } from "node:fs";
+import { chmodSync, chownSync, existsSync, mkdirSync, renameSync, rmSync, statSync } from "node:fs";
 import { dirname } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { ignoredMatchSql } from "../shared/ignored";
 import { eventBucket } from "../shared/noise";
 import { MAIN_RETENTION_DAYS, NOISE_RETENTION_DAYS } from "../shared/retention";
-import { sha256 } from "./classify";
 import type { HistoryEvent, HistoryRow } from "../shared/types";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -35,7 +34,6 @@ CREATE TABLE IF NOT EXISTS noise (${EVENT_TABLE});
 CREATE UNIQUE INDEX IF NOT EXISTS noise_read_collapse ON noise (minute_key) WHERE minute_key IS NOT NULL;
 CREATE INDEX IF NOT EXISTS noise_ts ON noise (ts);
 CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
-CREATE TABLE IF NOT EXISTS blobs (sha256 TEXT PRIMARY KEY, content BLOB NOT NULL);
 `;
 
 export function openHistoryDb(path: string, readOnly = false): DatabaseSync {
@@ -47,12 +45,6 @@ export function openHistoryDb(path: string, readOnly = false): DatabaseSync {
     db.exec(SCHEMA);
   }
   return db;
-}
-
-function remember(db: DatabaseSync, text: string | undefined): string | null {
-  if (!text) return null;
-  db.prepare("INSERT OR IGNORE INTO blobs (sha256, content) VALUES (?, ?)").run(sha256(text), text);
-  return text;
 }
 
 function maxId(db: DatabaseSync): number {
@@ -76,7 +68,7 @@ export function insertEvents(db: DatabaseSync, events: HistoryEvent[], ignored: 
       next += 1;
       const event = item.event;
       const minute = event.kind === "read" ? `${event.agent}|${event.path}|${Math.floor(event.ts / 60000)}` : null;
-      const args = [next, event.ts, event.agent, event.pid, event.exe, event.kind, event.path, event.destPath ?? null, event.sha256 ?? null, remember(db, event.beforeBlob), remember(db, event.afterBlob), event.sensitive ? 1 : 0, event.source, minute];
+      const args = [next, event.ts, event.agent, event.pid, event.exe, event.kind, event.path, event.destPath ?? null, event.sha256 ?? null, event.beforeBlob ?? null, event.afterBlob ?? null, event.sensitive ? 1 : 0, event.source, minute];
       (item.bucket === "noise" ? insertNoise : insertMain).run(...args);
     }
     db.exec("COMMIT");
@@ -184,8 +176,98 @@ export function historyText(db: DatabaseSync, id: number): { before: string | nu
   return { before: row?.before_blob ?? null, after: row?.after_blob ?? null };
 }
 
-function dropOrphanBlobs(db: DatabaseSync): void {
-  db.exec("DELETE FROM blobs WHERE sha256 NOT IN (SELECT sha256 FROM events WHERE sha256 IS NOT NULL UNION SELECT sha256 FROM noise WHERE sha256 IS NOT NULL)");
+function verifyHistory(path: string): void {
+  const db = new DatabaseSync(path, { readOnly: true });
+  try {
+    const result = db.prepare("PRAGMA integrity_check").get() as { integrity_check: string };
+    if (result.integrity_check !== "ok") throw new Error(`History integrity check failed: ${result.integrity_check}`);
+  } finally {
+    db.close();
+  }
+}
+
+export function replaceHistory(original: string, replacement: string, verify: (path: string) => void = verifyHistory): void {
+  const backup = `${original}.backup-${process.pid}-${Date.now()}`;
+  renameSync(original, backup);
+  try {
+    renameSync(replacement, original);
+    verify(original);
+    rmSync(backup, { force: true });
+  } catch (error) {
+    rmSync(original, { force: true });
+    renameSync(backup, original);
+    rmSync(replacement, { force: true });
+    throw error;
+  }
+}
+
+export interface HistoryOptimization {
+  beforeBytes: number;
+  afterBytes: number;
+}
+
+export function historyStorageBytes(path: string): number {
+  return ["", "-wal", "-shm"].reduce((total, suffix) => {
+    const file = `${path}${suffix}`;
+    return total + (existsSync(file) ? statSync(file).size : 0);
+  }, 0);
+}
+
+export function optimizeHistory(path: string): HistoryOptimization {
+  const before = statSync(path);
+  const beforeBytes = historyStorageBytes(path);
+  const replacement = `${path}.optimize-${process.pid}-${Date.now()}`;
+  rmSync(replacement, { force: true });
+  rmSync(`${replacement}-wal`, { force: true });
+  rmSync(`${replacement}-shm`, { force: true });
+  const source = new DatabaseSync(path);
+  try {
+    source.exec("PRAGMA busy_timeout = 5000");
+    const current = source.prepare("PRAGMA journal_mode").get() as { journal_mode: string };
+    if (current.journal_mode === "wal") {
+      const checkpoint = source.prepare("PRAGMA wal_checkpoint(TRUNCATE)").get() as { busy: number; log: number; checkpointed: number };
+      if (checkpoint.busy !== 0 || checkpoint.log !== 0) throw new Error("Cannot optimize history while an active history connection is open.");
+    }
+    const mode = source.prepare("PRAGMA journal_mode = DELETE").get() as { journal_mode: string };
+    if (mode.journal_mode !== "delete") throw new Error("Cannot optimize history while an active history connection is open.");
+  } finally {
+    source.close();
+  }
+  for (const suffix of ["-wal", "-shm"]) rmSync(`${path}${suffix}`, { force: true });
+  try {
+    const compact = openHistoryDb(replacement);
+    try {
+      compact.prepare("ATTACH DATABASE ? AS source").run(path);
+      compact.exec("BEGIN");
+      try {
+        compact.exec(`INSERT INTO events (${EVENT_COLS}) SELECT ${EVENT_COLS} FROM source.events WHERE kind <> 'exec'`);
+        const sourceNoise = compact.prepare("SELECT 1 AS n FROM source.sqlite_master WHERE type = 'table' AND name = 'noise'").get();
+        if (sourceNoise) compact.exec(`INSERT INTO noise (${EVENT_COLS}) SELECT ${EVENT_COLS} FROM source.noise WHERE kind <> 'exec'`);
+        const sourceMeta = compact.prepare("SELECT 1 AS n FROM source.sqlite_master WHERE type = 'table' AND name = 'meta'").get();
+        if (sourceMeta) compact.exec("INSERT OR REPLACE INTO meta (key, value) SELECT key, value FROM source.meta");
+        compact.exec("COMMIT");
+      } catch (error) {
+        compact.exec("ROLLBACK");
+        throw error;
+      }
+      compact.exec("DETACH DATABASE source");
+      compact.exec("PRAGMA wal_checkpoint(TRUNCATE)");
+      const mode = compact.prepare("PRAGMA journal_mode = DELETE").get() as { journal_mode: string };
+      if (mode.journal_mode !== "delete") throw new Error("Could not finalize optimized history.");
+    } finally {
+      compact.close();
+    }
+    verifyHistory(replacement);
+    chmodSync(replacement, before.mode);
+    if (process.platform !== "win32") chownSync(replacement, before.uid, before.gid);
+    replaceHistory(path, replacement);
+    return { beforeBytes, afterBytes: historyStorageBytes(path) };
+  } finally {
+    for (const suffix of ["", "-wal", "-shm"]) {
+      const file = `${replacement}${suffix}`;
+      if (existsSync(file)) rmSync(file, { force: true });
+    }
+  }
 }
 
 export function splitHistory(db: DatabaseSync): void {
@@ -209,7 +291,6 @@ export function splitHistory(db: DatabaseSync): void {
     db.exec("ROLLBACK");
     throw error;
   }
-  dropOrphanBlobs(db);
 }
 
 export function dropIgnored(db: DatabaseSync, prefixes: readonly string[]): void {
@@ -219,11 +300,9 @@ export function dropIgnored(db: DatabaseSync, prefixes: readonly string[]): void
     const match = ignoredMatchSql(prefix);
     for (const table of tables) db.prepare(`DELETE FROM ${table} WHERE ${match.sql}`).run(...match.args);
   }
-  dropOrphanBlobs(db);
 }
 
 export function pruneHistory(db: DatabaseSync, now: number, mainDays = MAIN_RETENTION_DAYS, noiseDays = NOISE_RETENTION_DAYS): void {
   db.prepare("DELETE FROM events WHERE ts < ?").run(now - mainDays * DAY_MS);
   db.prepare("DELETE FROM noise WHERE ts < ?").run(now - noiseDays * DAY_MS);
-  dropOrphanBlobs(db);
 }

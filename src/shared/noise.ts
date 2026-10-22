@@ -77,6 +77,7 @@ function tmpPath(path: string): boolean {
 
 export function eventBucket(event: { kind: string; path: string; destPath?: string | null }, ignored: readonly string[] = []): "main" | "noise" | "drop" {
   if (event.kind === "net") return "main";
+  if (event.kind === "exec") return "drop";
   if (ignored.some((prefix) => matchesIgnored(event.path, prefix) || (event.destPath ? matchesIgnored(event.destPath, prefix) : false))) return "drop";
   if (personal(event.path) || (event.destPath ? personal(event.destPath) : false)) return "main";
   if (isJunk(event.path)) return "drop";

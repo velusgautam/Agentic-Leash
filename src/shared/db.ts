@@ -5,6 +5,18 @@ import { ensureIgnored } from "./ignored";
 import { validateRule } from "./rules";
 import type { Access, AgentId, AllowRule, DecisionRow, Grant, ScheduledRevoke } from "./types";
 
+const SAFE_COMMANDS = [
+  "pwd", "whoami", "id", "id -u", "id -un", "id -g", "id -gn",
+  "uname", "uname -a", "uname -m", "arch", "hostname", "tty",
+  "sw_vers", "sw_vers -productName", "sw_vers -productVersion", "sw_vers -buildVersion",
+  "true", "false",
+  "git --version", "node --version", "npm --version", "npx --version", "pnpm --version",
+  "yarn --version", "bun --version", "deno --version", "python --version", "python3 --version",
+  "ruby --version", "go version", "rustc --version", "cargo --version", "java -version",
+  "javac -version", "swift --version", "clang --version", "tsc --version", "docker --version",
+  "gh --version", "xcodebuild -version", "xcode-select -p",
+];
+
 const SCHEMA = `
 CREATE TABLE IF NOT EXISTS grants (
   id INTEGER PRIMARY KEY,
@@ -62,6 +74,21 @@ interface GrantSql {
   command: string | null;
 }
 
+function ensureSafeCommandRules(db: DatabaseSync): void {
+  if (getSetting(db, "safe_command_seed_v1")) return;
+  const insert = db.prepare("INSERT OR IGNORE INTO rules (kind, agent, value, created_at) VALUES ('command', '*', ?, ?)");
+  db.exec("BEGIN");
+  try {
+    const now = Date.now();
+    for (const command of SAFE_COMMANDS) insert.run(command, now);
+    setSetting(db, "safe_command_seed_v1", "1");
+    db.exec("COMMIT");
+  } catch (error) {
+    db.exec("ROLLBACK");
+    throw error;
+  }
+}
+
 function toGrant(row: GrantSql): Grant {
   return {
     id: row.id,
@@ -86,6 +113,7 @@ export function openGrantsDb(path: string): DatabaseSync {
   const decisionCols = db.prepare("PRAGMA table_info(decisions)").all() as { name: string }[];
   for (const name of ["command", "url"]) if (!decisionCols.some((col) => col.name === name)) db.exec(`ALTER TABLE decisions ADD COLUMN ${name} TEXT`);
   ensureIgnored(db);
+  ensureSafeCommandRules(db);
   return db;
 }
 

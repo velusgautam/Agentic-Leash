@@ -12,7 +12,7 @@ import { isUnder } from "../shared/paths";
 import { MAIN_RETENTION_DAYS, NOISE_RETENTION_DAYS, retentionDays } from "../shared/retention";
 import type { HistoryEvent } from "../shared/types";
 import { classify } from "./classify";
-import { dropIgnored, insertEvents, openHistoryDb, pruneHistory, splitHistory } from "./historyDb";
+import { dropIgnored, insertEvents, openHistoryDb, optimizeHistory, pruneHistory, splitHistory } from "./historyDb";
 import { lsofText, pollNet } from "./net";
 import { ProcTree, type EsEvent } from "./proctree";
 import { ContentCache, gitBaseline, readText } from "./snapshots";
@@ -147,6 +147,11 @@ export function startHelper(historyPath: string, eslogger = "/usr/bin/eslogger")
 }
 
 if (process.argv[1]?.includes("leash-helper")) {
-  const path = process.argv[2] || "/Library/Application Support/AgenticLeash/history.db";
-  startHelper(path);
+  if (process.argv[2] === "--optimize") {
+    const path = process.argv[3] || "/Library/Application Support/AgenticLeash/history.db";
+    process.stdout.write(`${JSON.stringify(optimizeHistory(path))}\n`);
+  } else {
+    const path = process.argv[2] || "/Library/Application Support/AgenticLeash/history.db";
+    startHelper(path);
+  }
 }

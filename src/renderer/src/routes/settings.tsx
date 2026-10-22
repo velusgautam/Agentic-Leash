@@ -3,7 +3,7 @@ import { useParams } from "@tanstack/react-router";
 import { Monitor, Moon, Sun } from "lucide-react";
 import licenses from "../../../../THIRD_PARTY_LICENSES.md?raw";
 import type { IgnoredRow } from "../../../shared/ignored";
-import type { OpenAtLoginState } from "../../../shared/bridge";
+import type { HistoryOptimizationInfo, HistoryOptimizationResult, OpenAtLoginState } from "../../../shared/bridge";
 import type { AgentId, Diagnostics, ThemeSource } from "../../../shared/types";
 import { ConfirmAction } from "~/components/ConfirmAction";
 import { AGENT_LABELS } from "~/components/Icons";
@@ -203,12 +203,38 @@ function IgnoredNoises() {
 
 function Monitoring() {
   const [days, setDays] = useState<{ main: number; noise: number } | null>(null);
+  const [optimization, setOptimization] = useState<HistoryOptimizationInfo | null>(null);
+  const [optimized, setOptimized] = useState<HistoryOptimizationResult | null>(null);
+  const [optimizationError, setOptimizationError] = useState<string | null>(null);
+  const [optimizing, setOptimizing] = useState(false);
   useEffect(() => {
     void window.leash.historyRetention().then(setDays);
+    void window.leash.historyOptimizationInfo().then(setOptimization);
   }, []);
   const save = (which: "main" | "noise", value: number) => {
     void window.leash.setHistoryRetention(which, value).then(setDays);
   };
+  const optimize = () => {
+    setOptimizing(true);
+    setOptimized(null);
+    setOptimizationError(null);
+    void window.leash.optimizeHistory().then((result) => {
+      setOptimized(result);
+      return window.leash.historyOptimizationInfo();
+    }).then(setOptimization).catch((caught: unknown) => {
+      setOptimizationError(caught instanceof Error ? caught.message : "History optimization stopped.");
+    }).finally(() => setOptimizing(false));
+  };
+  const formatBytes = (bytes: number) => {
+    if (bytes < 1024) return `${bytes} B`;
+    const units = ["KB", "MB", "GB", "TB"];
+    const unit = Math.min(Math.floor(Math.log(bytes) / Math.log(1024)) - 1, units.length - 1);
+    return `${(bytes / 1024 ** (unit + 1)).toFixed(unit > 0 ? 1 : 0)} ${units[unit]}`;
+  };
+  const optimizationDescription = optimizationError
+    ?? (optimized ? `Reduced history from ${formatBytes(optimized.beforeBytes)} to ${formatBytes(optimized.afterBytes)}.`
+      : optimization?.available ? `History database is ${formatBytes(optimization.sizeBytes)}. Optimization needs up to ${formatBytes(optimization.requiredBytes)} free; ${formatBytes(optimization.freeBytes)} is available.`
+        : "No history database yet.");
   const { status } = useSetup();
   const skipped = status?.helper === "skipped";
   return (
@@ -220,7 +246,21 @@ function Monitoring() {
       />
       <SettingsRow title="Full Disk Access" description="If Agentic Leash is missing from the list, click + and add Agentic Leash.app." control={<FullDiskControl />} />
       <SettingsRow title="Main history" description="Days to keep project files, network, and sensitive paths. From 5 to 365." control={days ? <DayField label="Main history days" value={days.main} onCommit={(value) => save("main", value)} /> : null} />
-      <SettingsRow title="Noise history" description="Days to keep scratch-path writes, execs, and temporary reads. From 5 to 365." control={days ? <DayField label="Noise history days" value={days.noise} onCommit={(value) => save("noise", value)} /> : null} />
+      <SettingsRow title="Noise history" description="Days to keep scratch-path writes and temporary reads. From 5 to 365." control={days ? <DayField label="Noise history days" value={days.noise} onCommit={(value) => save("noise", value)} /> : null} />
+      <SettingsRow
+        title="Optimize history"
+        description={<span aria-live="polite">{optimizationDescription}</span>}
+        control={
+          <ConfirmAction
+            trigger={<Button size="sm" variant="outline" disabled={optimizing || !optimization?.available || optimization.freeBytes < optimization.requiredBytes}>{optimizing ? "Optimizing…" : "Optimize history"}</Button>}
+            title="Optimize history?"
+            description="Agent monitoring pauses while History is rebuilt."
+            effects={["Removes existing process execution rows.", "Removes duplicate snapshot storage.", "Keeps file changes, network activity, and tool decisions."]}
+            confirmLabel="Optimize"
+            onConfirm={optimize}
+          />
+        }
+      />
     </SettingsSection>
   );
 }
