@@ -5,6 +5,7 @@ import { dirname, join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { describe, expect, it } from "vitest";
 import { checkpointHistory, historyCounts, historyText, historyUsage, insertEvents, openHistoryDb, optimizeHistory, pruneBySize, pruneHistory, purgeHistory, queryHistory, readHistoryStats, resetHistory, writeHistoryStats } from "../../src/helper/historyDb";
+import { purgeCommand } from "../../src/helper/leash-helper";
 import { capBytes, formatBytes, parseCapGb, rearmDismissed, storageWarning, type HistoryStats } from "../../src/shared/storage";
 
 const empty = { from: null, to: null, agents: [], path: "", kind: "all", sensitive: false, offset: 0, limit: 50, includeNoise: true };
@@ -405,5 +406,36 @@ describe("resetHistory", () => {
     expect(count(db, "SELECT count(*) AS n FROM events")).toBe(0);
     expect(count(db, "SELECT count(*) AS n FROM noise")).toBe(0);
     db.close();
+  });
+});
+
+describe("helper purge command", () => {
+  it("purges rows, rebuilds, and reports the deleted count", () => {
+    const path = historyPath();
+    const db = openHistoryDb(path);
+    seed(db, "events", "read", 3, () => Date.now());
+    seed(db, "events", "write", 2, () => Date.now());
+    db.close();
+    const result = purgeCommand("reads", path);
+    expect(result).toEqual({ beforeBytes: expect.any(Number), afterBytes: expect.any(Number), deleted: 3 });
+    expect(existsSync(`${path}-wal`)).toBe(false);
+    const after = openHistoryDb(path, true);
+    expect(rows(after, "events", "1 = 1")).toBe(2);
+    after.close();
+  });
+
+  it("needs days for older and resets everything for all", () => {
+    const path = historyPath();
+    const db = openHistoryDb(path);
+    seed(db, "events", "write", 2, () => Date.now() - 40 * day);
+    seed(db, "events", "write", 1, () => Date.now());
+    db.close();
+    expect(() => purgeCommand("older", path)).toThrow();
+    expect(() => purgeCommand("bogus", path)).toThrow();
+    expect(purgeCommand("older", path, "30").deleted).toBe(2);
+    expect(purgeCommand("all", path).deleted).toBeNull();
+    const after = openHistoryDb(path, true);
+    expect(rows(after, "events", "1 = 1")).toBe(0);
+    after.close();
   });
 });
