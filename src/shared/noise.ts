@@ -1,3 +1,5 @@
+import { matchesIgnored } from "./ignored";
+
 // Agent machinery and OS scratch. A sensitive path stays visible even inside one of these.
 const DIRS = [
   "/.git",
@@ -73,8 +75,9 @@ function tmpPath(path: string): boolean {
   return path === "/tmp" || path === "/private/tmp" || path.startsWith("/tmp/") || path.startsWith("/private/tmp/");
 }
 
-export function eventBucket(event: { kind: string; path: string; destPath?: string | null }): "main" | "noise" | "drop" {
+export function eventBucket(event: { kind: string; path: string; destPath?: string | null }, ignored: readonly string[] = []): "main" | "noise" | "drop" {
   if (event.kind === "net") return "main";
+  if (ignored.some((prefix) => matchesIgnored(event.path, prefix) || (event.destPath ? matchesIgnored(event.destPath, prefix) : false))) return "drop";
   if (personal(event.path) || (event.destPath ? personal(event.destPath) : false)) return "main";
   if (isJunk(event.path)) return "drop";
   if (!isNoise(event.path)) return "main";

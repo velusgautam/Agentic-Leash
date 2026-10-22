@@ -3,6 +3,7 @@ import { useParams } from "@tanstack/react-router";
 import { Monitor, Moon, Sun } from "lucide-react";
 import licenses from "../../../../THIRD_PARTY_LICENSES.md?raw";
 import type { AutoAllow } from "../../../shared/autoAllow";
+import type { IgnoredRow } from "../../../shared/ignored";
 import type { OpenAtLoginState } from "../../../shared/bridge";
 import type { AgentId, AllowRule, Diagnostics, ThemeSource } from "../../../shared/types";
 import { ConfirmAction } from "~/components/ConfirmAction";
@@ -168,6 +169,65 @@ function DayField({ label, value, onCommit }: { label: string; value: number; on
         if (event.key === "Enter") event.currentTarget.blur();
       }}
     />
+  );
+}
+
+function IgnoredNoises() {
+  const [rows, setRows] = useState<IgnoredRow[]>([]);
+  const [prefix, setPrefix] = useState("");
+  const [error, setError] = useState("");
+  useEffect(() => {
+    void window.leash.listIgnored().then(setRows);
+  }, []);
+  return (
+    <SettingsSection title="Paths">
+      <div className="px-3 py-3 sm:px-4">
+        <p className="mb-3 text-xs leading-normal text-muted-foreground/80">Checked paths are left out of history. Built-in rows stay in the list.</p>
+        <form
+          className="flex gap-2"
+          onSubmit={(event) => {
+            event.preventDefault();
+            void window.leash.addIgnored(prefix).then((result) => {
+              setRows(result.rows);
+              if (result.added) {
+                setPrefix("");
+                setError("");
+              } else setError("Use a full path, such as /tmp/scratch.");
+            });
+          }}
+        >
+          <input
+            aria-label="Ignored path"
+            className="h-8 min-w-0 flex-1 rounded-lg border border-border bg-background/60 px-2 font-mono text-xs outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            placeholder="/tmp/scratch"
+            value={prefix}
+            onChange={(event) => setPrefix(event.target.value)}
+          />
+          <Button size="sm" type="submit">Add</Button>
+        </form>
+        {error ? <p className="mt-2 text-xs text-destructive">{error}</p> : null}
+      </div>
+      {rows.map((row) => (
+        <SettingsRow
+          key={row.id}
+          title={
+            <span className="flex flex-wrap items-center gap-2">
+              <span className="font-mono text-xs whitespace-pre">{row.prefix}</span>
+              <span className="rounded-md bg-muted px-1.5 py-0.5 text-xs font-medium text-muted-foreground">{row.category}</span>
+            </span>
+          }
+          description={row.builtin ? "Built in" : "Added by you"}
+          control={
+            <span className="flex items-center gap-2">
+              {row.builtin ? null : (
+                <Button size="sm" variant="outline" onClick={() => void window.leash.deleteIgnored(row.id).then(setRows)}>Delete</Button>
+              )}
+              <Switch aria-label={row.prefix} checked={row.enabled} onCheckedChange={(enabled) => void window.leash.setIgnored(row.id, enabled).then(setRows)} />
+            </span>
+          }
+        />
+      ))}
+    </SettingsSection>
   );
 }
 
@@ -411,7 +471,7 @@ export function SettingsPage() {
   return (
     <PageContainer>
       <h1 className="px-3 text-lg font-medium sm:px-4">{entry.label}</h1>
-      {entry.id === "general" ? <><General /><UninstallApp /><AutomaticAllows /></> : entry.id === "allow-list" ? <AllowList /> : entry.id === "agents" ? <Agents /> : entry.id === "monitoring" ? <Monitoring /> : entry.id === "appearance" ? <Appearance /> : entry.id === "keybindings" ? <Keybindings /> : entry.id === "diagnostics" ? <Diagnostics /> : <Licenses />}
+      {entry.id === "general" ? <><General /><UninstallApp /><AutomaticAllows /></> : entry.id === "allow-list" ? <AllowList /> : entry.id === "agents" ? <Agents /> : entry.id === "monitoring" ? <Monitoring /> : entry.id === "ignored" ? <IgnoredNoises /> : entry.id === "appearance" ? <Appearance /> : entry.id === "keybindings" ? <Keybindings /> : entry.id === "diagnostics" ? <Diagnostics /> : <Licenses />}
     </PageContainer>
   );
 }

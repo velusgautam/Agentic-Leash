@@ -1,4 +1,5 @@
 import type { AutoAllow } from "./autoAllow";
+import type { IgnoredRow } from "./ignored";
 import type { SetupStatus } from "./setup";
 import type { Access, AgentId, AgentSnapshot, AllowRule, DecisionRow, Diagnostics, Grant, HistoryRow, PendingRequest, ScheduledRevoke, ThemeSource } from "./types";
 
@@ -29,6 +30,10 @@ export interface LeashBridge {
   queryHistory(filter: { from: number | null; to: number | null; agents: string[]; path: string; kind: string; sensitive: boolean; includeNoise?: boolean; offset: number; limit: number }): Promise<{ rows: HistoryRow[]; total: number }>;
   historyRetention(): Promise<{ main: number; noise: number }>;
   setHistoryRetention(which: "main" | "noise", days: number): Promise<{ main: number; noise: number }>;
+  listIgnored(): Promise<IgnoredRow[]>;
+  setIgnored(id: number, enabled: boolean): Promise<IgnoredRow[]>;
+  addIgnored(prefix: string): Promise<{ rows: IgnoredRow[]; added: boolean }>;
+  deleteIgnored(id: number): Promise<IgnoredRow[]>;
   historyText(id: number): Promise<{ before: string | null; after: string | null }>;
   listPending(): Promise<PendingRequest[]>;
   decidePending(id: string, decision: "allow" | "deny", ttlSeconds: number | null, scopePath?: string): Promise<void>;
