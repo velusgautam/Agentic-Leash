@@ -1,7 +1,7 @@
 import { expect, test } from "@playwright/test";
 import { launch } from "./launch";
 
-const SECTIONS = ["General", "Agents", "Monitoring", "Appearance", "Keybindings", "Diagnostics", "Licenses"];
+const SECTIONS = ["General", "Agents", "Allow list", "Monitoring", "Appearance", "Keybindings", "Diagnostics", "Licenses"];
 
 test("sidebar navigates pages, agents and settings", async () => {
   const app = await launch();

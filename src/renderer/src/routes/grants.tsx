@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { ArrowDown, ArrowUp, FolderLock, History, Lock, LockOpen, ShieldOff, Timer, Users } from "lucide-react";
+import { ArrowDown, ArrowUp, FolderLock, History, Lock, LockOpen, ShieldOff, SquareTerminal, Timer, Users } from "lucide-react";
 import { viewGrants, type GrantSortKey, type SortDir } from "../../../shared/grantView";
 import { denyCountdown, pendingSecondsLeft, POPUP_TIMEOUT_S } from "../../../shared/pending";
 import type { DecisionRow, Grant, HookRequest, PendingRequest } from "../../../shared/types";
@@ -83,9 +83,36 @@ function PendingRow({ item, now, onDecide }: { item: PendingRequest; now: number
   );
 }
 
+function GrantRow({ grant, mono, Icon, onRevoke }: { grant: Grant; mono: string; Icon: typeof FolderLock; onRevoke: (id: number) => void }) {
+  return (
+    <div className="flex items-center gap-3 px-4 py-3 text-sm">
+      <Icon className="size-4 shrink-0 text-muted-foreground" aria-hidden />
+      <div className="min-w-0 flex-1 space-y-1">
+        <div className="overflow-x-auto font-mono text-xs font-medium whitespace-nowrap">{mono}</div>
+        <div className="flex flex-wrap items-center gap-2">
+          <Agent agent={grant.agent} />
+          <span className={cn(pill, grant.access === "write" ? "bg-amber-500/12 text-amber-700 dark:text-amber-300" : "bg-sky-500/10 text-sky-700 dark:text-sky-300")}>{grant.access}</span>
+          <span className="text-xs text-muted-foreground tabular-nums" title={when(grant.createdAt)}>Approved {when(grant.createdAt)}</span>
+          <span className={cn(pill, "bg-muted text-foreground/80")} title={grant.expiresAt === null ? "Forever" : when(grant.expiresAt)}><Timer className="size-3" aria-hidden />{remaining(grant.expiresAt)}</span>
+          <span className="text-xs text-muted-foreground">{grant.source}</span>
+        </div>
+      </div>
+      <ConfirmAction
+        trigger={<Button size="sm" variant="destructive-outline">Revoke</Button>}
+        title="Revoke this grant?"
+        description={mono}
+        effects={grantEffects(grant)}
+        confirmLabel="Revoke"
+        onConfirm={() => onRevoke(grant.id)}
+      />
+    </div>
+  );
+}
+
 function GrantList({ grants, agent, sort, dir, onAgent, onSort, onRevoke }: { grants: Grant[]; agent: string; sort: GrantSortKey; dir: SortDir; onAgent: (agent: string) => void; onSort: (sort: GrantSortKey) => void; onRevoke: (id: number) => void }) {
   const agents = [...new Set(grants.map((grant) => grant.agent))].sort((a, b) => agentName(a).localeCompare(agentName(b)));
-  const rows = viewGrants(grants, { agent, sort, dir });
+  const folders = viewGrants(grants.filter((grant) => grant.command == null), { agent, sort, dir });
+  const commands = viewGrants(grants.filter((grant) => grant.command != null), { agent, sort, dir });
   const sorts = [
     { key: "approved" as const, label: "Approved", asc: "oldest first", desc: "newest first" },
     { key: "expires" as const, label: "Expires", asc: "soon first", desc: "last first" },
@@ -113,32 +140,17 @@ function GrantList({ grants, agent, sort, dir, onAgent, onSort, onRevoke }: { gr
           })}
         </div>
       </div>
-      <SettingsSection title="Live grants">
-        {rows.length === 0 ? <p className="px-4 py-4 text-sm text-muted-foreground">No grants for {agentName(agent)}.</p> : null}
-        {rows.map((grant) => (
-          <div key={grant.id} className="flex items-center gap-3 px-4 py-3 text-sm">
-            <FolderLock className="size-4 shrink-0 text-muted-foreground" aria-hidden />
-            <div className="min-w-0 flex-1 space-y-1">
-              <div className="overflow-x-auto font-mono text-xs font-medium whitespace-nowrap">{grant.path}</div>
-              <div className="flex flex-wrap items-center gap-2">
-                <Agent agent={grant.agent} />
-                <span className={cn(pill, grant.access === "write" ? "bg-amber-500/12 text-amber-700 dark:text-amber-300" : "bg-sky-500/10 text-sky-700 dark:text-sky-300")}>{grant.access}</span>
-                <span className="text-xs text-muted-foreground tabular-nums" title={when(grant.createdAt)}>Approved {when(grant.createdAt)}</span>
-                <span className={cn(pill, "bg-muted text-foreground/80")} title={grant.expiresAt === null ? "Forever" : when(grant.expiresAt)}><Timer className="size-3" aria-hidden />{remaining(grant.expiresAt)}</span>
-                <span className="text-xs text-muted-foreground">{grant.source}</span>
-              </div>
-            </div>
-            <ConfirmAction
-              trigger={<Button size="sm" variant="destructive-outline">Revoke</Button>}
-              title="Revoke this grant?"
-              description={grant.path}
-              effects={grantEffects(grant)}
-              confirmLabel="Revoke"
-              onConfirm={() => onRevoke(grant.id)}
-            />
-          </div>
-        ))}
-      </SettingsSection>
+      {folders.length === 0 && commands.length === 0 ? <p className="px-4 py-4 text-sm text-muted-foreground">No grants for {agentName(agent)}.</p> : null}
+      {folders.length > 0 ? (
+        <SettingsSection title="Live grants">
+          {folders.map((grant) => <GrantRow key={grant.id} grant={grant} mono={grant.path} Icon={FolderLock} onRevoke={onRevoke} />)}
+        </SettingsSection>
+      ) : null}
+      {commands.length > 0 ? (
+        <SettingsSection title="Commands">
+          {commands.map((grant) => <GrantRow key={grant.id} grant={grant} mono={grant.command!} Icon={SquareTerminal} onRevoke={onRevoke} />)}
+        </SettingsSection>
+      ) : null}
     </>
   );
 }
