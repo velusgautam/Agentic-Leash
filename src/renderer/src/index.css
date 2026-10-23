@@ -417,6 +417,13 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(agentic-
   }
 }
 
+/* No backdrop-filter here: it samples the page and hides macOS vibrancy. */
+[data-slot="sidebar-inner"],
+[data-mobile="true"][data-slot="sidebar"],
+[data-slot="sidebar"]:not([data-variant]) {
+  background-color: color-mix(in srgb, var(--sidebar) var(--glass-opacity), transparent);
+}
+
 @utility topbar-scroll-fade {
   -webkit-mask-image:
     linear-gradient(
@@ -664,7 +671,7 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(agentic-
   }
   html,
   body {
-    background-color: var(--app-chrome-background);
+    background-color: transparent;
   }
   body {
     @apply text-foreground relative;
@@ -688,7 +695,7 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(agentic-
      vellum, forest drafting paper, marine cyanotype, copper, and violet ink.
      These colors stay deliberately deep at the top edge so the white stage
      wordmark and controls retain contrast in both appearance modes. */
-  html[data-theme-id="agentic-leash-chat"] {
+  html[data-theme-id="signal"] {
     --stage-art-top: oklch(0.760675 0.141361 348.019);
     --stage-art-mid: oklch(0.588093 0.188832 353.138);
     --stage-art-bottom: oklch(0.383959 0.135096 348.656);
@@ -708,7 +715,7 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(agentic-
     }
   }
 
-  html[data-theme-id="grove"] {
+  html[data-theme-id="clear"] {
     --stage-art-top: oklch(0.751465 0.112731 157.313);
     --stage-art-mid: oklch(0.567105 0.11099 158.859);
     --stage-art-bottom: oklch(0.367918 0.067635 160.558);
@@ -742,7 +749,7 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(agentic-
     }
   }
 
-  html[data-theme-id="ocean"] {
+  html[data-theme-id="watch"] {
     --stage-art-top: oklch(0.792993 0.088072 220.421);
     --stage-art-mid: oklch(0.590296 0.116841 243.184);
     --stage-art-bottom: oklch(0.409123 0.093718 247.98);
@@ -762,7 +769,7 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(agentic-
     }
   }
 
-  html[data-theme-id="ember"] {
+  html[data-theme-id="leash"] {
     --stage-art-top: oklch(0.782439 0.118806 52.569);
     --stage-art-mid: oklch(0.62863 0.15922 39.401);
     --stage-art-bottom: oklch(0.404251 0.117664 30.424);
@@ -796,7 +803,7 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(agentic-
     }
   }
 
-  html[data-theme-id="iris"] {
+  html[data-theme-id="lock"] {
     --stage-art-top: oklch(0.738305 0.113454 298.926);
     --stage-art-mid: oklch(0.551826 0.159189 294.531);
     --stage-art-bottom: oklch(0.37147 0.133317 289.999);
@@ -816,7 +823,7 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(agentic-
     }
   }
 
-  :is(html[data-theme-id="agentic-leash-chat"], html[data-theme-id="ocean"], html[data-theme-id="iris"]) {
+  :is(html[data-theme-id="signal"], html[data-theme-id="watch"], html[data-theme-id="lock"]) {
     --stage-night-top: color-mix(in oklch, var(--stage-art-top) 38%, var(--stage-night-base-top));
     --stage-night-mid: color-mix(in oklch, var(--stage-art-mid) 38%, var(--stage-night-base-mid));
     --stage-night-bottom: color-mix(
@@ -839,11 +846,11 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(agentic-
   }
 
   :is(
-    html[data-theme-id="agentic-leash-chat"],
-    html[data-theme-id="grove"],
-    html[data-theme-id="ocean"],
-    html[data-theme-id="ember"],
-    html[data-theme-id="iris"]
+    html[data-theme-id="signal"],
+    html[data-theme-id="clear"],
+    html[data-theme-id="watch"],
+    html[data-theme-id="leash"],
+    html[data-theme-id="lock"]
   ) {
     --stage-art-celeste-highlight: var(--stage-art-highlight);
     --stage-art-celeste-secondary: var(--stage-art-secondary);
@@ -1433,7 +1440,7 @@ html[data-theme-id] :is(.chat-markdown, .composer-tiptap) .chat-markdown-codeblo
 /* Inline code and compact artifacts use a translucent
    secondary surface flattened over the light chat canvas. The raw muted and
    secondary tokens are substantially darker than those visible pixels. */
-html[data-theme-id="agentic-leash-chat"] {
+html[data-theme-id="signal"] {
   @variant light {
     & .chat-markdown :not(pre) > code,
     & [data-changed-files-state],
@@ -1481,7 +1488,7 @@ html[data-theme-id] [data-app-sidebar] {
 
 /* The panel divider is deliberately pink, and its resize affordance
    keeps that color while hovered. Do not neutralize this branded edge. */
-html[data-theme-id="agentic-leash-chat"] [data-app-sidebar] {
+html[data-theme-id="signal"] [data-app-sidebar] {
   @variant dark {
     border-color: var(--contrast-sidebar-border);
   }
@@ -1652,7 +1659,7 @@ body {
 /* The texture is a 128px grayscale tile with a constant 7/255
    alpha. Keep our procedural texture cheap while matching that scale and
    strength for the branded preset. */
-html[data-theme-id="agentic-leash-chat"] {
+html[data-theme-id="signal"] {
   --surface-grain: url("data:image/svg+xml,%3Csvg viewBox='0 0 128 128' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.02745'/%3E%3C/svg%3E");
   --surface-grain-size: 128px 128px;
 }
