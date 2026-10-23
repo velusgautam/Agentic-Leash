@@ -1,3 +1,4 @@
+import { isReadOnlyCommand } from "../shared/commands";
 import { extractShellPaths, normalise } from "../shared/paths";
 import type { Access, HookRequest } from "../shared/types";
 
@@ -18,6 +19,11 @@ function resolveOne(path: string, cwd: string, home?: string): string {
   return extractShellPaths(path, cwd, home).find((item) => item !== cwdNorm) ?? normalise(path, cwd, home);
 }
 
+// A read grant on the folder covers `git status` and friends; anything else needs write.
+function shellAccess(command: string): Access {
+  return isReadOnlyCommand(command) ? "read" : "write";
+}
+
 function request(partial: HookRequest): Normalised {
   return { kind: "request", request: partial };
 }
@@ -36,7 +42,7 @@ export function normaliseHook(raw: unknown, entry: "claude" | "cursor" | "codex"
     const tool = str(payload.tool_name) || "unknown";
     if (tool === "run_shell_command" || tool === "Shell") {
       const command = str(input.command) || str(payload.command);
-      return request({ agent, event, tool, access: "write", paths: extractShellPaths(command, cwd, home), cwd, command, sessionId });
+      return request({ agent, event, tool, access: shellAccess(command), paths: extractShellPaths(command, cwd, home), cwd, command, sessionId });
     }
     const rawPaths = [input.file_path, input.path].filter((value): value is string => typeof value === "string" && value.length > 0);
     const access: Access = tool === "write_file" || tool === "replace" ? "write" : "read";
@@ -47,7 +53,7 @@ export function normaliseHook(raw: unknown, entry: "claude" | "cursor" | "codex"
     const tool = str(payload.tool_name) || "unknown";
     if (tool === "terminal") {
       const command = str(input.command);
-      return request({ agent, event, tool, access: "write", paths: extractShellPaths(command, cwd, home), cwd, command, sessionId });
+      return request({ agent, event, tool, access: shellAccess(command), paths: extractShellPaths(command, cwd, home), cwd, command, sessionId });
     }
     const path = str(input.path);
     const paths = path ? [resolveOne(path, cwd, home)] : [];
@@ -62,7 +68,7 @@ export function normaliseHook(raw: unknown, entry: "claude" | "cursor" | "codex"
   }
   if (entry === "cursor" && event === "beforeShellExecution") {
     const command = str(payload.command);
-    return request({ agent, event, tool: "Shell", access: "write", paths: extractShellPaths(command, cwd, home), cwd, command, sessionId });
+    return request({ agent, event, tool: "Shell", access: shellAccess(command), paths: extractShellPaths(command, cwd, home), cwd, command, sessionId });
   }
   if (entry === "cursor" && event === "preToolUse" && str(payload.tool_name) === "Shell") return { kind: "ignore" };
   if (entry === "cursor" && event === "beforeMCPExecution") {
@@ -73,7 +79,7 @@ export function normaliseHook(raw: unknown, entry: "claude" | "cursor" | "codex"
   if (tool === "Bash" || tool === "Shell") {
     const command = str(input.command) || str(payload.command);
     const shellCwd = str(input.cwd) || cwd;
-    return request({ agent, event, tool, access: "write", paths: extractShellPaths(command, shellCwd, home), cwd: shellCwd, command, sessionId });
+    return request({ agent, event, tool, access: shellAccess(command), paths: extractShellPaths(command, shellCwd, home), cwd: shellCwd, command, sessionId });
   }
   if (tool === "WebFetch") {
     return request({ agent, event, tool, access: "read", paths: [], cwd, url: str(input.url) || undefined, sessionId });

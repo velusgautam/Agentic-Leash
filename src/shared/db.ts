@@ -3,7 +3,7 @@ import { dirname } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { ensureIgnored } from "./ignored";
 import { validateRule } from "./rules";
-import type { Access, AgentId, AllowRule, DecisionRow, Grant, ScheduledRevoke } from "./types";
+import type { Access, AgentId, AllowRule, BlockRule, DecisionRow, Grant, ScheduledRevoke } from "./types";
 
 const SAFE_COMMANDS = [
   "pwd", "whoami", "id", "id -u", "id -un", "id -g", "id -gn",
@@ -36,6 +36,14 @@ CREATE TABLE IF NOT EXISTS rules (
   value TEXT NOT NULL,
   created_at INTEGER NOT NULL,
   UNIQUE (kind, agent, value)
+);
+CREATE TABLE IF NOT EXISTS blocks (
+  id INTEGER PRIMARY KEY,
+  agent TEXT NOT NULL,
+  kind TEXT NOT NULL CHECK (kind IN ('path','command')),
+  value TEXT NOT NULL,
+  created_at INTEGER NOT NULL,
+  UNIQUE (agent, kind, value)
 );
 CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS scheduled_revokes (
@@ -81,6 +89,9 @@ interface GrantSql {
   created_at: number;
   expires_at: number | null;
   command: string | null;
+  session_id?: string | null;
+  idle_seconds?: number | null;
+  last_used_at?: number | null;
 }
 
 function ensureSafeCommandRules(db: DatabaseSync): void {
@@ -108,6 +119,9 @@ function toGrant(row: GrantSql): Grant {
     createdAt: row.created_at,
     expiresAt: row.expires_at,
     command: row.command ?? null,
+    sessionId: row.session_id ?? null,
+    idleSeconds: row.idle_seconds ?? null,
+    lastUsedAt: row.last_used_at ?? null,
   };
 }
 
@@ -118,9 +132,13 @@ export function openGrantsDb(path: string): DatabaseSync {
   db.exec("PRAGMA journal_mode = WAL");
   db.exec(SCHEMA);
   const cols = db.prepare("PRAGMA table_info(grants)").all() as { name: string }[];
-  if (!cols.some((col) => col.name === "command")) db.exec("ALTER TABLE grants ADD COLUMN command TEXT");
+  for (const [name, type] of [["command", "TEXT"], ["session_id", "TEXT"], ["idle_seconds", "INTEGER"], ["last_used_at", "INTEGER"]]) {
+    if (!cols.some((col) => col.name === name)) db.exec(`ALTER TABLE grants ADD COLUMN ${name} ${type}`);
+  }
   const decisionCols = db.prepare("PRAGMA table_info(decisions)").all() as { name: string }[];
-  for (const name of ["command", "url"]) if (!decisionCols.some((col) => col.name === name)) db.exec(`ALTER TABLE decisions ADD COLUMN ${name} TEXT`);
+  for (const [name, type] of [["command", "TEXT"], ["url", "TEXT"], ["session_id", "TEXT"], ["secret", "INTEGER"], ["prompted", "INTEGER"]]) {
+    if (!decisionCols.some((col) => col.name === name)) db.exec(`ALTER TABLE decisions ADD COLUMN ${name} ${type}`);
+  }
   ensureIgnored(db);
   ensureSafeCommandRules(db);
   return db;
@@ -130,19 +148,31 @@ export function listGrants(db: DatabaseSync): Grant[] {
   return db.prepare("SELECT * FROM grants ORDER BY id").all().map((row) => toGrant(row as unknown as GrantSql));
 }
 
-type GrantWrite = { agent: string; path: string; access: Access; source: "leash" | "config"; createdAt: number; expiresAt: number | null; command?: string | null };
+type GrantWrite = {
+  agent: string;
+  path: string;
+  access: Access;
+  source: "leash" | "config";
+  createdAt: number;
+  expiresAt: number | null;
+  command?: string | null;
+  sessionId?: string | null;
+  idleSeconds?: number | null;
+};
 
 export function insertGrant(db: DatabaseSync, grant: GrantWrite): number {
   const result = db
-    .prepare("INSERT INTO grants (agent, path, access, source, created_at, expires_at, command) VALUES (?, ?, ?, ?, ?, ?, ?)")
-    .run(grant.agent, grant.path, grant.access, grant.source, grant.createdAt, grant.expiresAt, grant.command ?? null);
+    .prepare("INSERT INTO grants (agent, path, access, source, created_at, expires_at, command, session_id, idle_seconds) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)")
+    .run(grant.agent, grant.path, grant.access, grant.source, grant.createdAt, grant.expiresAt, grant.command ?? null, grant.sessionId ?? null, grant.idleSeconds ?? null);
   return Number(result.lastInsertRowid);
 }
 
 export function upsertGrant(db: DatabaseSync, grant: GrantWrite): number {
   const existing = db
-    .prepare("SELECT id, created_at, expires_at FROM grants WHERE agent = ? AND path = ? AND access = ? AND source = ? AND command IS NULL ORDER BY id LIMIT 1")
-    .get(grant.agent, grant.path, grant.access, grant.source) as { id: number; created_at: number; expires_at: number | null } | undefined;
+    .prepare(
+      "SELECT id, created_at, expires_at FROM grants WHERE agent = ? AND path = ? AND access = ? AND source = ? AND command IS NULL AND session_id IS ? AND (idle_seconds IS NULL) = ? ORDER BY id LIMIT 1",
+    )
+    .get(grant.agent, grant.path, grant.access, grant.source, grant.sessionId ?? null, grant.idleSeconds == null ? 1 : 0) as { id: number; created_at: number; expires_at: number | null } | undefined;
   if (!existing) return insertGrant(db, grant);
   const expiresAt = existing.expires_at === null || grant.expiresAt === null ? null : Math.max(existing.expires_at, grant.expiresAt);
   if (expiresAt === existing.expires_at) return existing.id;
@@ -166,7 +196,7 @@ export function upsertCommandGrant(db: DatabaseSync, grant: { agent: string; com
 export function collapseGrantDupes(db: DatabaseSync): void {
   const groups = new Map<string, Grant[]>();
   for (const grant of listGrants(db)) {
-    const key = `${grant.source}\0${grant.agent}\0${grant.access}\0${grant.path}\0${grant.command ?? ""}`;
+    const key = `${grant.source}\0${grant.agent}\0${grant.access}\0${grant.path}\0${grant.command ?? ""}\0${grant.sessionId ?? ""}\0${grant.idleSeconds ?? ""}`;
     const group = groups.get(key);
     if (group) group.push(grant);
     else groups.set(key, [grant]);
@@ -214,11 +244,59 @@ export function setSetting(db: DatabaseSync, key: string, value: string): void {
 
 export function recordDecision(
   db: DatabaseSync,
-  row: { ts: number; agent: string; tool: string; paths: string[]; verdict: string; reason?: string; grantId?: number; durationMs?: number; command?: string; url?: string },
+  row: { ts: number; agent: string; tool: string; paths: string[]; verdict: string; reason?: string; grantId?: number; durationMs?: number; command?: string; url?: string; sessionId?: string; secret?: boolean; prompted?: boolean },
 ): void {
   db.prepare(
-    "INSERT INTO decisions (ts, agent, tool, paths, verdict, reason, grant_id, duration_ms, command, url) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-  ).run(row.ts, row.agent, row.tool, JSON.stringify(row.paths), row.verdict, row.reason ?? null, row.grantId ?? null, row.durationMs ?? null, row.command ?? null, row.url ?? null);
+    "INSERT INTO decisions (ts, agent, tool, paths, verdict, reason, grant_id, duration_ms, command, url, session_id, secret, prompted) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+  ).run(
+    row.ts,
+    row.agent,
+    row.tool,
+    JSON.stringify(row.paths),
+    row.verdict,
+    row.reason ?? null,
+    row.grantId ?? null,
+    row.durationMs ?? null,
+    row.command ?? null,
+    row.url ?? null,
+    row.sessionId ?? null,
+    row.secret ? 1 : 0,
+    row.prompted ? 1 : 0,
+  );
+}
+
+/** True when this agent session was let through to a secret since `since`. Without a session id, any session of the agent counts. */
+export function readSecretSince(db: DatabaseSync, agent: string, sessionId: string | undefined, since: number): boolean {
+  const row = db
+    .prepare("SELECT 1 AS n FROM decisions WHERE agent = ? AND secret = 1 AND verdict = 'pass' AND ts >= ? AND (? IS NULL OR session_id = ?) LIMIT 1")
+    .get(agent, since, sessionId ?? null, sessionId ?? null);
+  return row !== undefined;
+}
+
+/**
+ * Marks grants as used. A grant with an idle limit moves its expiry to `now + idle`,
+ * capped at `maxMs` after it was approved.
+ */
+export function touchGrants(db: DatabaseSync, ids: number[], now: number, maxMs: number): void {
+  if (!ids.length) return;
+  db.prepare(
+    "UPDATE grants SET last_used_at = ?, expires_at = CASE WHEN idle_seconds IS NULL THEN expires_at ELSE MIN(? + idle_seconds * 1000, created_at + ?) END WHERE id IN (SELECT value FROM json_each(?))",
+  ).run(now, now, maxMs, JSON.stringify(ids));
+}
+
+export interface DecisionStat { ts: number; agent: string; verdict: string; durationMs: number | null; paths: string; secret: boolean; prompted: boolean }
+
+export function decisionsSince(db: DatabaseSync, since: number): DecisionStat[] {
+  const rows = db.prepare("SELECT ts, agent, verdict, duration_ms, paths, secret, prompted FROM decisions WHERE ts >= ? ORDER BY ts").all(since) as unknown as {
+    ts: number;
+    agent: string;
+    verdict: string;
+    duration_ms: number | null;
+    paths: string;
+    secret: number | null;
+    prompted: number | null;
+  }[];
+  return rows.map((row) => ({ ts: row.ts, agent: row.agent, verdict: row.verdict, durationMs: row.duration_ms, paths: row.paths, secret: row.secret === 1, prompted: row.prompted === 1 }));
 }
 
 export function listDecisions(db: DatabaseSync, limit = 200): DecisionRow[] {
@@ -251,7 +329,7 @@ export function listDecisions(db: DatabaseSync, limit = 200): DecisionRow[] {
 }
 
 export function decisionDurations(db: DatabaseSync): number[] {
-  return (db.prepare("SELECT duration_ms FROM decisions WHERE duration_ms IS NOT NULL").all() as unknown as { duration_ms: number }[]).map(
+  return (db.prepare("SELECT duration_ms FROM decisions WHERE duration_ms IS NOT NULL AND (prompted IS NULL OR prompted = 0)").all() as unknown as { duration_ms: number }[]).map(
     (row) => row.duration_ms,
   );
 }
@@ -325,4 +403,20 @@ export function pruneApprovals(db: DatabaseSync, olderThan: number): number {
 
 export function countBlocked(db: DatabaseSync, from: number): number {
   return (db.prepare("SELECT COUNT(*) AS n FROM decisions WHERE ts >= ? AND verdict IN ('deny','timeout')").get(from) as { n: number }).n;
+}
+
+export function listBlocks(db: DatabaseSync): BlockRule[] {
+  const rows = db.prepare("SELECT id, agent, kind, value, created_at FROM blocks ORDER BY id").all() as unknown as { id: number; agent: BlockRule["agent"]; kind: BlockRule["kind"]; value: string; created_at: number }[];
+  return rows.map((row) => ({ id: row.id, agent: row.agent, kind: row.kind, value: row.value, createdAt: row.created_at }));
+}
+
+/** Adds a "Never" rule, or returns the id of the one already there. */
+export function addBlock(db: DatabaseSync, block: Omit<BlockRule, "id" | "createdAt">, now: number): number {
+  db.prepare("INSERT OR IGNORE INTO blocks (agent, kind, value, created_at) VALUES (?, ?, ?, ?)").run(block.agent, block.kind, block.value, now);
+  return (db.prepare("SELECT id FROM blocks WHERE agent = ? AND kind = ? AND value = ?").get(block.agent, block.kind, block.value) as { id: number }).id;
+}
+
+export function deleteBlocks(db: DatabaseSync, ids: number[]): number {
+  if (!ids.length) return 0;
+  return Number(db.prepare("DELETE FROM blocks WHERE id IN (SELECT value FROM json_each(?))").run(JSON.stringify(ids)).changes);
 }

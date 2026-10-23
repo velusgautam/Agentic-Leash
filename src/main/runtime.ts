@@ -6,13 +6,13 @@ import { promisify } from "node:util";
 import { app, BrowserWindow, globalShortcut, ipcMain, nativeTheme } from "electron";
 import { DEFAULT_TTL_S, grantsDbPath, HISTORY_DIR, homeDir, isClaudeBinary, IS_MAC, leashDir, POPUP_TIMEOUT_S, protectedRoots, socketPath, TCC_CLIENTS } from "../shared/constants";
 import { diagnosticsReport } from "../shared/diagnostics";
-import { cancelScheduled, collapseGrantDupes, createRule, decisionDurations, deleteGrant, deleteGrants, deleteRule, extendGrant, countBlocked, getSetting, listApprovals, listDecisions, listGrants, listRules, listScheduled, openGrantsDb, recordApproval, scheduleRevoke, setSetting, updateRule, upsertCommandGrant, upsertGrant } from "../shared/db";
+import { addBlock, cancelScheduled, collapseGrantDupes, createRule, deleteBlocks, listBlocks, decisionDurations, decisionsSince, deleteGrant, deleteGrants, deleteRule, extendGrant, countBlocked, getSetting, listApprovals, listDecisions, listGrants, listRules, listScheduled, openGrantsDb, recordApproval, scheduleRevoke, setSetting, updateRule, upsertCommandGrant, upsertGrant } from "../shared/db";
 import { historyEvent, historyStorageBytes, historyText, listHistory, openHistoryDb, optimizeHistory, queryHistory, readHistoryStats, summarizeHistory, type HistoryFilter } from "../helper/historyDb";
 import { purgeCommand } from "../helper/leash-helper";
 import { checkRestore } from "../shared/restore";
 import { parseApprovalStyle, type ApprovalStyle } from "../shared/approvalStyle";
 import { suggestRules, SUGGEST_WINDOW_MS } from "../shared/suggestions";
-import type { Access, AgentId, AgentSnapshot, HistoryRow, PendingRequest, ThemeSource } from "../shared/types";
+import type { Access, AgentId, AgentSnapshot, HistoryRow, PendingRequest, PresetId, ThemeSource } from "../shared/types";
 import { loadClaude } from "./agents/claude";
 import { cursorWatchPaths, cursorWorkers, loadCursor } from "./agents/cursor";
 import { mirrorConfigGrants } from "./agents/mirror";
@@ -30,6 +30,9 @@ import { MAIN_RETENTION_DAYS, NOISE_RETENTION_DAYS, parseRetentionDays, retentio
 import { CAP_DEFAULT_GB, CLEANUP_MODES, parseCapGb, rearmDismissed, storageWarning, type CleanupMode, type HistoryStats } from "../shared/storage";
 import type { HistoryCleanupResult } from "../shared/bridge";
 import { coveredPending } from "../hook/decide";
+import { clampPreset, guardedKind, isPresetId, presetById, presetFromSeconds, requestPolicy, todayExpiry } from "../shared/policy";
+import { END_OF_DAY_HOUR } from "../shared/presets";
+import { buildInsights } from "../shared/insights";
 import { grantRoot, parentFolders } from "../shared/parents";
 import { helperInstallScript, helperMaintenanceScript, helperUninstallScript, installSweepAgent, sweepServiceTarget } from "./helperInstall";
 import { LOGIN_AGENT_LABEL } from "./loginItem";
@@ -41,8 +44,13 @@ import { FULL_DISK_URL, hasFullDiskAccess } from "./fullDisk";
 import { macAppPresent, rememberOnboarding, setupReady, type HelperState, type SetupAgent, type SetupStatus } from "../shared/setup";
 import { readTcc } from "./tcc";
 import { historySig } from "../shared/historySig";
+import { isUnder, secretLabel } from "../shared/paths";
+import { personalKind, startupKind } from "../shared/sensitive";
 
 const exec = promisify(execFile);
+const SENSITIVE_NOTIFY_MS = 10 * 60 * 1000;
+const UNDO_MS = 6000;
+const MANUAL_GUARDED_MAX_S = 15 * 60;
 const pendingRestart = new Set<AgentId>();
 
 function claudeRoot(): string {
@@ -110,7 +118,7 @@ const broadcast = (channel: string, payload?: unknown) => {
   for (const window of BrowserWindow.getAllWindows()) if (!window.webContents.isDestroyed()) window.webContents.send(channel, payload);
 };
 
-export function startRuntime(options: { userData: string; openApproval: () => void; closeApproval: () => void; setPending: (count: number) => void; notify: (title: string, body: string) => void; finishUninstall: () => void; disableLoginItem: () => void; onStatus?: (status: { count: number; lockdown: boolean }) => void; notifyPending?: (item: PendingRequest, decide: (decision: "allow" | "deny") => void) => (() => void) | void }): { revokeAll: () => { revoked: number }; unlock: () => void } {
+export function startRuntime(options: { userData: string; openApproval: () => void; closeApproval: () => void; setPending: (count: number) => void; notify: (title: string, body: string) => void; finishUninstall: () => void; disableLoginItem: () => void; onStatus?: (status: { count: number; lockdown: boolean }) => void; notifyPending?: (item: PendingRequest, decide: (decision: "allow" | "deny") => void) => (() => void) | void }): { revokeAll: () => { revoked: number }; unlock: () => void; onLock: () => void } {
   const db = openGrantsDb(grantsDbPath());
   collapseGrantDupes(db);
   const home = homeDir();
@@ -122,13 +130,45 @@ export function startRuntime(options: { userData: string; openApproval: () => vo
   let uninstalling = false;
   const timeouts = new Map<string, NodeJS.Timeout>();
 
+  // The nearest folder holding `.git`, never the home folder or `/`. Cached for the run; repos rarely move.
+  const repoRoots = new Map<string, string | null>();
+  const repoRoot = (path: string): string | null => {
+    const start = statSync(path, { throwIfNoEntry: false })?.isDirectory() ? path : dirname(path);
+    const seen: string[] = [];
+    let found: string | null = null;
+    for (let dir = start; dir !== home && dir !== dirname(dir); dir = dirname(dir)) {
+      const cached = repoRoots.get(dir);
+      if (cached !== undefined) {
+        found = cached;
+        break;
+      }
+      seen.push(dir);
+      if (existsSync(join(dir, ".git"))) {
+        found = dir;
+        break;
+      }
+    }
+    for (const dir of seen) repoRoots.set(dir, found);
+    return found;
+  };
+  const withPolicy = (item: PendingRequest): PendingRequest => ({ ...item, policy: requestPolicy(item.request, home, repoRoot) });
+  const pendingView = () => broker.list().map(withPolicy);
+
   const notified = new Map<string, (() => void) | void>();
-  const broker = new Broker((pending) => {
+  const broker = new Broker((raw) => {
+    const pending = raw.map(withPolicy);
     options.setPending(pending.length);
     broadcast("pending:changed", pending);
-    const notifyStyle = parseApprovalStyle(getSetting(db, "approval_style", "popup")) === "notification";
-    if (!pending.length) options.closeApproval();
-    else if (!notifyStyle) options.openApproval();
+    const style = parseApprovalStyle(getSetting(db, "approval_style", "popup"));
+    // Quiet mode still opens the popup for anything high risk.
+    const quietly = (item: PendingRequest) => style === "notification" || (style === "quiet" && item.policy?.risk !== "high");
+    // After a Deny the popup stays up briefly so Undo is reachable.
+    if (!pending.length) {
+      const wait = lastDenyAt + UNDO_MS - Date.now();
+      if (wait > 0) setTimeout(() => broker.list().length || options.closeApproval(), wait);
+      else options.closeApproval();
+    }
+    else if (pending.some((item) => !quietly(item))) options.openApproval();
     for (const item of pending) {
       if (timeouts.has(item.id)) continue;
       timeouts.set(item.id, setTimeout(() => broker.decide(item.id, { decision: "timeout" }), POPUP_TIMEOUT_S * 1000));
@@ -140,11 +180,11 @@ export function startRuntime(options: { userData: string; openApproval: () => vo
     }
     for (const item of pending) {
       if (notified.has(item.id)) continue;
-      if (!notifyStyle) {
+      if (!quietly(item)) {
         notified.set(item.id, undefined);
         continue;
       }
-      notified.set(item.id, options.notifyPending?.(item, (decision) => decideApproval(item.id, decision, decision === "allow" ? 900 : null)));
+      notified.set(item.id, options.notifyPending?.(item, (decision) => decideApproval(item.id, decision, null, undefined, item.policy?.preset ?? "once")));
     }
   });
   try {
@@ -155,6 +195,7 @@ export function startRuntime(options: { userData: string; openApproval: () => vo
 
   const scan = async () => {
     if (uninstalling) return;
+    repoRoots.clear();
     const workers = cursorWorkers(await psLines());
     snapshots = [
       loadClaude(claudeRoot(), join(home, ".claude.json")),
@@ -199,6 +240,7 @@ export function startRuntime(options: { userData: string; openApproval: () => vo
   }, 30_000);
 
   let lastStatsSig = "";
+  const notifiedPaths = new Map<string, number>();
   const pollHistory = () => {
     if (uninstalling || historyPaused) return;
     try {
@@ -214,8 +256,15 @@ export function startRuntime(options: { userData: string; openApproval: () => vo
         lastStatsSig = statsSig;
         broadcast("storage:changed");
       }
+      const now = Date.now();
       for (const row of rows) {
-        if (row.sensitive && row.id > historySeen) options.notify("Sensitive path", `${row.agent} touched ${row.path}`);
+        if (!row.sensitive || row.id <= historySeen) continue;
+        // npm reading ~/.npmrc on every run should not ping every time.
+        const key = `${row.agent}\0${row.path}`;
+        if ((notifiedPaths.get(key) ?? 0) > now - SENSITIVE_NOTIFY_MS) continue;
+        notifiedPaths.set(key, now);
+        const label = secretLabel(row.path, home) ?? startupKind(row.path, home) ?? "Sensitive path";
+        options.notify(label, `${row.agent} ${row.kind === "read" ? "read" : "changed"} ${row.path}`);
       }
       const max = rows.reduce((id, row) => Math.max(id, row.id), historySeen);
       if (max !== historySeen) {
@@ -230,13 +279,13 @@ export function startRuntime(options: { userData: string; openApproval: () => vo
   pollHistory();
   setInterval(pollHistory, 500);
 
-  const allow = (paths: string[], agent: AgentId | "*", access: Access, ttlSeconds: number | null, exact = false) => {
+  const allow = (paths: string[], agent: AgentId | "*", access: Access, ttlSeconds: number | null, exact = false, session?: { sessionId: string | null }) => {
     const expiresAt = ttlSeconds === null ? null : Date.now() + ttlSeconds * 1000;
     const roots: string[] = [];
     for (const path of paths) {
       const root = grantRoot(path, exact, (item) => statSync(item, { throwIfNoEntry: false })?.isDirectory() ?? false);
       if (root) {
-        upsertGrant(db, { agent, path: root, access, source: "leash", createdAt: Date.now(), expiresAt });
+        upsertGrant(db, { agent, path: root, access, source: "leash", createdAt: Date.now(), expiresAt, sessionId: session?.sessionId ?? null, idleSeconds: session ? ttlSeconds : null });
         roots.push(root);
       }
     }
@@ -288,11 +337,23 @@ export function startRuntime(options: { userData: string; openApproval: () => vo
   });
   ipcMain.handle("grants:revoke-all", () => revokeAll());
   ipcMain.handle("grants:create", (_event, input: { agent: AgentId | "*"; path: string; access: Access; ttlSeconds: number | null }) => {
-    allow([input.path], input.agent, input.access, input.ttlSeconds, true);
+    // A manual grant gets the same limits as the popup: secrets and personal folders are time-boxed.
+    const agent = input.agent === "*" || input.agent === "t3-code" ? "claude-code" : input.agent;
+    const policy = requestPolicy({ agent, event: "manual", tool: "Grant", access: input.access, paths: [input.path], cwd: input.path }, home, repoRoot);
+    let ttl = input.ttlSeconds;
+    if (policy.kind === "secret" || policy.kind === "startup" || policy.kind === "personal") {
+      // A grant made deliberately on the Access page may last up to 15 minutes here.
+      const max = MANUAL_GUARDED_MAX_S;
+      ttl = ttl === null ? max : Math.min(ttl, max);
+    }
+    allow([input.path], input.agent, input.access, ttl, true);
     publishStatus();
   });
   ipcMain.handle("grants:extend", (_event, id: number, seconds: number) => {
     if (!Number.isInteger(id) || !Number.isFinite(seconds) || seconds <= 0) return { expiresAt: null };
+    // Secret, startup and personal grants stay short; extending would undo that.
+    const grant = listGrants(db).find((item) => item.id === id);
+    if (grant && grant.command == null && (guardedKind(grant.path, grant.access, home) || (personalKind(grant.path, home) && !repoRoot(grant.path)))) return { expiresAt: null };
     const expiresAt = extendGrant(db, id, seconds, Date.now());
     if (expiresAt !== null) {
       rescan();
@@ -378,6 +439,18 @@ export function startRuntime(options: { userData: string; openApproval: () => vo
     return rules;
   });
   ipcMain.handle("decisions:list", () => listDecisions(db));
+  ipcMain.handle("insights:get", (_event, days: number) => {
+    const span = Number.isInteger(days) && days >= 1 && days <= 90 ? days : 7;
+    const now = Date.now();
+    const since = now - span * 24 * 60 * 60 * 1000;
+    let alerts: HistoryRow[] = [];
+    try {
+      alerts = withHistory((historyDb) => queryHistory(historyDb, { from: since, to: null, agents: [], path: "", kind: "", sensitive: true, offset: 0, limit: 12 }).rows);
+    } catch {
+      /* history paused or missing; the rest still renders */
+    }
+    return buildInsights({ decisions: decisionsSince(db, since), grants: listGrants(db), alerts, now, days: span, home });
+  });
   ipcMain.handle("history:list", () => history);
   ipcMain.handle("history:query", (_event, filter: HistoryFilter) => withHistory((historyDb) => queryHistory(historyDb, filter)));
   const retentionState = () => ({
@@ -517,37 +590,126 @@ export function startRuntime(options: { userData: string; openApproval: () => vo
     }
     return { ok: true };
   });
-  ipcMain.handle("approval:list", () => broker.list());
+  ipcMain.handle("approval:list", () => pendingView());
   ipcMain.handle("approval:close", () => options.closeApproval());
-  const decideApproval = (id: string, decision: "allow" | "deny", ttlSeconds: number | null, scopePath?: string) => {
-    const pending = broker.list().find((item) => item.id === id);
+  // Never rules made when answering a request, kept briefly so Undo can remove them.
+  const neverById = new Map<string, number[]>();
+  let lastDenyAt = 0;
+  const endOfDayHour = () => {
+    const hour = Number(getSetting(db, "end_of_day_hour", String(END_OF_DAY_HOUR)));
+    return Number.isInteger(hour) && hour >= 12 && hour <= 23 ? hour : END_OF_DAY_HOUR;
+  };
+  const decideApproval = (id: string, decision: "allow" | "deny" | "never", ttlSeconds: number | null, scopePath?: string, presetId?: PresetId) => {
+    const raw = broker.list().find((item) => item.id === id);
+    const pending = raw ? withPolicy(raw) : undefined;
     const timeout = timeouts.get(id);
     if (timeout) clearTimeout(timeout);
-    const ttl = ttlSeconds === undefined ? DEFAULT_TTL_S : ttlSeconds;
-    if (decision === "allow" && pending) {
+    if (decision !== "allow") {
+      if (decision === "never" && pending) {
+        const { agent, command, paths } = pending.request;
+        const scope = typeof scopePath === "string" && parentFolders(paths).includes(scopePath) ? scopePath : undefined;
+        const blocks = command?.trim() ? [{ kind: "command" as const, value: command.trim() }] : (scope ? [scope] : paths).map((value) => ({ kind: "path" as const, value }));
+        const ids = blocks.map((block) => addBlock(db, { agent, ...block }, Date.now()));
+        neverById.set(id, ids);
+        if (neverById.size > 50) neverById.delete(neverById.keys().next().value!);
+      }
+      lastDenyAt = Date.now();
+      broker.decide(id, { decision: "deny" });
+      publishStatus();
+      return;
+    }
+    // The renderer picks a choice, but the policy here has the last word on how long it lasts.
+    const wanted = presetId && isPresetId(presetId) ? presetId : presetFromSeconds(ttlSeconds === undefined ? DEFAULT_TTL_S : ttlSeconds);
+    const preset = pending?.policy ? presetById(clampPreset(pending.policy, wanted)) : presetById(wanted);
+    const now = Date.now();
+    const ttl = preset.id === "today" ? Math.round((todayExpiry(now, endOfDayHour()) - now) / 1000) : preset.id === "repo" ? null : preset.seconds;
+    // "Once" lets this call through and writes nothing.
+    if (pending && preset.id !== "once") {
       const { agent, access } = pending.request;
-      const scope = typeof scopePath === "string" && parentFolders(pending.request.paths).includes(scopePath) ? scopePath : undefined;
-      const roots = allow(scope ? [scope] : pending.request.paths, agent, access, ttl, Boolean(scope));
-      const ts = Date.now();
-      for (const path of roots) recordApproval(db, { ts, agent, path, command: null, access, ttlSeconds: ttl });
-      const command = pending.request.command?.trim() ?? "";
-      if (command) {
-        upsertCommandGrant(db, {
-          agent,
-          command,
-          createdAt: Date.now(),
-          expiresAt: ttl === null ? null : Date.now() + ttl * 1000,
-        });
-        recordApproval(db, { ts, agent, path: null, command, access, ttlSeconds: ttl });
+      const policy = pending.policy;
+      const exact = policy?.exact ?? false;
+      if (preset.id === "repo" && policy?.repo) {
+        // "Always in repo" is a forever write grant on the repo root; guarded files inside still ask.
+        allow([policy.repo], agent, "write", null, true);
+      } else {
+        const scope = !exact && typeof scopePath === "string" && parentFolders(pending.request.paths).includes(scopePath) ? scopePath : undefined;
+        const session = preset.id === "session" ? { sessionId: pending.request.sessionId ?? null } : undefined;
+        const targets = scope ? [scope] : exact ? pending.request.paths.filter((path) => guardedKind(path, access, home)) : pending.request.paths;
+        const roots = allow(targets, agent, access, ttl, Boolean(scope) || exact, session);
+        // Only plain timed approvals count toward "make it Always" suggestions.
+        const suggestible = !session && preset.id !== "today" && policy?.kind !== "secret" && policy?.kind !== "startup" && policy?.kind !== "personal";
+        if (suggestible) for (const path of roots) recordApproval(db, { ts: now, agent, path, command: null, access, ttlSeconds: ttl });
+        const command = pending.request.command?.trim() ?? "";
+        if (command && !exact) {
+          upsertCommandGrant(db, { agent, command, createdAt: now, expiresAt: ttl === null ? null : now + ttl * 1000 });
+          if (suggestible) recordApproval(db, { ts: now, agent, path: null, command, access, ttlSeconds: ttl });
+        }
       }
     }
-    broker.decide(id, { decision, ttlSeconds: ttlSeconds ?? undefined });
-    if (decision === "allow") {
-      releaseCovered();
-      publishStatus();
-    }
+    broker.decide(id, { decision: "allow", ttlSeconds: ttl ?? undefined });
+    releaseCovered();
+    publishStatus();
   };
-  ipcMain.handle("approval:decide", (_event, id: string, decision: "allow" | "deny", ttlSeconds: number | null, scopePath?: string) => decideApproval(id, decision, ttlSeconds, scopePath));
+  ipcMain.handle("approval:decide", (_event, id: string, decision: "allow" | "deny" | "never", ttlSeconds: number | null, scopePath?: string, presetId?: PresetId) =>
+    decideApproval(id, decision, ttlSeconds, scopePath, presetId),
+  );
+  const lockEnds = () => (getSetting(db, "lock_ends", "personal") === "all" ? "all" : "personal");
+  // Locking or sleeping the Mac ends temporary access: personal folders only by default, or everything timed.
+  const onLock = () => {
+    const mode = lockEnds();
+    const ended = listGrants(db).filter(
+      (grant) => grant.source === "leash" && grant.expiresAt !== null && (mode === "all" || (grant.command == null && personalKind(grant.path, home) !== null && repoRoot(grant.path) === null)),
+    );
+    if (!ended.length) return;
+    for (const grant of ended) deleteGrant(db, grant.id);
+    publishClaudeRules(db, join(claudeRoot(), "settings.json"), home, snapshots.find((snapshot) => snapshot.id === "claude-code")?.enforcement === "rules");
+    publishStatus();
+  };
+  ipcMain.handle("approval-prefs:get", () => ({ lockEnds: lockEnds(), endOfDayHour: endOfDayHour() }));
+  ipcMain.handle("approval-prefs:set", (_event, input: { lockEnds?: unknown; endOfDayHour?: unknown }) => {
+    if (input.lockEnds === "all" || input.lockEnds === "personal") setSetting(db, "lock_ends", input.lockEnds);
+    if (Number.isInteger(input.endOfDayHour) && (input.endOfDayHour as number) >= 12 && (input.endOfDayHour as number) <= 23) setSetting(db, "end_of_day_hour", String(input.endOfDayHour));
+    return { lockEnds: lockEnds(), endOfDayHour: endOfDayHour() };
+  });
+  // Undo for a Deny or Never just made: the agent's next try asks again.
+  ipcMain.handle("approval:undo-deny", (_event, id: string) => {
+    if (typeof id !== "string") return false;
+    const forgot = broker.undoDenial(id);
+    const removed = deleteBlocks(db, neverById.get(id) ?? []);
+    neverById.delete(id);
+    publishStatus();
+    return forgot || removed > 0;
+  });
+  ipcMain.handle("blocks:list", () => ({ remembered: broker.listDenials(), never: listBlocks(db) }));
+  ipcMain.handle("blocks:forget", (_event, key: string) => {
+    if (typeof key === "string") broker.forgetDenial(key);
+    publishStatus();
+  });
+  ipcMain.handle("blocks:forget-all", () => {
+    broker.forgetDenials();
+    publishStatus();
+  });
+  ipcMain.handle("blocks:delete-never", (_event, id: number) => {
+    if (Number.isInteger(id)) deleteBlocks(db, [id]);
+    publishStatus();
+  });
+  // "Ask again" from the decision log: drop remembered denials and Never rules that match that row.
+  ipcMain.handle("blocks:release-decision", (_event, decisionId: number) => {
+    const row = listDecisions(db, 500).find((item) => item.id === decisionId);
+    if (!row) return 0;
+    let paths: string[] = [];
+    try {
+      paths = JSON.parse(row.paths) as string[];
+    } catch {
+      paths = [];
+    }
+    const command = row.command?.trim() || null;
+    const forgot = broker.forgetMatching(row.agent, command, paths);
+    const never = listBlocks(db).filter((block) => (block.agent === "*" || block.agent === row.agent) && (block.kind === "command" ? block.value === command : paths.some((path) => isUnder(path, block.value))));
+    const removed = deleteBlocks(db, never.map((block) => block.id));
+    publishStatus();
+    return forgot + removed;
+  });
   // Agents that aren't running read the new config on their next start, so they drop out here.
   const staleTargets = async () => {
     if (!pendingRestart.size) return [];
@@ -782,7 +944,7 @@ export function startRuntime(options: { userData: string; openApproval: () => vo
   void ensureSweepAgent();
   nativeTheme.themeSource = readUiState(options.userData).theme ?? "system";
   publishStatus();
-  return { revokeAll, unlock };
+  return { revokeAll, unlock, onLock };
 }
 
 export function leashDataDir(): string {

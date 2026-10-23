@@ -8,6 +8,7 @@ import type { AppInfo } from "../shared/types";
 import { isOpenAtLogin, setOpenAtLogin } from "./loginItem";
 import { appMenuTemplate, trayMenuTemplate } from "./menus";
 import { pendingNotice } from "../shared/pendingNotice";
+import { allowText } from "../shared/presets";
 import { startRuntime } from "./runtime";
 import { readUiState, writeUiState } from "./uiState";
 
@@ -26,6 +27,7 @@ let lockdown = false;
 // Module scope on purpose: a garbage-collected Notification never fires its action events.
 const pendingNotes = new Map<string, Notification>();
 let revokeAll = (): { revoked: number } => ({ revoked: 0 });
+let onLock = (): void => undefined;
 let unlock = (): void => undefined;
 
 function createWindow(visible: boolean): BrowserWindow {
@@ -245,6 +247,9 @@ if (!app.requestSingleInstanceLock()) {
   });
 
   void app.whenReady().then(() => {
+    // Locking or sleeping ends temporary access, per Settings.
+    powerMonitor.on("lock-screen", () => onLock());
+    powerMonitor.on("suspend", () => onLock());
     powerMonitor.on("shutdown", () => {
       quitting = true;
     });
@@ -253,7 +258,7 @@ if (!app.requestSingleInstanceLock()) {
     tray = new Tray(isMac ? trayIcon : nativeImage.createFromPath(appIcon).resize({ width: 16, height: 16 }));
     tray.setToolTip("Agentic Leash");
     if (!isMac) tray.on("click", showWindow);
-    ({ revokeAll, unlock } = startRuntime({
+    ({ revokeAll, unlock, onLock } = startRuntime({
       userData: app.getPath("userData"),
       openApproval,
       closeApproval,
@@ -266,7 +271,8 @@ if (!app.requestSingleInstanceLock()) {
         refreshTray();
       },
       notifyPending: (item, decide) => {
-        const note = new Notification({ ...pendingNotice(item), actions: [{ type: "button", text: "Allow 15 min" }, { type: "button", text: "Deny" }] });
+        const allowLabel = allowText(item.policy?.preset ?? "once", item.policy?.repo ?? null);
+        const note = new Notification({ ...pendingNotice(item), actions: [{ type: "button", text: allowLabel }, { type: "button", text: "Deny" }] });
         pendingNotes.set(item.id, note);
         note.on("action", (_event, index) => decide(index === 0 ? "allow" : "deny"));
         note.on("click", openApproval);

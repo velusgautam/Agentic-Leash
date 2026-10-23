@@ -8,7 +8,7 @@ import { grantsDbPath } from "../shared/constants";
 import { getSetting } from "../shared/db";
 import { BUILTIN_IGNORED, enabledIgnoredPrefixes } from "../shared/ignored";
 import { eventBucket } from "../shared/noise";
-import { isUnder } from "../shared/paths";
+import { isSensitive, isUnder } from "../shared/paths";
 import { MAIN_RETENTION_DAYS, NOISE_RETENTION_DAYS, retentionDays } from "../shared/retention";
 import { capBytes, HARD_CAP_STOP, PRUNE_START, type HistoryStats } from "../shared/storage";
 import type { HistoryEvent } from "../shared/types";
@@ -76,12 +76,13 @@ export function startHelper(historyPath: string, eslogger = "/usr/bin/eslogger")
   let queue: HistoryEvent[] = [];
   const seen = new Set<string>();
   let grants = grantPaths(Date.now());
+  const home = userHome();
   const cache = new ContentCache({
     readText,
     gitShow: gitBaseline,
     granted: (file) => grants.some((root) => isUnder(file, root)),
+    secret: (file) => isSensitive(file, home),
   });
-  const home = userHome();
   let ignored = readIgnored(home);
   let appliedKey = appliedIgnoredKey(db);
   const applyIgnored = () => {

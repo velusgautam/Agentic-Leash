@@ -1,4 +1,5 @@
 import { matchesIgnored } from "./ignored";
+import { secretKind } from "./sensitive";
 
 // Agent machinery and OS scratch. A sensitive path stays visible even inside one of these.
 const DIRS = [
@@ -44,10 +45,13 @@ function base(path: string): string {
   return path.slice(path.lastIndexOf("/") + 1);
 }
 
+// The root helper has no single home, so take it from the path itself.
+function homeOf(path: string): string {
+  return /^\/(?:Users|home)\/[^/]+/.exec(path)?.[0] ?? "/nonexistent-home";
+}
+
 function personal(path: string): boolean {
-  const name = base(path);
-  if (name === ".env" || name.startsWith(".env.")) return true;
-  return ["/.ssh/", "/.aws/", "/.gnupg/", "/Library/Keychains/", "/.kube/"].some((part) => path.includes(part));
+  return secretKind(path, homeOf(path)) !== null;
 }
 
 function scratch(path: string): boolean {

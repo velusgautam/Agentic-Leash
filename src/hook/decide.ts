@@ -1,5 +1,6 @@
 import { autoAllowCovers } from "../shared/autoAllow";
-import { isSensitive, isUnder } from "../shared/paths";
+import { isUnder } from "../shared/paths";
+import { guardedKind, isEgressRequest } from "../shared/policy";
 import type { DecideOptions, Grant, HookRequest, PendingRequest, Verdict } from "../shared/types";
 
 export function decide(req: HookRequest, grants: Grant[], opts: DecideOptions): Verdict {
@@ -7,20 +8,38 @@ export function decide(req: HookRequest, grants: Grant[], opts: DecideOptions): 
   if (req.paths.some((path) => opts.protectedRoots.some((root) => isUnder(path, root)))) {
     return { kind: "deny", reason: "Agentic Leash protects its own files" };
   }
-  const rules = opts.rules ?? [];
-  const live = grants.filter((grant) => (grant.agent === "*" || grant.agent === req.agent) && (grant.expiresAt === null || grant.expiresAt > opts.now));
-  const command = req.command?.trim() ?? "";
   const sameAgent = (agent: string) => agent === "*" || agent === req.agent;
-  if (command && (live.some((grant) => grant.command != null && grant.command.trim() === command && sameAgent(grant.agent)) || rules.some((rule) => rule.kind === "command" && sameAgent(rule.agent) && rule.value.trim() === command))) {
-    return { kind: "pass" };
+  const command = req.command?.trim() ?? "";
+  // "Never" beats every grant and rule.
+  const blocked = (opts.blocks ?? []).some((block) => sameAgent(block.agent) && (block.kind === "command" ? command === block.value : req.paths.some((path) => isUnder(path, block.value))));
+  if (blocked) return { kind: "deny", reason: "You chose Never for this in Agentic Leash" };
+  // A session that just read a secret asks before anything that can send it away.
+  if ((opts.afterSecret || req.afterSecret) && isEgressRequest(req)) return { kind: "prompt" };
+  const home = opts.home ?? "";
+  const rules = opts.rules ?? [];
+  const live = grants.filter(
+    (grant) => sameAgent(grant.agent) && (grant.expiresAt === null || grant.expiresAt > opts.now) && (!grant.sessionId || grant.sessionId === req.sessionId),
+  );
+  if (command) {
+    const hit = live.find((grant) => grant.command != null && grant.command.trim() === command);
+    if (hit) return { kind: "pass", grantIds: [hit.id] };
+    if (rules.some((rule) => rule.kind === "command" && sameAgent(rule.agent) && rule.value.trim() === command)) return { kind: "pass" };
   }
   if (req.paths.length === 0) return { kind: "pass" };
+  const used = new Set<number>();
   const covered = req.paths.every((path) => {
-    if (live.some((grant) => grant.command == null && isUnder(path, grant.path) && (grant.access === "write" || req.access === "read"))) return true;
-    if (rules.some((rule) => rule.kind === "folder" && sameAgent(rule.agent) && isUnder(path, rule.value))) return true;
-    return req.access === "read" && !isSensitive(path, opts.home) && autoAllowCovers(req.agent, path, opts.autoAllowOff ?? []);
+    // Secrets and startup files need a grant on themselves or a secret folder, not on a parent.
+    const guarded = guardedKind(path, req.access, home) !== null;
+    const reaches = (root: string) => isUnder(path, root) && (!guarded || guardedKind(root, req.access, home) !== null);
+    const grant = live.find((item) => item.command == null && reaches(item.path) && (item.access === "write" || req.access === "read"));
+    if (grant) {
+      used.add(grant.id);
+      return true;
+    }
+    if (rules.some((rule) => rule.kind === "folder" && sameAgent(rule.agent) && reaches(rule.value))) return true;
+    return req.access === "read" && !guarded && autoAllowCovers(req.agent, path, opts.autoAllowOff ?? []);
   });
-  return covered ? { kind: "pass" } : { kind: "prompt" };
+  return covered ? { kind: "pass", grantIds: [...used] } : { kind: "prompt" };
 }
 
 export function coveredPending(pending: PendingRequest[], grants: Grant[], opts: DecideOptions): string[] {

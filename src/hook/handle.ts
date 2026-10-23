@@ -2,8 +2,10 @@ import { decide } from "./decide";
 import { normaliseHook } from "./normalise";
 import { respond } from "./respond";
 import { parseAutoAllowOff } from "../shared/autoAllow";
-import { getSetting, listGrants, listRules, recordDecision } from "../shared/db";
+import { getSetting, listBlocks, listGrants, listRules, readSecretSince, recordDecision, touchGrants } from "../shared/db";
 import { protectedRoots } from "../shared/constants";
+import { isSensitive } from "../shared/paths";
+import { AFTER_SECRET_MS, isEgressRequest, SESSION_MAX_S } from "../shared/policy";
 import type { DatabaseSync } from "node:sqlite";
 import type { HookRequest, Verdict } from "../shared/types";
 
@@ -22,6 +24,7 @@ export async function handlePayload(options: {
   if (normalised.kind === "ignore") return respond(options.entry, { kind: "pass" });
   const request = normalised.request;
   const lockdown = getSetting(options.db, "lockdown", "0") === "1";
+  if (isEgressRequest(request) && readSecretSince(options.db, request.agent, request.sessionId, options.now - AFTER_SECRET_MS)) request.afterSecret = true;
   let verdict: Verdict = decide(request, listGrants(options.db), {
     now: options.now,
     lockdown,
@@ -29,7 +32,15 @@ export async function handlePayload(options: {
     home: options.home,
     autoAllowOff: parseAutoAllowOff(getSetting(options.db, "auto_allow_off", "[]")),
     rules: listRules(options.db),
+    blocks: listBlocks(options.db),
   });
+  if (verdict.kind === "pass" && verdict.grantIds?.length) {
+    try {
+      touchGrants(options.db, verdict.grantIds, options.now, SESSION_MAX_S * 1000);
+    } catch {
+      /* a busy grants db must not fail the tool call */
+    }
+  }
   let answer: HookAnswer | null = null;
   if (verdict.kind === "prompt") {
     answer = await options.ask(request);
@@ -46,7 +57,10 @@ export async function handlePayload(options: {
       url: request.url,
       verdict: answer === "timeout" ? "timeout" : verdict.kind,
       reason: verdict.kind === "deny" ? verdict.reason : undefined,
-      durationMs: Math.max(0, options.now - started),
+      durationMs: Math.max(0, Date.now() - started),
+      sessionId: request.sessionId,
+      secret: request.paths.some((path) => isSensitive(path, options.home)),
+      prompted: answer !== null,
     });
   } catch {
     /* a locked decision log must not fail the tool call */

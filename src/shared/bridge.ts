@@ -1,9 +1,16 @@
 import type { ApprovalStyle } from "./approvalStyle";
 import type { AutoAllow } from "./autoAllow";
 import type { IgnoredRow } from "./ignored";
+import type { Insights } from "./insights";
 import type { SetupStatus } from "./setup";
 import type { CleanupMode, HistoryStats, StorageWarning } from "./storage";
-import type { Access, AgentId, AppInfo, AgentSnapshot, AllowRule, DecisionRow, Diagnostics, Grant, HistoryRow, HistorySummary, PendingRequest, RuleSuggestion, ScheduledRevoke, ThemeSource } from "./types";
+import type { Access, AgentId, AppInfo, AgentSnapshot, AllowRule, BlockRule, RememberedDenial, DecisionRow, Diagnostics, Grant, HistoryRow, HistorySummary, PendingRequest, PresetId, RuleSuggestion, ScheduledRevoke, ThemeSource } from "./types";
+
+export interface ApprovalPrefs {
+  /** What locking or sleeping the Mac ends: personal-folder grants, or all timed grants. */
+  lockEnds: "personal" | "all";
+  endOfDayHour: number;
+}
 
 export interface OpenAtLoginState {
   enabled: boolean;
@@ -50,6 +57,7 @@ export interface LeashBridge {
   deleteRule(id: number): Promise<AllowRule[]>;
   unlock(): Promise<void>;
   listDecisions(): Promise<DecisionRow[]>;
+  insights(days: number): Promise<Insights>;
   listHistory(): Promise<HistoryRow[]>;
   queryHistory(filter: { from: number | null; to: number | null; agents: string[]; path: string; kind: string; sensitive: boolean; includeNoise?: boolean; offset: number; limit: number }): Promise<{ rows: HistoryRow[]; total: number }>;
   historyRetention(): Promise<{ main: number; noise: number }>;
@@ -66,7 +74,18 @@ export interface LeashBridge {
   deleteIgnored(id: number): Promise<IgnoredRow[]>;
   historyText(id: number): Promise<{ before: string | null; after: string | null }>;
   listPending(): Promise<PendingRequest[]>;
-  decidePending(id: string, decision: "allow" | "deny", ttlSeconds: number | null, scopePath?: string): Promise<void>;
+  /** `presetId` wins over `ttlSeconds`; the main process clamps it to what the request allows. */
+  decidePending(id: string, decision: "allow" | "deny" | "never", ttlSeconds: number | null, scopePath?: string, presetId?: PresetId): Promise<void>;
+  /** Removes the remembered denial and any Never rules made when answering `id`. */
+  undoDeny(id: string): Promise<boolean>;
+  listBlocks(): Promise<{ remembered: RememberedDenial[]; never: BlockRule[] }>;
+  forgetDenial(key: string): Promise<void>;
+  forgetAllDenials(): Promise<void>;
+  deleteNever(id: number): Promise<void>;
+  /** Drops denials and Never rules matching a decision log row, so the next try asks again. */
+  releaseDecision(id: number): Promise<number>;
+  approvalPrefs(): Promise<ApprovalPrefs>;
+  setApprovalPrefs(input: Partial<ApprovalPrefs>): Promise<ApprovalPrefs>;
   closeApproval(): Promise<void>;
   restartNeeded(): Promise<{ name: string; kind: "gui" | "cli"; count: number }[]>;
   restartAgents(): Promise<void>;

@@ -6,7 +6,6 @@ describe("grantRoot", () => {
   const isDir = (path: string) => dirs.has(path);
 
   it("grants a dotted folder itself, not its parent", () => {
-    expect(grantRoot("/Users/velu.gautam", false, isDir)).toBe("/Users/velu.gautam");
     expect(grantRoot("/Users/velu.gautam/.cursor", false, isDir)).toBe("/Users/velu.gautam/.cursor");
   });
 
@@ -15,10 +14,16 @@ describe("grantRoot", () => {
     expect(grantRoot("/Users/me/proj", false, isDir)).toBe("/Users/me/proj");
   });
 
-  it("refuses / and /Users", () => {
+  it("refuses /, /Users and the home folder", () => {
     expect(grantRoot("/", true, isDir)).toBe(null);
     expect(grantRoot("/Users", true, isDir)).toBe(null);
     expect(grantRoot("/Users/me.txt", false, isDir)).toBe(null);
+    expect(grantRoot("/Users/velu.gautam", false, isDir)).toBe(null);
+    expect(grantRoot("/home/me", true, isDir)).toBe(null);
+  });
+
+  it("grants a file in the home folder on its own instead of the whole home", () => {
+    expect(grantRoot("/Users/me/notes.txt", false, isDir)).toBe("/Users/me/notes.txt");
   });
 });
 
@@ -33,12 +38,12 @@ describe("isHomeFolder", () => {
 });
 
 describe("parentFolders", () => {
-  it("lists parents up to the home folder, nearest first", () => {
-    expect(parentFolders(["/Users/me/proj/src/index.ts"])).toEqual(["/Users/me/proj/src", "/Users/me/proj", "/Users/me"]);
+  it("lists parents below the home folder, nearest first", () => {
+    expect(parentFolders(["/Users/me/proj/src/index.ts"])).toEqual(["/Users/me/proj/src", "/Users/me/proj"]);
   });
 
   it("keeps only folders that cover every path", () => {
-    expect(parentFolders(["/Users/me/proj/a.ts", "/Users/me/proj/src/b.ts"])).toEqual(["/Users/me/proj", "/Users/me"]);
+    expect(parentFolders(["/Users/me/proj/a.ts", "/Users/me/proj/src/b.ts"])).toEqual(["/Users/me/proj"]);
   });
 
   it("offers /tmp for a file there, and nothing when the paths share no folder", () => {

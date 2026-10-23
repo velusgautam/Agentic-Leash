@@ -12,6 +12,11 @@ export interface Grant {
   command: string | null;
   createdAt: number;
   expiresAt: number | null;
+  /** Set for "This session" grants: only requests from that agent session match. */
+  sessionId?: string | null;
+  /** Set for grants that stay alive while used and lapse after this many idle seconds. */
+  idleSeconds?: number | null;
+  lastUsedAt?: number | null;
 }
 
 export interface AllowRule {
@@ -37,9 +42,11 @@ export interface HookRequest {
   url?: string;
   command?: string;
   sessionId?: string;
+  /** This agent session read a secret recently, so network calls ask first. */
+  afterSecret?: boolean;
 }
 
-export type Verdict = { kind: "pass" } | { kind: "deny"; reason: string } | { kind: "prompt" };
+export type Verdict = { kind: "pass"; grantIds?: number[] } | { kind: "deny"; reason: string } | { kind: "prompt" };
 
 export interface DecideOptions {
   now: number;
@@ -48,6 +55,26 @@ export interface DecideOptions {
   home?: string;
   autoAllowOff?: string[];
   rules?: AllowRule[];
+  afterSecret?: boolean;
+  blocks?: BlockRule[];
+}
+
+/** A "Never" choice: this agent is always denied this path (and what's under it) or this exact command. */
+export interface BlockRule {
+  id: number;
+  agent: AgentId | "*";
+  kind: "path" | "command";
+  value: string;
+  createdAt: number;
+}
+
+/** A Deny the broker remembers for a while, so the same request isn't asked again. */
+export interface RememberedDenial {
+  key: string;
+  agent: string;
+  sessionId: string | null;
+  label: string;
+  until: number;
 }
 
 export interface HistoryEvent {
@@ -110,6 +137,28 @@ export interface PendingRequest {
   id: string;
   request: HookRequest;
   askedAt: number;
+  policy?: RequestPolicy;
+}
+
+export type PresetId = "once" | "15m" | "session" | "1h" | "today" | "8h" | "repo" | "always";
+export type RequestClass = "secret" | "startup" | "egress" | "personal" | "project" | "other";
+export type RiskLevel = "low" | "medium" | "high";
+
+export interface RequestPolicy {
+  kind: RequestClass;
+  /** Why the request is in this class, like "SSH keys" or "Documents". */
+  label: string | null;
+  presets: PresetId[];
+  preset: PresetId;
+  /** The git repo every path sits in, for "Always in repo". */
+  repo: string | null;
+  /** Folder chip picked on open, usually the git repo root. */
+  scope: string | null;
+  /** Grant the exact paths, never their parent folder. */
+  exact: boolean;
+  risk: RiskLevel;
+  summary: string;
+  reasons: string[];
 }
 
 export interface Diagnostics {

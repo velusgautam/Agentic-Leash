@@ -20,9 +20,19 @@ describe("validateRule", () => {
     expect(validateRule({ kind: "folder", agent: "*", value: "proj" }, home)).toEqual({ ok: false, error: "Folder path must be absolute." });
     expect(validateRule({ kind: "folder", agent: "*", value: "~/proj" }, home)).toEqual({ ok: true, kind: "folder", agent: "*", value: "/Users/v/proj" });
   });
-  it("rejects / and /Users and accepts home", () => {
+  it("rejects /, /Users and the home folder", () => {
     expect(validateRule({ kind: "folder", agent: "*", value: "/" }, home)).toEqual({ ok: false, error: "That folder is too broad." });
     expect(validateRule({ kind: "folder", agent: "*", value: "/Users" }, home)).toEqual({ ok: false, error: "That folder is too broad." });
-    expect(validateRule({ kind: "folder", agent: "*", value: "~" }, home)).toEqual({ ok: true, kind: "folder", agent: "*", value: "/Users/v" });
+    expect(validateRule({ kind: "folder", agent: "*", value: "~" }, home)).toEqual({ ok: false, error: "That folder is too broad." });
+  });
+});
+
+describe("validateRule guarded paths", () => {
+  it("refuses secrets, startup files and whole personal folders, but takes a folder inside one", () => {
+    const secret = "Secret and startup files can't be allowed forever. Approve them from the popup when needed.";
+    expect(validateRule({ kind: "folder", agent: "*", value: "~/.ssh" }, home)).toEqual({ ok: false, error: secret });
+    expect(validateRule({ kind: "folder", agent: "*", value: "~/Library/LaunchAgents" }, home)).toEqual({ ok: false, error: secret });
+    expect(validateRule({ kind: "folder", agent: "*", value: "~/Documents" }, home)).toEqual({ ok: false, error: "Your whole Documents folder can't be allowed forever. Pick a folder inside it." });
+    expect(validateRule({ kind: "folder", agent: "*", value: "~/Documents/code" }, home)).toEqual({ ok: true, kind: "folder", agent: "*", value: "/Users/v/Documents/code" });
   });
 });
