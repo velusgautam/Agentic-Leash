@@ -4,8 +4,8 @@ import { decisionTarget } from "../../../shared/decisionView";
 import { viewGrants, type GrantSortKey, type SortDir } from "../../../shared/grantView";
 import { isHomeFolder } from "../../../shared/parents";
 import { denyCountdown, pendingSecondsLeft, POPUP_TIMEOUT_S } from "../../../shared/pending";
-import type { DecisionRow, Grant, PendingRequest, RuleSuggestion } from "../../../shared/types";
-import { ApprovalChoices, allowLabel, isBroad, PRESETS } from "~/components/ApprovalChoices";
+import type { DecisionRow, Grant, PendingRequest, PresetId, RuleSuggestion } from "../../../shared/types";
+import { AllowButtons, ApprovalChoices, allowLabel } from "~/components/ApprovalChoices";
 import { ConfirmAction, grantEffects, REVOKE_ALL_EFFECTS } from "~/components/ConfirmAction";
 import { AGENT_LABELS, AgentIcon } from "~/components/Icons";
 import { PageContainer, SettingsSection } from "~/components/settings";
@@ -16,7 +16,7 @@ import { Tabs, TabsList, TabsPanel, TabsTab } from "~/components/ui/tabs";
 import { toast, toastRevoked } from "~/components/ui/toast";
 import { useLeashData, usePending } from "~/hooks/useLeash";
 import { cn } from "~/lib/utils";
-import { AllowList, AutomaticAllows } from "./access-parts";
+import { AllowList, AutomaticAllows, BlockedList } from "./access-parts";
 
 function remaining(expiresAt: number | null): string {
   if (expiresAt === null) return "Forever";
@@ -55,10 +55,14 @@ function Agent({ agent }: { agent: string }) {
 }
 
 function PendingRow({ item, now }: { item: PendingRequest; now: number }) {
-  const [choice, setChoice] = useState(1);
-  const [scope, setScope] = useState<string | null>(null);
+  const [scope, setScope] = useState<string | null>(item.policy?.scope ?? null);
   const request = item.request;
-  const preset = PRESETS[choice]!;
+  const allow = (choice: PresetId) =>
+    void window.leash.decidePending(item.id, "allow", null, scope ?? undefined, choice).then(() => { toast({ title: "Allowed", description: allowLabel(scope, choice, item.policy?.repo ?? null) }); });
+  const deny = (never: boolean) =>
+    void window.leash.decidePending(item.id, never ? "never" : "deny", null, scope ?? undefined).then(() => {
+      toast({ title: never ? "Never allowed" : "Denied", action: { label: "Undo", onClick: () => void window.leash.undoDeny(item.id).then(() => { toast({ title: "Undone", description: "The agent's next try asks again." }); }) } });
+    });
   return (
     <div className="flex flex-col gap-3 px-4 py-3 text-sm">
       <div className="flex flex-wrap items-center gap-2">
@@ -67,11 +71,12 @@ function PendingRow({ item, now }: { item: PendingRequest; now: number }) {
         <span className="font-mono text-xs">{request.tool}</span>
         <span className="ml-auto text-xs text-muted-foreground tabular-nums">{denyCountdown(pendingSecondsLeft(item.askedAt, now, POPUP_TIMEOUT_S))}</span>
       </div>
-      <ApprovalChoices request={request} choice={choice} onChoice={setChoice} scope={scope} onScope={setScope} />
+      <ApprovalChoices request={request} policy={item.policy} scope={scope} onScope={setScope} />
+      <AllowButtons policy={item.policy} scope={scope} onAllow={allow} />
       <div className="flex flex-wrap items-center gap-2">
         <span className="ml-auto flex items-center gap-2">
-          <Button size="sm" variant="ghost" onClick={() => void window.leash.decidePending(item.id, "deny", null).then(() => { toast({ title: "Denied" }); })}>Deny</Button>
-          <Button size="sm" variant={isBroad(scope, choice) ? "destructive" : "default"} onClick={() => void window.leash.decidePending(item.id, "allow", preset.seconds, scope ?? undefined).then(() => { toast({ title: "Allowed", description: preset.label }); })}>{allowLabel(scope, choice)}</Button>
+          <Button size="sm" variant="ghost" className="text-muted-foreground" title="Always deny this for this agent. Remove it under Blocked." onClick={() => deny(true)}>Never</Button>
+          <Button size="sm" variant="outline" onClick={() => deny(false)}>Deny</Button>
         </span>
       </div>
     </div>
@@ -107,10 +112,11 @@ function GrantRow({ grant, mono, Icon, onRevoke }: { grant: Grant; mono: string;
           <AccessPill access={grant.access} />
           <span className="text-xs text-muted-foreground tabular-nums" title={when(grant.createdAt)}>Approved {when(grant.createdAt)}</span>
           <Pill tone="subtle" title={grant.expiresAt === null ? "Forever" : when(grant.expiresAt)}><Timer className="size-3" aria-hidden />{remaining(grant.expiresAt)}</Pill>
+          {grant.idleSeconds ? <Pill tone="subtle" title="Stays alive while the agent keeps using it. Lapses after 30 idle minutes, at most 12 hours.">This session</Pill> : null}
           <span className="text-xs text-muted-foreground">{SOURCE_LABELS[grant.source] ?? grant.source}</span>
         </div>
       </div>
-      {grant.expiresAt !== null && grant.source === "leash" ? (
+      {grant.expiresAt !== null && grant.source === "leash" && !grant.idleSeconds ? (
         <Button size="sm" variant="ghost" aria-label="Extend by 1 hour" onClick={() => void window.leash.extendGrant(grant.id, 3600).then(({ expiresAt }) => { if (expiresAt === null) toast({ title: "Could not extend", description: "This grant can't be extended.", tone: "destructive" }); else toast({ title: "Extended by 1 hour" }); }, (error: unknown) => { toast({ title: "Could not extend", description: error instanceof Error ? error.message : String(error), tone: "destructive" }); })}>+1 h</Button>
       ) : null}
       <ConfirmAction
@@ -227,6 +233,7 @@ export function GrantsPage() {
           <TabsTab value="active">Active</TabsTab>
           <TabsTab value="always">Always</TabsTab>
           <TabsTab value="automatic">Automatic</TabsTab>
+          <TabsTab value="blocked">Blocked</TabsTab>
           <TabsTab value="log">Log</TabsTab>
         </TabsList>
         <TabsPanel value="active">
@@ -263,6 +270,7 @@ export function GrantsPage() {
         </TabsPanel>
         <TabsPanel value="always"><AllowList /></TabsPanel>
         <TabsPanel value="automatic"><AutomaticAllows /></TabsPanel>
+        <TabsPanel value="blocked"><BlockedList /></TabsPanel>
         <TabsPanel value="log">
           <SettingsSection title="Decisions, last 30 days">
             {decisions.length === 0 ? <p className="flex items-center gap-2 px-4 py-4 text-sm text-muted-foreground"><ScrollText className="size-4" aria-hidden />No decisions yet</p> : null}
@@ -275,6 +283,9 @@ export function GrantsPage() {
                 <span className="min-w-0 flex-1 truncate font-mono text-xs" title={decisionTarget(row)}>{decisionTarget(row)}</span>
                 {row.reason ? <span className="max-w-[40%] shrink-0 truncate text-xs text-muted-foreground" title={row.reason}>{row.reason}</span> : null}
                 {row.durationMs !== null ? <span className="shrink-0 text-xs text-muted-foreground tabular-nums">{row.durationMs} ms</span> : null}
+                {row.verdict === "deny" || row.verdict === "timeout" ? (
+                  <Button size="sm" variant="ghost" className="h-6 shrink-0" title="Remove blocks that match this, so the next try opens the popup" onClick={() => void window.leash.releaseDecision(row.id).then((count) => { toast({ title: count ? "It will ask again" : "Nothing is blocking this", description: count ? "Tell the agent to retry." : "The next try already opens the popup." }); })}>Ask again</Button>
+                ) : null}
               </div>
             ))}
           </SettingsSection>

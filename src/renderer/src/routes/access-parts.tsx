@@ -1,11 +1,13 @@
 import { useEffect, useState } from "react";
 import type { AutoAllow } from "../../../shared/autoAllow";
-import type { AllowRule } from "../../../shared/types";
+import type { AllowRule, BlockRule, RememberedDenial } from "../../../shared/types";
 import { ConfirmAction } from "~/components/ConfirmAction";
 import { AGENT_LABELS } from "~/components/Icons";
 import { SettingsRow, SettingsSection } from "~/components/settings";
 import { Button } from "~/components/ui/button";
 import { Switch } from "~/components/ui/switch";
+import { toast } from "~/components/ui/toast";
+import { useLeashData } from "~/hooks/useLeash";
 import { cn } from "~/lib/utils";
 import { AGENT_NAV } from "~/nav";
 
@@ -115,6 +117,80 @@ export function AllowList() {
             />
           </div>
         ))}
+      </SettingsSection>
+    </div>
+  );
+}
+
+const NO_BLOCKS = { remembered: [] as RememberedDenial[], never: [] as BlockRule[] };
+const subscribeBlocks = (refresh: () => void) => {
+  const offGrants = window.leash.onGrantStatus(refresh);
+  const offPending = window.leash.onPending(refresh);
+  return () => {
+    offGrants();
+    offPending();
+  };
+};
+const blockAgent = (agent: string) => (agent === "*" ? "Every agent" : (AGENT_LABELS[agent] ?? agent));
+
+function minutesLeft(until: number): string {
+  const minutes = Math.max(1, Math.ceil((until - Date.now()) / 60_000));
+  return `${minutes} min left`;
+}
+
+/** What Agentic Leash denies on its own: recent denials it remembers, and Never rules. */
+export function BlockedList() {
+  const blocks = useLeashData(() => window.leash.listBlocks(), subscribeBlocks, NO_BLOCKS, 15_000);
+  const fail = (error: unknown) => toast({ title: "Could not remove", description: error instanceof Error ? error.message : String(error), tone: "destructive" });
+  const removed = () => toast({ title: "Removed", description: "The agent's next try asks again. Tell it to retry." });
+  return (
+    <div className="space-y-6">
+      <p className="px-3 text-xs leading-normal text-muted-foreground/80 sm:px-4">
+        Removing a block can't undo a call that was already denied. The agent's next try opens the popup again.
+      </p>
+      <SettingsSection title="Recently denied">
+        {blocks.remembered.length === 0 ? (
+          <p className="px-4 py-3 text-xs text-muted-foreground">Nothing denied in the last 10 minutes.</p>
+        ) : (
+          <>
+            {blocks.remembered.map((item) => (
+              <div key={item.key} className="flex items-center gap-3 px-3 py-2.5 text-sm sm:px-4">
+                <div className="min-w-0 flex-1">
+                  <div className="truncate font-mono text-xs font-medium" title={item.label}>{item.label}</div>
+                  <div className="text-xs text-muted-foreground">{blockAgent(item.agent)} · denied again without asking · {minutesLeft(item.until)}</div>
+                </div>
+                <Button size="sm" variant="ghost" onClick={() => void window.leash.forgetDenial(item.key).then(removed, fail)}>Remove</Button>
+              </div>
+            ))}
+            <div className="px-3 py-2 sm:px-4">
+              <Button size="sm" variant="outline" onClick={() => void window.leash.forgetAllDenials().then(removed, fail)}>Clear all</Button>
+            </div>
+          </>
+        )}
+      </SettingsSection>
+      <SettingsSection title="Never">
+        {blocks.never.length === 0 ? (
+          <p className="px-4 py-3 text-xs text-muted-foreground">No Never rules. Pick Never in the popup to always deny something.</p>
+        ) : (
+          blocks.never.map((item) => (
+            <div key={item.id} className="flex items-center gap-3 px-3 py-2.5 text-sm sm:px-4">
+              <div className="min-w-0 flex-1">
+                <div className="truncate font-mono text-xs font-medium" title={item.value}>{item.value}</div>
+                <div className="text-xs text-muted-foreground">
+                  {blockAgent(item.agent)} · {item.kind === "command" ? "this exact command" : "this path and everything in it"} · added {new Date(item.createdAt).toLocaleDateString()}
+                </div>
+              </div>
+              <ConfirmAction
+                trigger={<Button size="sm" variant="ghost">Remove</Button>}
+                title="Remove this Never rule?"
+                description={`${blockAgent(item.agent)} will be asked again the next time it tries ${item.value}.`}
+                effects={["The next matching request opens the approval popup.", "Calls already denied stay denied."]}
+                confirmLabel="Remove"
+                onConfirm={() => void window.leash.deleteNever(item.id).then(removed, fail)}
+              />
+            </div>
+          ))
+        )}
       </SettingsSection>
     </div>
   );
