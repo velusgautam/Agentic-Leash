@@ -1,0 +1,139 @@
+name: Release
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  version:
+    name: version
+    # Releases are cut from main only, even though the run picker allows any branch.
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    # The deploy key here is the only actor allowed to push past main's ruleset.
+    environment: release
+    outputs:
+      version: ${{ steps.next.outputs.version }}
+      sha: ${{ steps.bump.outputs.sha }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ssh-key: ${{ secrets.RELEASE_DEPLOY_KEY }}
+      # Each run bumps the minor of the newest v* tag. A package.json version
+      # above that tag (e.g. a manual 1.0.0) is released as-is instead.
+      - id: next
+        run: |
+          pkg="$(node -p 'require("./package.json").version')"
+          latest="$(git ls-remote --tags --refs origin 'v*' | sed 's|.*refs/tags/v||' \
+            | grep -E '^[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | tail -n1)"
+          highest="$(printf '%s\n%s\n' "$pkg" "$latest" | sort -V | tail -n1)"
+          if [ -z "$latest" ] || { [ "$highest" = "$pkg" ] && [ "$pkg" != "$latest" ]; }; then
+            version="$pkg"
+          else
+            IFS=. read -r major minor _ <<< "$latest"
+            version="$major.$((minor + 1)).0"
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "::notice::Releasing v$version (latest tag: ${latest:-none}, package.json: $pkg)"
+
+      # Commit the bump to main first so the tag, the build and package.json agree.
+      # A rerun after a failed build finds package.json already bumped and skips the commit.
+      - id: bump
+        env:
+          VERSION: ${{ steps.next.outputs.version }}
+        run: |
+          node -e 'const fs=require("fs");const p=JSON.parse(fs.readFileSync("package.json"));p.version=process.argv[1];fs.writeFileSync("package.json",JSON.stringify(p,null,2)+"\n")' "$VERSION"
+          if ! git diff --quiet package.json; then
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git commit -m "chore: Release v$VERSION" package.json
+            git push origin HEAD:main
+          fi
+          echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+  build:
+    name: build (${{ matrix.platform }})
+    needs: version
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          - platform: mac
+            os: macos-latest
+            files: dist/*.dmg
+          - platform: win
+            os: windows-latest
+            files: dist/*.exe
+          - platform: linux
+            os: ubuntu-latest
+            files: dist/*.AppImage
+    runs-on: ${{ matrix.os }}
+    # Signing secrets live in this environment, which only main may deploy to.
+    environment: release
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.version.outputs.sha }}
+      - uses: pnpm/action-setup@v6
+        with:
+          version: 12.11.2
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm build
+
+      # Mac only: CSC_LINK would otherwise also be picked up for Windows signing.
+      - name: Package (signed + notarized)
+        if: matrix.platform == 'mac'
+        env:
+          CSC_LINK: ${{ secrets.CSC_LINK }}
+          CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
+          APPLE_API_KEY_P8: ${{ secrets.APPLE_API_KEY_P8 }}
+          APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+        run: |
+          export APPLE_API_KEY="$RUNNER_TEMP/AuthKey_$APPLE_API_KEY_ID.p8"
+          printf '%s' "$APPLE_API_KEY_P8" > "$APPLE_API_KEY"
+          pnpm exec electron-builder --mac --publish never
+
+      - name: Package
+        if: matrix.platform != 'mac'
+        shell: bash
+        run: pnpm exec electron-builder --${{ matrix.platform }} --publish never
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: ${{ matrix.platform }}
+          path: ${{ matrix.files }}
+          if-no-files-found: error
+
+  release:
+    name: release
+    needs: [version, build]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          path: artifacts
+          merge-multiple: true
+      - env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: v${{ needs.version.outputs.version }}
+          SHA: ${{ needs.version.outputs.sha }}
+        run: |
+          gh release create "$TAG" artifacts/* \
+            --repo "$GITHUB_REPOSITORY" \
+            --target "$SHA" \
+            --title "Agentic Leash $TAG" \
+            --generate-notes
