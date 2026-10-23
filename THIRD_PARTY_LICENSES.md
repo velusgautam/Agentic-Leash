@@ -2,7 +2,7 @@
 
 ## T3 Code
 
-UI components in `src/renderer/src/components/ui`, `src/renderer/src/hooks/useResizeDrag.ts`, `src/renderer/src/hooks/useMediaQuery.ts`, `src/renderer/src/lib/windowControlsOverlay.ts`, `src/renderer/src/index.css` and the Claude, Cursor, OpenAI and T3 paths in `src/renderer/src/components/Icons.tsx` are copied from [T3 Code](https://github.com/pingdotgg/t3code) at commit `ede3f2d`. The settings layout follows its `settingsLayout.tsx`.
+UI components in `src/renderer/src/components/ui`, `src/renderer/src/hooks/useResizeDrag.ts`, `src/renderer/src/hooks/useMediaQuery.ts`, `src/renderer/src/lib/windowControlsOverlay.ts`, `src/renderer/src/index.css` and the Claude, Cursor, OpenAI and T3 paths in `src/renderer/src/components/Icons.tsx` are copied from [T3 Code](https://github.com/pingdotgg/t3code) at commit `ede3f2d`. The settings layout follows its `settingsLayout.tsx`. Palette colors in `src/shared/palettes.ts` are its Ember, T3 Chat, Grove, Ocean, and Iris themes.
 
 MIT License
 

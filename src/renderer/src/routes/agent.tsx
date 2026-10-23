@@ -68,7 +68,7 @@ function TrustActions({ path, dueAt, onChange }: { path: string; dueAt?: number;
       />
       <Button size="sm" variant="outline" aria-expanded={open} onClick={() => setOpen((value) => !value)}>Revoke later…</Button>
       {open ? (
-        <span className="absolute top-9 right-0 z-20 flex w-56 flex-col gap-1 rounded-lg border border-border bg-popover p-1.5 text-popover-foreground shadow-md">
+        <span className="dropdown-glass absolute top-9 right-0 z-20 flex w-56 flex-col gap-1 rounded-lg border border-border p-1.5 text-popover-foreground shadow-md">
           {PRESETS.map((item) => (
             <Button key={item.preset} size="sm" variant="ghost" className="justify-start" onClick={() => void window.leash.scheduleTrust(path, revokeDue(item.preset)).then(done)}>
               {item.label}

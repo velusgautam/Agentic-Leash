@@ -1,5 +1,6 @@
 import { join, resolve } from "node:path";
 import { app, BrowserWindow, dialog, ipcMain, Menu, Notification, nativeImage, nativeTheme, powerMonitor, shell, Tray } from "electron";
+import { windowVibrancy } from "../shared/windowGlass";
 import appIcon from "../../resources/icon.png?asset";
 import trayIcon from "../../resources/trayTemplate.png?asset";
 import type { OpenAtLoginState } from "../shared/bridge";
@@ -17,6 +18,8 @@ const isMac = process.platform === "darwin";
 if (process.env.AGENTIC_LEASH_USER_DATA) app.setPath("userData", process.env.AGENTIC_LEASH_USER_DATA);
 
 let win: BrowserWindow | null = null;
+// Default matches glass 80. Hide clears vibrancy; show puts this back.
+let glassVibrancy: "sidebar" | null = "sidebar";
 let approval: BrowserWindow | null = null;
 // Module scope on purpose: a garbage-collected Tray vanishes from the menu bar.
 let tray: Tray | null = null;
@@ -44,8 +47,16 @@ function createWindow(visible: boolean): BrowserWindow {
     minHeight: 620,
     show: false,
     title: "Agentic Leash",
-    ...(isMac ? { titleBarStyle: "hiddenInset" as const, trafficLightPosition: { x: 16, y: 19 } } : {}),
-    backgroundColor: nativeTheme.shouldUseDarkColors ? "#0a0a0a" : "#ffffff",
+    ...(isMac
+      ? {
+          titleBarStyle: "hiddenInset" as const,
+          trafficLightPosition: { x: 16, y: 19 },
+          transparent: true,
+          vibrancy: "sidebar" as const,
+          visualEffectState: "active" as const,
+          backgroundColor: "#00000000",
+        }
+      : { backgroundColor: nativeTheme.shouldUseDarkColors ? "#0a0a0a" : "#ffffff" }),
     webPreferences: { preload: join(__dirname, "../preload/index.js"), sandbox: true, contextIsolation: true },
   });
   if (visible) window.once("ready-to-show", () => window.show());
@@ -163,6 +174,7 @@ function openApproval(): void {
 function showWindow(): void {
   if (!win) return;
   void app.dock?.show();
+  if (isMac) win.setVibrancy(glassVibrancy);
   win.show();
   win.focus();
 }
@@ -185,6 +197,8 @@ function showGrants(): void {
 
 function hideToMenuBar(): void {
   if (!win) return;
+  // Hiding a vibrancy window never returns on the GitHub macOS runner.
+  if (isMac) win.setVibrancy(null);
   win.hide();
   app.dock?.hide();
   const dir = app.getPath("userData");
@@ -208,6 +222,15 @@ const applyOpenAtLogin = (enabled: boolean) => (isMac ? setOpenAtLogin(enabled, 
 function loginItemState(): OpenAtLoginState {
   return { available: loginItemSupported(), enabled: loginItemSupported() && openAtLogin() };
 }
+
+function applyWindowGlass(glass: number): void {
+  if (!win || win.isDestroyed() || !isMac || !Number.isFinite(glass)) return;
+  glassVibrancy = windowVibrancy(glass);
+  win.setBackgroundColor(glassVibrancy ? "#00000000" : nativeTheme.shouldUseDarkColors ? "#0a0a0a" : "#ffffff");
+  win.setVibrancy(glassVibrancy);
+}
+
+ipcMain.handle("appearance:glass", (_event, glass: number) => applyWindowGlass(glass));
 
 ipcMain.handle("nav:take", () => {
   const next = pendingNav;

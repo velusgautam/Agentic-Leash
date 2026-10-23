@@ -273,7 +273,7 @@ function AppShell() {
       {palette ? (
         <div className="fixed inset-0 z-50 flex items-start justify-center bg-black/40 pt-24" onClick={() => setPalette(false)}>
           <form
-            className="w-[32rem] rounded-xl border border-border bg-popover p-3 shadow-lg"
+            className="dropdown-glass w-[32rem] rounded-xl border border-border p-3 shadow-lg"
             onClick={(event) => event.stopPropagation()}
             onSubmit={(event) => {
               event.preventDefault();

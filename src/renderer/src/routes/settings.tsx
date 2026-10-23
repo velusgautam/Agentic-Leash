@@ -23,6 +23,7 @@ import { SETTINGS_SECTIONS } from "~/nav";
 import { parseRetentionDays } from "../../../shared/retention";
 import { CLEANUP_MODES, formatBytes, formatCap, parseCapGb, type CleanupMode, type HistoryStats } from "../../../shared/storage";
 import { DEFAULT_APPEARANCE, readAppearance, saveAppearance, type AppearancePrefs } from "../appearance";
+import { PALETTES, paletteSwatch } from "../../../shared/palettes";
 
 function General() {
   const [login, setLogin] = useState<OpenAtLoginState | null>(null);
@@ -520,14 +521,20 @@ function Slider({ label, value, min, max, onChange }: { label: string; value: nu
 function Appearance() {
   const [theme, setTheme] = useState<ThemeSource>("system");
   const [prefs, setPrefs] = useState<AppearancePrefs>(readAppearance);
+  const [dark, setDark] = useState(() => document.documentElement.classList.contains("dark"));
   useEffect(() => {
     void window.leash.getTheme().then(setTheme);
+    const sync = () => setDark(document.documentElement.classList.contains("dark"));
+    const observer = new MutationObserver(sync);
+    observer.observe(document.documentElement, { attributes: true, attributeFilter: ["class"] });
+    return () => observer.disconnect();
   }, []);
   const update = (next: Partial<AppearancePrefs>) => {
     const merged = { ...prefs, ...next };
     setPrefs(merged);
     saveAppearance(merged);
   };
+  const mode = dark ? "dark" : "light";
   return (
     <>
       <SettingsSection title="Theme">
@@ -552,6 +559,31 @@ function Appearance() {
             </button>
           ))}
         </div>
+        <div className="p-3 sm:p-4">
+          <p className="mb-3 text-xs text-muted-foreground">Palette</p>
+          <div className="grid grid-cols-3 gap-3" role="group" aria-label="Palette">
+            {PALETTES.map(({ id, label }) => {
+              const swatch = paletteSwatch(id, mode);
+              const selected = prefs.palette === id;
+              return (
+                <button
+                  key={id}
+                  type="button"
+                  aria-label={label}
+                  aria-pressed={selected}
+                  onClick={() => update({ palette: id })}
+                  className={cn("overflow-hidden rounded-lg border text-left transition-colors", selected ? "border-primary ring-2 ring-primary/30" : "border-border hover:border-foreground/30")}
+                >
+                  <div className={cn("flex h-16 items-end gap-1 p-2", !swatch && "bg-muted")} style={swatch ? { background: swatch.canvas } : undefined}>
+                    <span className={cn("h-8 w-6 rounded-sm", !swatch && "bg-foreground/20")} style={swatch ? { background: swatch.accent } : undefined} />
+                    <span className="h-5 flex-1 rounded-sm bg-zinc-500/30" />
+                  </div>
+                  <div className="px-2.5 py-2 text-sm">{label}</div>
+                </button>
+              );
+            })}
+          </div>
+        </div>
       </SettingsSection>
       <SettingsSection title="Interface">
         <SettingsRow title="Contrast" description="Adjust the contrast of text and borders across the app." control={<Slider label="Contrast" value={prefs.contrast} min={50} max={200} onChange={(contrast) => update({ contrast })} />} />
@@ -569,7 +601,7 @@ function Appearance() {
             </div>
           }
         />
-        <SettingsRow title="Reset" description="Back to the default contrast, transparency and density." control={<Button size="sm" variant="outline" onClick={() => update(DEFAULT_APPEARANCE)}>Reset</Button>} />
+        <SettingsRow title="Reset" description="Back to the default contrast, transparency, density and palette." control={<Button size="sm" variant="outline" onClick={() => update(DEFAULT_APPEARANCE)}>Reset</Button>} />
       </SettingsSection>
     </>
   );

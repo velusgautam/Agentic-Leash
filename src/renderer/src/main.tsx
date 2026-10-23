@@ -5,11 +5,12 @@ import { createRoot } from "react-dom/client";
 import { applyAppearance, readAppearance } from "./appearance";
 import { router } from "./router";
 
-applyAppearance(readAppearance());
-
 const dark = matchMedia("(prefers-color-scheme: dark)");
 let source: "system" | "light" | "dark" = "system";
-const applyTheme = () => document.documentElement.classList.toggle("dark", source === "dark" || (source === "system" && dark.matches));
+const applyTheme = () => {
+  document.documentElement.classList.toggle("dark", source === "dark" || (source === "system" && dark.matches));
+  applyAppearance(readAppearance());
+};
 applyTheme();
 dark.addEventListener("change", applyTheme);
 void window.leash.getTheme().then((theme) => {

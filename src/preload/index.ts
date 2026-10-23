@@ -67,6 +67,7 @@ const leash: LeashBridge = {
   diagnostics: () => ipcRenderer.invoke("diagnostics:get"),
   getTheme: () => ipcRenderer.invoke("theme:get"),
   setTheme: (theme) => ipcRenderer.invoke("theme:set", theme),
+  setGlass: (glass) => ipcRenderer.invoke("appearance:glass", glass),
   onTheme: (listener) => {
     const wrapped = (_event: unknown, theme: ThemeSource) => listener(theme);
     ipcRenderer.on("theme:changed", wrapped);

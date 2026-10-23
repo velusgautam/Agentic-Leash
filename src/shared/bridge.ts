@@ -98,6 +98,7 @@ export interface LeashBridge {
   diagnostics(): Promise<Diagnostics>;
   getTheme(): Promise<ThemeSource>;
   setTheme(theme: ThemeSource): Promise<ThemeSource>;
+  setGlass(glass: number): Promise<void>;
   onTheme(listener: (theme: ThemeSource) => void): () => void;
   onHistory(listener: (rows: HistoryRow[]) => void): () => void;
   onPending(listener: (pending: PendingRequest[]) => void): () => void;
