@@ -50,7 +50,9 @@ export function AllowList() {
   const [editing, setEditing] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
   useEffect(() => {
-    void window.leash.listRules().then(setRules);
+    const load = () => void window.leash.listRules().then(setRules);
+    load();
+    return window.leash.onGrantStatus(load);
   }, []);
   const reset = () => {
     setKind("folder");

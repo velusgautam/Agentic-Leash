@@ -47,8 +47,22 @@ function readOnlySegment(words: string[]): boolean {
 
 const PIPE_OK = new Set(["|", "&&", "||", ";", "2>&1"]);
 
+/** Substitutions run even inside double quotes; only single quotes hide them. */
+function hasSubstitution(command: string): boolean {
+  let double = false;
+  for (let index = 0; index < command.length; index += 1) {
+    const char = command[index]!;
+    if (char === "\\") index += 1;
+    else if (char === "'" && !double) index = command.indexOf("'", index + 1) < 0 ? command.length : command.indexOf("'", index + 1);
+    else if (char === '"') double = !double;
+    else if (char === "`" || ((char === "$" || char === "<" || char === ">") && command[index + 1] === "(")) return true;
+  }
+  return false;
+}
+
 /** True when every part of a shell line only reads. Redirects go only to /dev/null. */
 export function isReadOnlyCommand(command: string): boolean {
+  if (hasSubstitution(command)) return false;
   const parts: ShellWord[] = shellWords(command.trim());
   if (!parts.length) return false;
   let segment: string[] = [];

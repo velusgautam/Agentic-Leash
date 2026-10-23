@@ -32,7 +32,7 @@ export const SETTINGS_SECTIONS = [
   { id: "general", label: "General", icon: Settings2 },
   { id: "agents", label: "Agents", icon: Bot },
   { id: "monitoring", label: "Monitoring", icon: Radar },
-  { id: "ignored", label: "Ignored paths", icon: EyeOff },
+  { id: "ignored", label: "Hidden from history", icon: EyeOff },
   { id: "appearance", label: "Appearance", icon: Palette },
   { id: "keybindings", label: "Keybindings", icon: Keyboard },
   { id: "diagnostics", label: "Diagnostics", icon: Stethoscope },

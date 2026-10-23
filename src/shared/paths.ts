@@ -82,6 +82,22 @@ function expandVars(word: string, home: string): string {
   return word.replace(/^(?:\$HOME|\$\{HOME\})(?=\/|$)/, home);
 }
 
+/** Drops sentence and code punctuation stuck to the end of a path. A lone `.`, `..`, and `../..` stay. */
+function trimTail(word: string): string {
+  let end = word.length;
+  while (end > 1) {
+    const last = word[end - 1]!;
+    const prev = word[end - 2]!;
+    if (!(/[,;:)\]}'"`]/.test(last) || (last === "." && prev !== "/" && prev !== "."))) break;
+    end -= 1;
+  }
+  const out = word.slice(0, end);
+  return out === "/" ? word : out;
+}
+
+/** A `$` left in a path is a variable this tool cannot resolve, so no grant can safely name it. */
+export const hasUnresolved = (paths: string[]): boolean => paths.some((path) => path.includes("$"));
+
 // Paths inside a larger word, like `--file=/etc/x` or `open('/Users/me/.ssh/id_rsa')`.
 const EMBEDDED = /(?:^|[=:,(\s'"`])((?:~|\$HOME|\$\{HOME\})?\/[^\s'"`;|&()<>,]+)/g;
 
@@ -101,14 +117,14 @@ export function extractShellPaths(command: string, cwd: string, home = homedir()
       afterCd = false;
       continue;
     }
-    const word = expandVars(text, home);
+    const word = trimTail(expandVars(text, home));
     let path: string | null = null;
     if (/^(?:\/|~\/|~$|\.\/|\.\.\/|\.\.$)/.test(word)) path = normalise(word, here, home);
     else if (!first && /^[^-'"`()=$<>|&;\s][^'"`()=$<>|&;\s]*$/.test(word) && !word.includes("://") && (word.startsWith(".") || word.includes("/") || isSecretName(word))) {
       path = normalise(word, here, home);
     } else {
       for (const match of word.matchAll(EMBEDDED)) {
-        const hit = expandVars(match[1]!, home);
+        const hit = trimTail(expandVars(match[1]!, home));
         if (!hit.startsWith("//")) found.push(normalise(hit, here, home));
       }
     }
@@ -118,7 +134,7 @@ export function extractShellPaths(command: string, cwd: string, home = homedir()
     afterCd = first && word === "cd";
     first = false;
   }
-  return [...new Set(found)];
+  return [...new Set(found)].filter((path) => path !== "/dev/null");
 }
 
 export function isSensitive(path: string, home = homedir()): boolean {

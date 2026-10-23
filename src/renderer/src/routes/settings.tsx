@@ -246,9 +246,9 @@ function IgnoredNoises() {
     void window.leash.listIgnored().then(setRows);
   }, []);
   return (
-    <SettingsSection title="Paths">
+    <SettingsSection title="Hidden paths">
       <div className="px-3 py-3 sm:px-4">
-        <p className="mb-3 text-xs leading-normal text-muted-foreground/80">Checked paths are left out of history. Built-in rows stay in the list.</p>
+        <p className="mb-3 text-xs leading-normal text-muted-foreground/80">Activity under these paths is left out of history. Agents still ask before using them. To stop prompts, add a folder under Access → Always.</p>
         <form
           className="flex gap-2"
           onSubmit={(event) => {
@@ -263,7 +263,7 @@ function IgnoredNoises() {
           }}
         >
           <input
-            aria-label="Ignored path"
+            aria-label="Hidden path"
             className="h-8 min-w-0 flex-1 rounded-lg border border-border bg-background/60 px-2 font-mono text-xs outline-none focus-visible:ring-2 focus-visible:ring-ring"
             placeholder="/tmp/scratch"
             value={prefix}
