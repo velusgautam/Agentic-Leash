@@ -159,16 +159,18 @@ test("walkthrough frames", async () => {
   await new Promise((resolve) => socket.once("connect", resolve));
   socket.write(`${JSON.stringify({ id: "walk-1", request: { agent: "cursor", event: "preToolUse", tool: "Write", access: "write", paths: ["/Users/ada/Projects/website/index.html"], cwd: "/Users/ada/Projects/website" } })}\n`);
   const popup = await app.waitForEvent("window", { predicate: (page) => page.url().includes("#/approval") });
-  await expect(popup.getByText("Cursor wants write access")).toBeVisible();
+  await expect(popup.getByText("Cursor wants to change a file")).toBeVisible();
   await box("popupPath", popup.locator("pre"));
   await shot(popup, "04-approval");
   await popup.getByRole("button", { name: "website", exact: true }).click();
+  await expect(popup.getByText("Allow website this session")).toBeVisible();
+  const allow = popup.getByRole("button", { name: /^This session/ });
   await box("popupScope", popup.getByRole("button", { name: "website", exact: true }));
-  await box("popupTtl", popup.getByRole("radiogroup", { name: "Allow for" }));
-  await box("popupAllow", popup.getByRole("button", { name: /Allow website for 1 hour/ }));
+  await box("popupTtl", allow.locator("xpath=.."));
+  await box("popupAllow", allow);
   await shot(popup, "05-approval-scope");
-  await expect(popup.getByRole("button", { name: /^Allow/ })).toBeEnabled();
-  await popup.keyboard.press("Enter");
+  await expect(allow).toBeEnabled();
+  await allow.click();
   await expect.poll(() => win.evaluate(`window.leash.listGrants().then((rows) => rows.length)`)).toBe(4);
   socket.destroy();
 
