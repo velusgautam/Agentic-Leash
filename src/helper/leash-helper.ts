@@ -13,7 +13,7 @@ import { MAIN_RETENTION_DAYS, NOISE_RETENTION_DAYS, retentionDays } from "../sha
 import { capBytes, HARD_CAP_STOP, PRUNE_START, type HistoryStats } from "../shared/storage";
 import type { HistoryEvent } from "../shared/types";
 import { classify } from "./classify";
-import { appliedIgnoredKey, checkpointHistory, convertAutoVacuum, dropIgnored, historyCounts, historyStorageBytes, historyUsage, ignoredKey, insertEvents, openHistoryDb, optimizeHistory, pruneBySize, pruneHistory, purgeHistory, readHistoryStats, resetHistory, splitHistory, writeHistoryStats } from "./historyDb";
+import { appliedIgnoredKey, checkpointHistory, convertAutoVacuumIfSafe, dropIgnored, historyCounts, historyStorageBytes, historyUsage, ignoredKey, insertEvents, openHistoryDb, optimizeHistory, pruneBySize, pruneHistory, purgeHistory, readHistoryStats, resetHistory, splitHistory, writeHistoryStats } from "./historyDb";
 import { lsofText, pollNet } from "./net";
 import { ProcTree, type EsEvent } from "./proctree";
 import { ContentCache, gitBaseline, readText } from "./snapshots";
@@ -23,6 +23,7 @@ const DEFAULT_HISTORY = "/Library/Application Support/AgenticLeash/history.db";
 const LOG_LIMIT = 10 * 1024 * 1024;
 const COUNTS_EVERY_MS = 10 * 60 * 1000;
 const USAGE_EVERY_MS = 5000;
+const OPTIMIZE_EVERY_MS = 60 * 60 * 1000;
 
 function userHome(): string {
   if (process.env.AGENTIC_LEASH_HOME) return process.env.AGENTIC_LEASH_HOME;
@@ -39,14 +40,15 @@ function userHome(): string {
   return homedir();
 }
 
-function readIgnored(home: string): string[] {
+function readIgnored(home: string, previous?: string[]): string[] {
   try {
     const db = new DatabaseSync(grantsDbPath(home), { readOnly: true });
     const prefixes = enabledIgnoredPrefixes(db);
     db.close();
     return prefixes;
   } catch {
-    return [...BUILTIN_IGNORED];
+    // A transient read error must not swap the list: a changed key would trigger a full rescan.
+    return previous ?? [...BUILTIN_IGNORED];
   }
 }
 
@@ -82,7 +84,7 @@ export function startHelper(historyPath: string, eslogger = "/usr/bin/eslogger")
   let ignored = readIgnored(home);
   let appliedKey = appliedIgnoredKey(db);
   const applyIgnored = () => {
-    ignored = readIgnored(home);
+    ignored = readIgnored(home, ignored);
     const key = ignoredKey(ignored);
     if (key === appliedKey) return;
     dropIgnored(db, ignored);
@@ -93,6 +95,7 @@ export function startHelper(historyPath: string, eslogger = "/usr/bin/eslogger")
   let countedAt = 0;
   let armed = false;
   let checkedAt = 0;
+  let optimizedAt = 0;
   const prune = () => {
     let main = MAIN_RETENTION_DAYS;
     let noise = NOISE_RETENTION_DAYS;
@@ -120,7 +123,10 @@ export function startHelper(historyPath: string, eslogger = "/usr/bin/eslogger")
     const hardCap = pass.hardCap || (stats.hardCap && usedBytes >= cap * HARD_CAP_STOP);
     stats = { ...stats, usedBytes, fileBytes: historyStorageBytes(historyPath), capBytes: cap, hardCap, ...(rows ? { prunedAt: now, prunedRows: rows } : {}) };
     writeHistoryStats(db, stats);
-    db.exec("PRAGMA optimize");
+    if (rows || now - optimizedAt >= OPTIMIZE_EVERY_MS) {
+      db.exec("PRAGMA optimize");
+      optimizedAt = now;
+    }
     armed = usedBytes < cap * PRUNE_START;
   };
   splitHistory(db);
@@ -128,7 +134,13 @@ export function startHelper(historyPath: string, eslogger = "/usr/bin/eslogger")
   prune();
   const timer = setInterval(() => {
     if (!queue.length) return;
-    insertEvents(db, queue.splice(0), ignored);
+    const batch = queue.splice(0);
+    try {
+      insertEvents(db, batch, ignored);
+    } catch {
+      queue.unshift(...batch); // SQLITE_BUSY or similar: retry on the next flush
+      return;
+    }
     const now = Date.now();
     if (!armed || now - checkedAt < USAGE_EVERY_MS) return;
     checkedAt = now;
@@ -149,15 +161,19 @@ export function startHelper(historyPath: string, eslogger = "/usr/bin/eslogger")
   };
   let converted = false;
   const pruneTimer = setInterval(() => {
+    prune();
     if (!converted) {
-      converted = true;
+      converted = true; // one attempt per start; a skipped or failed one is left to Optimize
+      const started = Date.now();
       try {
-        convertAutoVacuum(db);
-      } catch {
-        /* disk full or busy: the file keeps its size until the next start */
+        checkpointHistory(db);
+        const result = convertAutoVacuumIfSafe(db, historyPath);
+        if (result.status === "converted") log.write(`auto-vacuum converted in ${Date.now() - started}ms (${result.bytes} bytes)\n`);
+        else if (result.status !== "already") log.write(`auto-vacuum conversion skipped: ${result.status} (db ${result.bytes} bytes, free ${result.free} bytes)\n`);
+      } catch (error) {
+        log.write(`auto-vacuum conversion failed: ${error instanceof Error ? error.message : String(error)}\n`);
       }
     }
-    prune();
     rotateLog();
   }, 60_000);
   let stopping = false;

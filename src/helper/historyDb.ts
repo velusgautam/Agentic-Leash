@@ -1,4 +1,4 @@
-import { chmodSync, chownSync, existsSync, mkdirSync, readdirSync, renameSync, rmSync, statSync } from "node:fs";
+import { chmodSync, chownSync, existsSync, mkdirSync, readdirSync, renameSync, rmSync, statfsSync, statSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { deflateRawSync, inflateRawSync } from "node:zlib";
@@ -82,10 +82,33 @@ function maxId(db: DatabaseSync): number {
 
 export function convertAutoVacuum(db: DatabaseSync): boolean {
   if (Number(Object.values(db.prepare("PRAGMA auto_vacuum").get() as Record<string, number>)[0]) === 2) return false;
-  db.exec("PRAGMA auto_vacuum = INCREMENTAL");
-  db.exec("VACUUM");
-  checkpointHistory(db);
+  // VACUUM builds its copy in temp storage; keep it on disk, not in a root daemon's RAM.
+  db.exec("PRAGMA temp_store = FILE");
+  try {
+    db.exec("PRAGMA auto_vacuum = INCREMENTAL");
+    db.exec("VACUUM");
+    checkpointHistory(db);
+  } finally {
+    db.exec("PRAGMA temp_store = MEMORY");
+  }
   return true;
+}
+
+export const CONVERT_MAX_BYTES = 1024 ** 3;
+export const CONVERT_SPACE_FACTOR = 3;
+
+export type ConvertResult = { status: "converted" | "already" | "too-large" | "low-space"; bytes: number; free: number };
+
+export function convertAutoVacuumIfSafe(db: DatabaseSync, path: string, free: number = freeBytes(path), maxBytes = CONVERT_MAX_BYTES): ConvertResult {
+  const bytes = historyStorageBytes(path);
+  if (bytes > maxBytes) return { status: "too-large", bytes, free };
+  if (free < bytes * CONVERT_SPACE_FACTOR) return { status: "low-space", bytes, free };
+  return { status: convertAutoVacuum(db) ? "converted" : "already", bytes, free };
+}
+
+function freeBytes(path: string): number {
+  const fs = statfsSync(dirname(path));
+  return Number(fs.bavail) * Number(fs.bsize);
 }
 
 export function checkpointHistory(db: DatabaseSync): void {

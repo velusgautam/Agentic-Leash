@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { describe, expect, it } from "vitest";
-import { checkpointHistory, convertAutoVacuum, historyCounts, historyText, historyUsage, insertEvents, openHistoryDb, optimizeHistory, pruneBySize, pruneHistory, purgeHistory, queryHistory, readHistoryStats, resetHistory, writeHistoryStats } from "../../src/helper/historyDb";
+import { checkpointHistory, convertAutoVacuum, convertAutoVacuumIfSafe, historyCounts, historyStorageBytes, historyText, historyUsage, insertEvents, openHistoryDb, optimizeHistory, pruneBySize, pruneHistory, purgeHistory, queryHistory, readHistoryStats, resetHistory, writeHistoryStats } from "../../src/helper/historyDb";
 import { purgeCommand } from "../../src/helper/leash-helper";
 import { capBytes, formatBytes, parseCapGb, rearmDismissed, storageWarning, type HistoryStats } from "../../src/shared/storage";
 
@@ -219,6 +219,23 @@ describe("pruneBySize", () => {
     const { db } = fresh();
     expect(db.prepare("PRAGMA auto_vacuum").get()).toEqual({ auto_vacuum: 2 });
     for (const name of ["events_kind", "noise_kind"]) expect(count(db, `SELECT count(*) AS n FROM sqlite_master WHERE type = 'index' AND name = '${name}'`)).toBe(1);
+    db.close();
+  });
+
+  it("skips conversion for a large database or low free space, and restores temp_store", () => {
+    const path = historyPath();
+    const legacy = new DatabaseSync(path);
+    legacy.exec("PRAGMA auto_vacuum = NONE");
+    legacy.exec("CREATE TABLE seed (n INTEGER)");
+    legacy.close();
+    const db = openHistoryDb(path);
+    const size = historyStorageBytes(path);
+    expect(convertAutoVacuumIfSafe(db, path, size * 10, size - 1).status).toBe("too-large");
+    expect(convertAutoVacuumIfSafe(db, path, size * 3 - 1).status).toBe("low-space");
+    expect(db.prepare("PRAGMA auto_vacuum").get()).toEqual({ auto_vacuum: 0 });
+    expect(convertAutoVacuumIfSafe(db, path, size * 3).status).toBe("converted");
+    expect(db.prepare("PRAGMA auto_vacuum").get()).toEqual({ auto_vacuum: 2 });
+    expect(db.prepare("PRAGMA temp_store").get()).toEqual({ temp_store: 2 });
     db.close();
   });
 
