@@ -164,6 +164,21 @@ test("a denial can be undone, and Never shows under Blocked until removed", asyn
   await app.close();
 });
 
+test("insights shows prompt stats and switches range", async () => {
+  const app = await launch();
+  const win = await app.firstWindow();
+  await win.evaluate(`window.leash.createGrant({ agent: "*", path: "/tmp/leash-insights", access: "write", ttlSeconds: 3600 })`);
+  await win.getByRole("link", { name: "Insights", exact: true }).click();
+  await expect(win.getByRole("heading", { name: "Insights" })).toBeVisible();
+  await expect(win.getByText("Prompts per day", { exact: true }).first()).toBeVisible();
+  await expect(win.getByText("Prompts you answered per day")).toBeVisible();
+  await win.getByRole("button", { name: "30 days" }).click();
+  await expect(win.getByRole("button", { name: "30 days" })).toHaveAttribute("aria-pressed", "true");
+  await expect(win.locator("table.sr-only tbody tr")).toHaveCount(30);
+  if (process.env.SCREENSHOT) await win.screenshot({ path: process.env.SCREENSHOT.replace(".png", "-insights.png") });
+  await app.close();
+});
+
 test("locking the Mac ends personal-folder grants by default, or every timed grant when set to All", async () => {
   const app = await launch();
   const win = await app.firstWindow();

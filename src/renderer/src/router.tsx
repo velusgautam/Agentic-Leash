@@ -4,6 +4,7 @@ import { AgentPage } from "~/routes/agent";
 import { ApprovalPage } from "~/routes/approval";
 import { GrantsPage } from "~/routes/grants";
 import { HistoryPage } from "~/routes/history";
+import { InsightsPage } from "~/routes/insights";
 import { LivePage } from "~/routes/live";
 import { SettingsPage } from "~/routes/settings";
 
@@ -20,6 +21,7 @@ const routeTree = rootRoute.addChildren([
   createRoute({ getParentRoute: () => rootRoute, path: "/live", component: LivePage }),
   createRoute({ getParentRoute: () => rootRoute, path: "/grants", component: GrantsPage }),
   createRoute({ getParentRoute: () => rootRoute, path: "/history", component: HistoryPage }),
+  createRoute({ getParentRoute: () => rootRoute, path: "/insights", component: InsightsPage }),
   createRoute({ getParentRoute: () => rootRoute, path: "/agents/$agentId", component: AgentPage }),
   createRoute({ getParentRoute: () => rootRoute, path: "/approval", component: ApprovalPage }),
   createRoute({
