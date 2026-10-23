@@ -24,6 +24,7 @@ const LOG_LIMIT = 10 * 1024 * 1024;
 const COUNTS_EVERY_MS = 10 * 60 * 1000;
 const USAGE_EVERY_MS = 5000;
 const OPTIMIZE_EVERY_MS = 60 * 60 * 1000;
+const FLUSH_RETRIES = 40;
 
 function userHome(): string {
   if (process.env.AGENTIC_LEASH_HOME) return process.env.AGENTIC_LEASH_HOME;
@@ -72,7 +73,7 @@ export function startHelper(historyPath: string, eslogger = "/usr/bin/eslogger")
     /* dev runs are not root */
   }
   const tree = new ProcTree();
-  const queue: HistoryEvent[] = [];
+  let queue: HistoryEvent[] = [];
   const seen = new Set<string>();
   let grants = grantPaths(Date.now());
   const cache = new ContentCache({
@@ -132,13 +133,22 @@ export function startHelper(historyPath: string, eslogger = "/usr/bin/eslogger")
   splitHistory(db);
   applyIgnored();
   prune();
+  let failures = 0;
   const timer = setInterval(() => {
     if (!queue.length) return;
-    const batch = queue.splice(0);
+    const batch = queue;
+    queue = [];
     try {
       insertEvents(db, batch, ignored);
-    } catch {
-      queue.unshift(...batch); // SQLITE_BUSY or similar: retry on the next flush
+      failures = 0;
+    } catch (error) {
+      failures += 1;
+      // SQLITE_BUSY or similar: retry on the next flush, but give up after ~10s so a bad batch can't pile up forever.
+      if (failures < FLUSH_RETRIES) queue = batch.concat(queue);
+      else {
+        log.write(`dropped ${batch.length} events after ${failures} failed inserts: ${error instanceof Error ? error.message : String(error)}\n`);
+        failures = 0;
+      }
       return;
     }
     const now = Date.now();
