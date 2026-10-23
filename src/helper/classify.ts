@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { join } from "node:path";
 import { isSensitive, skipRead } from "../shared/paths";
+import { startupKind } from "../shared/sensitive";
 import type { HistoryEvent } from "../shared/types";
 import type { EsEvent } from "./proctree";
 import type { ProcTree } from "./proctree";
@@ -34,7 +35,8 @@ export function classify(event: EsEvent, tree: ProcTree, home: string, skipExtra
   const base = { ts: tsOf(event), agent: tree.agent(pid) as HistoryEvent["agent"], pid, exe: exeOf(event), sensitive: false, source: "eslogger" as const };
   const file = (path: string, kind: HistoryEvent["kind"], destPath?: string): HistoryEvent | null => {
     if (kind === "read" && skipRead(path, home, skipExtras)) return null;
-    return { ...base, kind, path, destPath, sensitive: isSensitive(path, home) || (destPath ? isSensitive(destPath, home) : false) };
+    const flagged = (item: string) => isSensitive(item, home) || (kind !== "read" && startupKind(item, home) !== null);
+    return { ...base, kind, path, destPath, sensitive: flagged(path) || (destPath ? flagged(destPath) : false) };
   };
 
   if (body.open) {

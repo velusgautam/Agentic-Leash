@@ -1,5 +1,6 @@
 import { grantRoot } from "./parents";
 import { expandHome, normalise } from "./paths";
+import { personalKind, secretKind, startupKind } from "./sensitive";
 import type { AllowRule } from "./types";
 
 function ruleAgent(agent: unknown): AllowRule["agent"] | null {
@@ -20,6 +21,9 @@ export function validateRule(
   const expanded = expandHome(raw, home);
   if (!expanded.startsWith("/")) return { ok: false, error: "Folder path must be absolute." };
   const value = normalise(expanded, home, home);
-  if (grantRoot(value, true, () => true) === null) return { ok: false, error: "That folder is too broad." };
+  if (grantRoot(value, true, () => true) !== value) return { ok: false, error: "That folder is too broad." };
+  if (secretKind(value, home) || startupKind(value, home)) return { ok: false, error: "Secret and startup files can't be allowed forever. Approve them from the popup when needed." };
+  const personal = personalKind(value, home);
+  if (personal && value.split("/").pop() === personal) return { ok: false, error: `Your whole ${personal} folder can't be allowed forever. Pick a folder inside it.` };
   return { ok: true, kind: "folder", agent, value };
 }

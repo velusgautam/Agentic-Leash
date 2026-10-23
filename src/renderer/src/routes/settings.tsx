@@ -3,7 +3,7 @@ import { useLocation, useParams } from "@tanstack/react-router";
 import { Database, Monitor, Moon, Sun } from "lucide-react";
 import licenses from "../../../../THIRD_PARTY_LICENSES.md?raw";
 import type { IgnoredRow } from "../../../shared/ignored";
-import type { HistoryCleanupResult, HistoryStorageInfo, OpenAtLoginState } from "../../../shared/bridge";
+import type { ApprovalPrefs, HistoryCleanupResult, HistoryStorageInfo, OpenAtLoginState } from "../../../shared/bridge";
 import type { ApprovalStyle } from "../../../shared/approvalStyle";
 import type { AgentId, Diagnostics, ThemeSource } from "../../../shared/types";
 import { ConfirmAction } from "~/components/ConfirmAction";
@@ -27,10 +27,12 @@ import { DEFAULT_APPEARANCE, readAppearance, saveAppearance, type AppearancePref
 function General() {
   const [login, setLogin] = useState<OpenAtLoginState | null>(null);
   const [style, setStyle] = useState<ApprovalStyle>("popup");
+  const [prefs, setPrefs] = useState<ApprovalPrefs | null>(null);
   const info = useAppInfo();
   useEffect(() => {
     void window.leash.getOpenAtLogin().then(setLogin);
     void window.leash.getApprovalStyle().then(setStyle);
+    void window.leash.approvalPrefs().then(setPrefs);
   }, []);
   return (
     <>
@@ -55,10 +57,10 @@ function General() {
     <SettingsSection title="Approvals">
       <SettingsRow
         title="Ask for approval with"
-        description="Popup takes focus so you can answer right away. Notification waits in the corner with Allow 15 min and Deny buttons; requests still time out and are denied after 2 minutes. macOS must allow alerts from Agentic Leash for the buttons to show."
+        description="Popup takes focus so you can answer right away. Notification waits in the corner with Allow 15 min and Deny buttons. Quiet uses notifications but still opens the popup for high-risk requests like secrets or startup files. Requests time out and are denied after 2 minutes. macOS must allow alerts from Agentic Leash for the buttons to show."
         control={
           <div className="flex gap-1" role="group" aria-label="Ask for approval with">
-            {(["popup", "notification"] as const).map((value) => (
+            {(["popup", "quiet", "notification"] as const).map((value) => (
               <Button
                 key={value}
                 size="sm"
@@ -69,10 +71,47 @@ function General() {
                   void window.leash.setApprovalStyle(value);
                 }}
               >
-                {value === "popup" ? "Popup" : "Notification"}
+                {value === "popup" ? "Popup" : value === "quiet" ? "Quiet" : "Notification"}
               </Button>
             ))}
           </div>
+        }
+      />
+    </SettingsSection>
+    <SettingsSection title="Temporary access">
+      <SettingsRow
+        title="Locking or sleeping your Mac ends"
+        description="Personal folders only: passes for Documents, Downloads, Desktop and cloud drives end; work in your projects keeps going. All temporary access: every timed pass ends, so agents ask again when you're back. Always in repo is never affected."
+        control={
+          <div className="flex gap-1" role="group" aria-label="Locking or sleeping your Mac ends">
+            {(["personal", "all"] as const).map((value) => (
+              <Button
+                key={value}
+                size="sm"
+                variant={prefs?.lockEnds === value ? "default" : "outline"}
+                aria-pressed={prefs?.lockEnds === value}
+                onClick={() => void window.leash.setApprovalPrefs({ lockEnds: value }).then(setPrefs)}
+              >
+                {value === "personal" ? "Personal folders only" : "All temporary access"}
+              </Button>
+            ))}
+          </div>
+        }
+      />
+      <SettingsRow
+        title="End of day"
+        description="When an approval for Today ends. After this time, Today lasts until midnight."
+        control={
+          <select
+            aria-label="End of day"
+            className="h-8 rounded-md border border-border bg-background px-2 text-sm"
+            value={prefs?.endOfDayHour ?? 19}
+            onChange={(event) => void window.leash.setApprovalPrefs({ endOfDayHour: Number(event.target.value) }).then(setPrefs)}
+          >
+            {Array.from({ length: 12 }, (_, index) => index + 12).map((hour) => (
+              <option key={hour} value={hour}>{new Date(2000, 0, 1, hour).toLocaleTimeString(undefined, { hour: "numeric" })}</option>
+            ))}
+          </select>
         }
       />
     </SettingsSection>

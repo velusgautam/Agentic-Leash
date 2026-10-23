@@ -1,5 +1,5 @@
-// `/` and `/Users` would grant every account on the Mac.
-const floor = (parts: string[]) => (parts[0] === "Users" || parts[0] === "home" ? 2 : 1);
+// `/` and `/Users` would grant every account on the Mac, and the home folder would grant ~/.ssh.
+const floor = (parts: string[]) => (parts[0] === "Users" || parts[0] === "home" ? 3 : 1);
 
 function ancestors(file: string): string[] {
   const parts = file.split("/").filter(Boolean);
@@ -12,7 +12,10 @@ function ancestors(file: string): string[] {
 
 export function grantRoot(path: string, exact: boolean, isDir: (path: string) => boolean): string | null {
   const root = exact || isDir(path) ? path : path.slice(0, path.lastIndexOf("/")) || "/";
-  return root === "/" || root === "/Users" ? null : root;
+  if (root === "/" || root === "/Users" || root === "/home") return null;
+  // A file right in the home folder is granted on its own.
+  if (isHomeFolder(root)) return root === path ? null : path;
+  return root;
 }
 
 /** Exactly `/Users/<name>` or `/home/<name>`. */

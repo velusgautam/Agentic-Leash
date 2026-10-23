@@ -1,5 +1,6 @@
 import { homedir } from "node:os";
 import { isAbsolute, normalize, resolve, sep } from "node:path";
+import { isSecretName, secretKind } from "./sensitive";
 
 export function expandHome(path: string, home = homedir()): string {
   if (path === "~" || path.startsWith("~/")) return home + path.slice(1);
@@ -23,28 +24,110 @@ export function isConcretePath(path: string): boolean {
   return (path.startsWith("/") || path.startsWith("~/") || path === "~") && !/[*?[\]]/.test(path);
 }
 
-function tokens(command: string): string[] {
-  const out: string[] = [];
-  const re = /"([^"]*)"|'([^']*)'|(\S+)/g;
-  for (let match = re.exec(command); match; match = re.exec(command)) out.push(match[1] ?? match[2] ?? match[3] ?? "");
+export interface ShellWord {
+  text: string;
+  op: boolean;
+}
+
+const OPERATORS = ["2>&1", "2>>", "2>", "&>", "&&", "||", ">>", ";", "|", "&", ">", "<", "(", ")", "\n", "`", "$("];
+
+/** Splits a shell line into words and operators. Quotes are dropped from word text. */
+export function shellWords(command: string): ShellWord[] {
+  const out: ShellWord[] = [];
+  let word = "";
+  let open = false;
+  const flush = () => {
+    if (open) out.push({ text: word, op: false });
+    word = "";
+    open = false;
+  };
+  for (let index = 0; index < command.length; ) {
+    const char = command[index]!;
+    if (char === "'" || char === '"') {
+      const end = command.indexOf(char, index + 1);
+      const stop = end < 0 ? command.length : end;
+      word += command.slice(index + 1, stop);
+      open = true;
+      index = stop + 1;
+      continue;
+    }
+    if (char === "\\" && index + 1 < command.length) {
+      word += command[index + 1];
+      open = true;
+      index += 2;
+      continue;
+    }
+    // `2>` is a redirect only at the start of a word; `a2>b` is not.
+    const op = OPERATORS.find((item) => command.startsWith(item, index) && (!open || item[0] !== "2"));
+    if (op) {
+      flush();
+      out.push({ text: op, op: true });
+      index += op.length;
+      continue;
+    }
+    if (/\s/.test(char)) {
+      flush();
+      index += 1;
+      continue;
+    }
+    word += char;
+    open = true;
+    index += 1;
+  }
+  flush();
   return out;
 }
 
+function expandVars(word: string, home: string): string {
+  return word.replace(/^(?:\$HOME|\$\{HOME\})(?=\/|$)/, home);
+}
+
+// Paths inside a larger word, like `--file=/etc/x` or `open('/Users/me/.ssh/id_rsa')`.
+const EMBEDDED = /(?:^|[=:,(\s'"`])((?:~|\$HOME|\$\{HOME\})?\/[^\s'"`;|&()<>,]+)/g;
+
+/**
+ * The working directory plus every path a shell line names. It follows `cd`, `$HOME`,
+ * bare relative names like `.env`, and paths embedded in quoted code. Variables and
+ * decoded strings are out of reach, so this narrows what a shell can do; it is not a sandbox.
+ */
 export function extractShellPaths(command: string, cwd: string, home = homedir()): string[] {
   const found = [normalise(cwd, cwd, home)];
-  for (const token of tokens(command)) {
-    if (/^(?:\/|~\/|~$|\.\/|\.\.\/)/.test(token)) found.push(normalise(token, cwd, home));
+  let here = normalise(cwd, cwd, home);
+  let first = true;
+  let afterCd = false;
+  for (const { text, op } of shellWords(command)) {
+    if (op) {
+      first = true;
+      afterCd = false;
+      continue;
+    }
+    const word = expandVars(text, home);
+    let path: string | null = null;
+    if (/^(?:\/|~\/|~$|\.\/|\.\.\/|\.\.$)/.test(word)) path = normalise(word, here, home);
+    else if (!first && /^[^-'"`()=$<>|&;\s][^'"`()=$<>|&;\s]*$/.test(word) && !word.includes("://") && (word.startsWith(".") || word.includes("/") || isSecretName(word))) {
+      path = normalise(word, here, home);
+    } else {
+      for (const match of word.matchAll(EMBEDDED)) {
+        const hit = expandVars(match[1]!, home);
+        if (!hit.startsWith("//")) found.push(normalise(hit, here, home));
+      }
+    }
+    if (afterCd && !path && !word.startsWith("-") && !word.includes("$")) path = normalise(word, here, home);
+    if (path) found.push(path);
+    if (afterCd && path) here = path;
+    afterCd = first && word === "cd";
+    first = false;
   }
   return [...new Set(found)];
 }
 
 export function isSensitive(path: string, home = homedir()): boolean {
-  const file = normalise(path, home, home);
-  if (isUnder(file, joinHome(home, ".ssh")) || isUnder(file, joinHome(home, ".aws")) || isUnder(file, joinHome(home, "Library/Keychains"))) {
-    return true;
-  }
-  const base = file.slice(file.lastIndexOf("/") + 1);
-  return base === ".env" || base.startsWith(".env.");
+  return secretKind(normalise(path, home, home), home) !== null;
+}
+
+/** Why a path counts as secret, for the popup and History. */
+export function secretLabel(path: string, home = homedir()): string | null {
+  return secretKind(normalise(path, home, home), home);
 }
 
 function joinHome(home: string, rel: string): string {

@@ -65,7 +65,9 @@ describe("gemini hooks", () => {
       cwd: "/tmp",
     }, "gemini");
     expect(request.kind === "request" && request.request.agent).toBe("gemini");
-    expect(request.kind === "request" && request.request.access).toBe("write");
+    expect(request.kind === "request" && request.request.access).toBe("read");
+    const rm = normaliseHook({ hook_event_name: "BeforeTool", tool_name: "run_shell_command", tool_input: { command: "rm -rf /tmp/x" }, cwd: "/tmp" }, "gemini");
+    expect(rm.kind === "request" && rm.request.access).toBe("write");
     const read = normaliseHook({ tool_name: "read_file", tool_input: { file_path: "/tmp/a.txt" }, cwd: "/tmp" }, "gemini");
     expect(read.kind === "request" && read.request.access).toBe("read");
     expect(JSON.parse(respond("gemini", { kind: "deny", reason: "no" }).stdout)).toEqual({ decision: "deny", reason: "no" });
