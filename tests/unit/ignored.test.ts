@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { insertEvents, openHistoryDb, queryHistory } from "../../src/helper/historyDb";
-import { dropIgnored } from "../../src/helper/historyDb";
+import { appliedIgnoredKey, dropIgnored, ignoredKey } from "../../src/helper/historyDb";
 import { openGrantsDb } from "../../src/shared/db";
 import { addIgnored, deleteIgnored, enabledIgnoredPrefixes, ignoredCategory, listIgnored, matchesIgnored, setIgnoredEnabled } from "../../src/shared/ignored";
 import { eventBucket } from "../../src/shared/noise";
@@ -118,5 +118,32 @@ describe("dropIgnored", () => {
       `${home}/Work/studio/src/index.ts`,
     ]);
     history.close();
+  });
+
+  it("matches renames by destination and handles more prefixes than one statement holds", () => {
+    const history = openHistoryDb(join(mkdtempSync(join(tmpdir(), "al-ignored-hist-")), "history.db"));
+    const row = { ts: 1, agent: "cursor" as const, pid: 1, exe: "cursor", sensitive: false, source: "eslogger" as const };
+    insertEvents(history, [
+      { ...row, kind: "rename", path: `${home}/Work/a.ts`, destPath: "/tmp/first/a.ts" },
+      { ...row, ts: 2, kind: "write", path: "/tmp/p70/x.ts" },
+      { ...row, ts: 3, kind: "write", path: `${home}/Work/keep.ts` },
+    ]);
+    const prefixes = ["/tmp/first", ...Array.from({ length: 70 }, (_, index) => `/tmp/p${index + 1}`)];
+    dropIgnored(history, prefixes);
+    expect(queryHistory(history, { from: null, to: null, agents: [], path: "", kind: "all", sensitive: false, includeNoise: true, offset: 0, limit: 20 }).rows.map((item) => item.path)).toEqual([
+      `${home}/Work/keep.ts`,
+    ]);
+    history.close();
+  });
+
+  it("remembers which ignore list it last applied across restarts", () => {
+    const path = join(mkdtempSync(join(tmpdir(), "al-ignored-hist-")), "history.db");
+    const history = openHistoryDb(path);
+    expect(appliedIgnoredKey(history)).toBe("");
+    dropIgnored(history, ["/.cursor/chats", "/tmp/payload"]);
+    history.close();
+    const reopened = openHistoryDb(path);
+    expect(appliedIgnoredKey(reopened)).toBe(ignoredKey(["/.cursor/chats", "/tmp/payload"]));
+    reopened.close();
   });
 });

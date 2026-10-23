@@ -13,7 +13,7 @@ import { MAIN_RETENTION_DAYS, NOISE_RETENTION_DAYS, retentionDays } from "../sha
 import { capBytes, HARD_CAP_STOP, PRUNE_START, type HistoryStats } from "../shared/storage";
 import type { HistoryEvent } from "../shared/types";
 import { classify } from "./classify";
-import { checkpointHistory, convertAutoVacuum, dropIgnored, historyCounts, historyStorageBytes, historyUsage, insertEvents, openHistoryDb, optimizeHistory, pruneBySize, pruneHistory, purgeHistory, readHistoryStats, resetHistory, splitHistory, writeHistoryStats } from "./historyDb";
+import { appliedIgnoredKey, checkpointHistory, convertAutoVacuum, dropIgnored, historyCounts, historyStorageBytes, historyUsage, ignoredKey, insertEvents, openHistoryDb, optimizeHistory, pruneBySize, pruneHistory, purgeHistory, readHistoryStats, resetHistory, splitHistory, writeHistoryStats } from "./historyDb";
 import { lsofText, pollNet } from "./net";
 import { ProcTree, type EsEvent } from "./proctree";
 import { ContentCache, gitBaseline, readText } from "./snapshots";
@@ -79,13 +79,13 @@ export function startHelper(historyPath: string, eslogger = "/usr/bin/eslogger")
   });
   const home = userHome();
   let ignored = readIgnored(home);
-  let ignoredKey = "";
+  let appliedKey = appliedIgnoredKey(db);
   const applyIgnored = () => {
     ignored = readIgnored(home);
-    const key = ignored.join("\0");
-    if (key === ignoredKey) return;
-    ignoredKey = key;
+    const key = ignoredKey(ignored);
+    if (key === appliedKey) return;
     dropIgnored(db, ignored);
+    appliedKey = key;
   };
   const previous = readHistoryStats(db);
   let stats: HistoryStats = { usedBytes: 0, fileBytes: 0, capBytes: capBytes(""), counts: [], prunedAt: null, prunedRows: 0, hardCap: false, ...previous };
@@ -118,6 +118,7 @@ export function startHelper(historyPath: string, eslogger = "/usr/bin/eslogger")
     const hardCap = pass.hardCap || (stats.hardCap && usedBytes >= cap * HARD_CAP_STOP);
     stats = { ...stats, usedBytes, fileBytes: historyStorageBytes(historyPath), capBytes: cap, hardCap, ...(rows ? { prunedAt: now, prunedRows: rows } : {}) };
     writeHistoryStats(db, stats);
+    db.exec("PRAGMA optimize");
     armed = usedBytes < cap * PRUNE_START;
   };
   splitHistory(db);

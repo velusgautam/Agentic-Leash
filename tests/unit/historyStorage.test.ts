@@ -107,6 +107,38 @@ describe("history WAL", () => {
   });
 });
 
+describe("history tuning", () => {
+  it("syncs normally under WAL and keeps temp tables in memory", () => {
+    const history = openHistoryDb(historyPath());
+    expect(history.prepare("PRAGMA synchronous").get()).toEqual({ synchronous: 1 });
+    expect(history.prepare("PRAGMA temp_store").get()).toEqual({ temp_store: 2 });
+    history.close();
+  });
+
+  it("drops the unused path index from existing databases", () => {
+    const path = historyPath();
+    openHistoryDb(path).close();
+    const legacy = new DatabaseSync(path);
+    legacy.exec("CREATE INDEX events_path ON events (path, ts)");
+    legacy.close();
+    const history = openHistoryDb(path);
+    const indexes = (history.prepare("PRAGMA index_list(events)").all() as { name: string }[]).map((index) => index.name);
+    expect(indexes).not.toContain("events_path");
+    expect(indexes).toContain("events_kind_id");
+    history.close();
+  });
+
+  it("pages a kind filter by id without sorting", () => {
+    const history = openHistoryDb(historyPath());
+    for (const table of ["events", "noise"]) {
+      const plan = (history.prepare(`EXPLAIN QUERY PLAN SELECT id FROM ${table} WHERE kind = 'read' ORDER BY id DESC LIMIT 100`).all() as { detail: string }[]).map((step) => step.detail).join("\n");
+      expect(plan).toContain(`${table}_kind_id`);
+      expect(plan).not.toContain("TEMP B-TREE");
+    }
+    history.close();
+  });
+});
+
 const stats = (percent: number, hardCap = false): HistoryStats => ({ usedBytes: percent, fileBytes: percent, capBytes: 100, counts: [], prunedAt: null, prunedRows: 0, hardCap });
 
 describe("history cap", () => {

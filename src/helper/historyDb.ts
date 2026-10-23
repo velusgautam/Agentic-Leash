@@ -34,13 +34,15 @@ const EVENT_TABLE = `
 const SCHEMA = `
 CREATE TABLE IF NOT EXISTS events (${EVENT_TABLE});
 CREATE UNIQUE INDEX IF NOT EXISTS events_read_collapse ON events (minute_key) WHERE minute_key IS NOT NULL;
-CREATE INDEX IF NOT EXISTS events_path ON events (path, ts);
+DROP INDEX IF EXISTS events_path;
 CREATE INDEX IF NOT EXISTS events_ts ON events (ts);
 CREATE INDEX IF NOT EXISTS events_kind ON events (kind, sensitive, ts);
+CREATE INDEX IF NOT EXISTS events_kind_id ON events (kind);
 CREATE TABLE IF NOT EXISTS noise (${EVENT_TABLE});
 CREATE UNIQUE INDEX IF NOT EXISTS noise_read_collapse ON noise (minute_key) WHERE minute_key IS NOT NULL;
 CREATE INDEX IF NOT EXISTS noise_ts ON noise (ts);
 CREATE INDEX IF NOT EXISTS noise_kind ON noise (kind, sensitive, ts);
+CREATE INDEX IF NOT EXISTS noise_kind_id ON noise (kind);
 CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS blobs (hash TEXT PRIMARY KEY, size INTEGER NOT NULL, data BLOB NOT NULL);
 `;
@@ -56,9 +58,13 @@ export function openHistoryDb(path: string, readOnly = false): DatabaseSync {
   if (!readOnly) mkdirSync(dirname(path), { recursive: true });
   const db = new DatabaseSync(path, { readOnly });
   db.exec("PRAGMA busy_timeout = 5000");
+  db.exec("PRAGMA cache_size = -16000");
+  db.exec("PRAGMA temp_store = MEMORY");
+  if (readOnly) db.exec("PRAGMA mmap_size = 268435456");
   if (!readOnly) {
     db.exec("PRAGMA auto_vacuum = INCREMENTAL");
     db.exec("PRAGMA journal_mode = WAL");
+    db.exec("PRAGMA synchronous = NORMAL");
     db.exec("PRAGMA journal_size_limit = 67108864");
     if (hasTable(db, "blobs") && !hasColumn(db, "blobs", "hash")) db.exec("DROP TABLE blobs");
     db.exec(SCHEMA);
@@ -355,12 +361,33 @@ export function splitHistory(db: DatabaseSync): void {
   }
 }
 
+const IGNORED_CHUNK = 32;
+
+export function ignoredKey(prefixes: readonly string[]): string {
+  return prefixes.join("\0");
+}
+
+export function appliedIgnoredKey(db: DatabaseSync): string {
+  const row = db.prepare("SELECT value FROM meta WHERE key = 'ignored-applied'").get() as { value: string } | undefined;
+  return row?.value ?? "";
+}
+
 export function dropIgnored(db: DatabaseSync, prefixes: readonly string[]): void {
-  if (!prefixes.length) return;
   const tables = ["events", ...(hasTable(db, "noise") ? ["noise"] : [])];
-  for (const prefix of prefixes) {
-    const match = ignoredMatchSql(prefix);
-    for (const table of tables) db.prepare(`DELETE FROM ${table} WHERE ${match.sql}`).run(...match.args);
+  db.exec("BEGIN");
+  try {
+    // One scan per table per chunk; chunks keep the OR chain under SQLite's expression depth limit.
+    for (let start = 0; start < prefixes.length; start += IGNORED_CHUNK) {
+      const matches = prefixes.slice(start, start + IGNORED_CHUNK).map(ignoredMatchSql);
+      const where = matches.map((match) => match.sql).join(" OR ");
+      const args = matches.flatMap((match) => match.args);
+      for (const table of tables) db.prepare(`DELETE FROM ${table} WHERE ${where}`).run(...args);
+    }
+    db.prepare("INSERT OR REPLACE INTO meta (key, value) VALUES ('ignored-applied', ?)").run(ignoredKey(prefixes));
+    db.exec("COMMIT");
+  } catch (error) {
+    db.exec("ROLLBACK");
+    throw error;
   }
 }
 
