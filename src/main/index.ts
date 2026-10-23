@@ -18,6 +18,8 @@ const isMac = process.platform === "darwin";
 if (process.env.AGENTIC_LEASH_USER_DATA) app.setPath("userData", process.env.AGENTIC_LEASH_USER_DATA);
 
 let win: BrowserWindow | null = null;
+// Default matches glass 80. Hide clears vibrancy; show puts this back.
+let glassVibrancy: "sidebar" | null = "sidebar";
 let approval: BrowserWindow | null = null;
 // Module scope on purpose: a garbage-collected Tray vanishes from the menu bar.
 let tray: Tray | null = null;
@@ -172,6 +174,7 @@ function openApproval(): void {
 function showWindow(): void {
   if (!win) return;
   void app.dock?.show();
+  if (isMac) win.setVibrancy(glassVibrancy);
   win.show();
   win.focus();
 }
@@ -194,6 +197,8 @@ function showGrants(): void {
 
 function hideToMenuBar(): void {
   if (!win) return;
+  // Hiding a vibrancy window never returns on the GitHub macOS runner.
+  if (isMac) win.setVibrancy(null);
   win.hide();
   app.dock?.hide();
   const dir = app.getPath("userData");
@@ -220,9 +225,9 @@ function loginItemState(): OpenAtLoginState {
 
 function applyWindowGlass(glass: number): void {
   if (!win || win.isDestroyed() || !isMac || !Number.isFinite(glass)) return;
-  const vibrancy = windowVibrancy(glass);
-  win.setBackgroundColor(vibrancy ? "#00000000" : nativeTheme.shouldUseDarkColors ? "#0a0a0a" : "#ffffff");
-  win.setVibrancy(vibrancy);
+  glassVibrancy = windowVibrancy(glass);
+  win.setBackgroundColor(glassVibrancy ? "#00000000" : nativeTheme.shouldUseDarkColors ? "#0a0a0a" : "#ffffff");
+  win.setVibrancy(glassVibrancy);
 }
 
 ipcMain.handle("appearance:glass", (_event, glass: number) => applyWindowGlass(glass));

@@ -20,6 +20,14 @@ describe("appearance glass", () => {
     expect(css).toMatch(/html,\s*body\s*\{[^}]*background-color:\s*transparent/);
   });
 
+  it("clears vibrancy before hiding and restores it on show", () => {
+    const main = read("../../src/main/index.ts");
+    const hide = main.slice(main.indexOf("function hideToMenuBar"), main.indexOf("const appBundlePath"));
+    expect(hide.indexOf("setVibrancy(null)")).toBeLessThan(hide.indexOf("win.hide()"));
+    const show = main.slice(main.indexOf("function showWindow"), main.indexOf("function showRoute"));
+    expect(show.indexOf("setVibrancy(glassVibrancy)")).toBeLessThan(show.indexOf("win.show()"));
+  });
+
   it("paints menus and dialogs with the glass utilities", () => {
     expect(read("../../src/renderer/src/components/ConfirmAction.tsx")).toContain("dialog-glass");
     expect(read("../../src/renderer/src/components/WelcomeDialog.tsx")).toContain("dialog-glass");
