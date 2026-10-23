@@ -18,6 +18,7 @@ import { cursorWatchPaths, cursorWorkers, loadCursor } from "./agents/cursor";
 import { mirrorConfigGrants } from "./agents/mirror";
 import { loadCodex, loadGemini, loadHermes, loadT3 } from "./agents/others";
 import { Broker } from "./broker";
+import type { TrayStatus } from "./menus";
 import { claudeHooksInstalled, codexHooksInstalled, cursorHooksInstalled, geminiHooksInstalled, mergeClaudeHooks, mergeCodexHooks, mergeCursorHooks, mergeGeminiHooks, removeClaudeHooks, removeCodexHooks, removeCursorHooks, removeGeminiHooks } from "./hookInstall";
 import { readJson } from "./agents/fs";
 import { hermesHooksInstalled, hermesScript, mergeHermesConfig, removeHermesConfig } from "./hermesHooks";
@@ -118,7 +119,7 @@ const broadcast = (channel: string, payload?: unknown) => {
   for (const window of BrowserWindow.getAllWindows()) if (!window.webContents.isDestroyed()) window.webContents.send(channel, payload);
 };
 
-export function startRuntime(options: { userData: string; openApproval: () => void; closeApproval: () => void; setPending: (count: number) => void; notify: (title: string, body: string) => void; finishUninstall: () => void; disableLoginItem: () => void; onStatus?: (status: { count: number; lockdown: boolean }) => void; notifyPending?: (item: PendingRequest, decide: (decision: "allow" | "deny") => void) => (() => void) | void }): { revokeAll: () => { revoked: number }; unlock: () => void; onLock: () => void } {
+export function startRuntime(options: { userData: string; openApproval: () => void; closeApproval: () => void; setPending: (count: number) => void; notify: (title: string, body: string) => void; finishUninstall: () => void; disableLoginItem: () => void; onStatus?: (status: { count: number; lockdown: boolean }) => void; onAlert?: () => void; notifyPending?: (item: PendingRequest, decide: (decision: "allow" | "deny") => void) => (() => void) | void }): { revokeAll: () => { revoked: number }; unlock: () => void; onLock: () => void; trayStatus: () => TrayStatus; endGrant: (id: number) => void; endTemporary: (agent?: string) => void } {
   const db = openGrantsDb(grantsDbPath());
   collapseGrantDupes(db);
   const home = homeDir();
@@ -241,6 +242,7 @@ export function startRuntime(options: { userData: string; openApproval: () => vo
 
   let lastStatsSig = "";
   const notifiedPaths = new Map<string, number>();
+  let lastAlert: TrayStatus["alert"] = null;
   const pollHistory = () => {
     if (uninstalling || historyPaused) return;
     try {
@@ -259,6 +261,10 @@ export function startRuntime(options: { userData: string; openApproval: () => vo
       const now = Date.now();
       for (const row of rows) {
         if (!row.sensitive || row.id <= historySeen) continue;
+        if (!lastAlert || row.ts > lastAlert.ts) {
+          lastAlert = { agent: row.agent, path: row.path, verb: row.kind === "read" ? "read" : "changed", ts: row.ts };
+          options.onAlert?.();
+        }
         // npm reading ~/.npmrc on every run should not ping every time.
         const key = `${row.agent}\0${row.path}`;
         if ((notifiedPaths.get(key) ?? 0) > now - SENSITIVE_NOTIFY_MS) continue;
@@ -328,13 +334,33 @@ export function startRuntime(options: { userData: string; openApproval: () => vo
   ipcMain.handle("agents:list", () => snapshots);
   ipcMain.handle("grants:list", () => listGrants(db));
   ipcMain.handle("grants:status", () => grantStatus());
-  ipcMain.handle("grants:revoke", (_event, id: number) => {
+  const endGrant = (id: number) => {
     const grant = listGrants(db).find((item) => item.id === id);
     if (grant) revokeStoredGrant(home, grant);
     deleteGrant(db, id);
     rescan();
     publishStatus();
-  });
+  };
+  ipcMain.handle("grants:revoke", (_event, id: number) => endGrant(id));
+  // The softer step before lockdown: timed and session grants end, Always and Always in repo stay.
+  const endTemporary = (agent?: string) => {
+    const ended = listGrants(db).filter((grant) => grant.source === "leash" && grant.expiresAt !== null && (!agent || grant.agent === agent));
+    for (const grant of ended) deleteGrant(db, grant.id);
+    if (!ended.length) return;
+    publishClaudeRules(db, join(claudeRoot(), "settings.json"), home, snapshots.find((snapshot) => snapshot.id === "claude-code")?.enforcement === "rules");
+    publishStatus();
+  };
+  const trayStatus = (): TrayStatus => {
+    const now = Date.now();
+    const live = listGrants(db).filter((grant) => grant.source === "leash" && (grant.expiresAt === null || grant.expiresAt > now));
+    const midnight = new Date(now).setHours(0, 0, 0, 0);
+    const today = buildInsights({ decisions: decisionsSince(db, midnight), grants: [], alerts: [], now, days: 1, home });
+    return {
+      grants: live.map((grant) => ({ id: grant.id, agent: grant.agent, label: grant.command ?? grant.path, expiresAt: grant.expiresAt, session: Boolean(grant.idleSeconds) })),
+      alert: lastAlert,
+      today: { prompts: today.promptsToday, auto: today.days[0]?.auto ?? 0, blocked: today.blocked },
+    };
+  };
   ipcMain.handle("grants:revoke-all", () => revokeAll());
   ipcMain.handle("grants:create", (_event, input: { agent: AgentId | "*"; path: string; access: Access; ttlSeconds: number | null }) => {
     // A manual grant gets the same limits as the popup: secrets and personal folders are time-boxed.
@@ -944,7 +970,7 @@ export function startRuntime(options: { userData: string; openApproval: () => vo
   void ensureSweepAgent();
   nativeTheme.themeSource = readUiState(options.userData).theme ?? "system";
   publishStatus();
-  return { revokeAll, unlock, onLock };
+  return { revokeAll, unlock, onLock, trayStatus, endGrant, endTemporary };
 }
 
 export function leashDataDir(): string {

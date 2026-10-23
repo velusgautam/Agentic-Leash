@@ -29,6 +29,7 @@ A folder grant covered every file under it, including `.env` and keys. A forever
 - History stores secret files redacted (`KEY=•••• 3f2a`, private keys collapsed). Startup-file writes are flagged like secrets. Notifications for the same agent and path are throttled to one per 10 minutes.
 - Decisions record session id, secret, and whether a person was asked. `duration_ms` is now real (it was always 0). Diagnostics latency excludes time spent waiting on a person.
 - Insights (`/insights`): prompts per day, share allowed without asking, median wait, blocked and secret counts, per-agent counts and top folders, grants with no recorded use (30 min) or forever grants idle for 14 days, and recent secret and startup activity.
+- The menu-bar menu is built each time it opens: waiting requests, each agent's live grants with time left and End, the latest secret or startup touch, today's counts, End all temporary access (keeps Always and Always in repo), Lockdown, and Open Insights. The title beside the icon shows 🔒 for lockdown, ⚠ for 2 minutes after a secret or startup touch, and the waiting count. On Windows and Linux the menu is on right-click.
 
 ## Out of scope
 

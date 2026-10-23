@@ -6,7 +6,7 @@ import type { OpenAtLoginState } from "../shared/bridge";
 import { buildKind } from "../shared/appInfo";
 import type { AppInfo } from "../shared/types";
 import { isOpenAtLogin, setOpenAtLogin } from "./loginItem";
-import { appMenuTemplate, trayMenuTemplate } from "./menus";
+import { appMenuTemplate, trayMenuTemplate, trayTitle, type TrayStatus } from "./menus";
 import { pendingNotice } from "../shared/pendingNotice";
 import { allowText } from "../shared/presets";
 import { startRuntime } from "./runtime";
@@ -29,6 +29,12 @@ const pendingNotes = new Map<string, Notification>();
 let revokeAll = (): { revoked: number } => ({ revoked: 0 });
 let onLock = (): void => undefined;
 let unlock = (): void => undefined;
+let trayStatus = (): TrayStatus | undefined => undefined;
+let endGrant = (_id: number): void => undefined;
+let endTemporary = (_agent?: string): void => undefined;
+// The menu-bar title shows ⚠ for a while after a secret or startup file is touched.
+const ALERT_BADGE_MS = 2 * 60 * 1000;
+let alertUntil = 0;
 
 function createWindow(visible: boolean): BrowserWindow {
   const window = new BrowserWindow({
@@ -58,20 +64,27 @@ function loadRenderer(window: BrowserWindow, hash = ""): void {
 
 function refreshTray(): void {
   if (!tray) return;
-  tray.setTitle(lockdown ? (pendingCount ? `🔒 ${pendingCount}` : "🔒") : pendingCount ? String(pendingCount) : "");
-  tray.setToolTip(lockdown ? "Agentic Leash — lockdown on" : "Agentic Leash");
-  tray.setContextMenu(
-    Menu.buildFromTemplate(
-      trayMenuTemplate({
-        open: showWindow,
-        quit: () => app.quit(),
-        pending: pendingCount,
-        review: showGrants,
-        revokeAll: () => void confirmRevokeAll(),
-        lockdown,
-        unlock,
-      }),
-    ),
+  const alert = Date.now() < alertUntil;
+  tray.setTitle(trayTitle({ lockdown, pending: pendingCount, alert }));
+  tray.setToolTip(lockdown ? "Agentic Leash — lockdown on" : alert ? "Agentic Leash — a secret or startup file was just touched" : "Agentic Leash");
+}
+
+// Built when opened, so grant times and today's counts are current.
+function trayMenu(): Menu {
+  return Menu.buildFromTemplate(
+    trayMenuTemplate({
+      open: showWindow,
+      quit: () => app.quit(),
+      pending: pendingCount,
+      review: pendingCount ? openApproval : showGrants,
+      revokeAll: () => void confirmRevokeAll(),
+      lockdown,
+      unlock,
+      status: trayStatus(),
+      endGrant,
+      endTemporary,
+      openRoute: showRoute,
+    }),
   );
 }
 
@@ -154,9 +167,9 @@ function showWindow(): void {
   win.focus();
 }
 
-function showGrants(): void {
+function showRoute(route: string): void {
   showWindow();
-  pendingNav = "/grants";
+  pendingNav = route;
   if (!win || win.isDestroyed()) return;
   const send = () => {
     if (!win || win.isDestroyed()) return;
@@ -164,6 +177,10 @@ function showGrants(): void {
   };
   if (win.webContents.isLoading()) win.webContents.once("did-finish-load", send);
   else send();
+}
+
+function showGrants(): void {
+  showRoute("/grants");
 }
 
 function hideToMenuBar(): void {
@@ -257,14 +274,21 @@ if (!app.requestSingleInstanceLock()) {
     if (!app.isPackaged) app.dock?.setIcon(appIcon);
     tray = new Tray(isMac ? trayIcon : nativeImage.createFromPath(appIcon).resize({ width: 16, height: 16 }));
     tray.setToolTip("Agentic Leash");
-    if (!isMac) tray.on("click", showWindow);
-    ({ revokeAll, unlock, onLock } = startRuntime({
+    // macOS opens the menu on click; Windows and Linux open the window and keep the menu on right-click.
+    tray.on("click", () => (isMac ? tray?.popUpContextMenu(trayMenu()) : showWindow()));
+    tray.on("right-click", () => tray?.popUpContextMenu(trayMenu()));
+    ({ revokeAll, unlock, onLock, trayStatus, endGrant, endTemporary } = startRuntime({
       userData: app.getPath("userData"),
       openApproval,
       closeApproval,
       setPending: (count) => {
         pendingCount = count;
         refreshTray();
+      },
+      onAlert: () => {
+        alertUntil = Date.now() + ALERT_BADGE_MS;
+        refreshTray();
+        setTimeout(refreshTray, ALERT_BADGE_MS + 100);
       },
       onStatus: (status) => {
         lockdown = status.lockdown;

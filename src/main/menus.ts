@@ -1,4 +1,5 @@
 import type { MenuItemConstructorOptions } from "electron";
+import { agentLabel } from "../shared/pendingNotice";
 
 export function appMenuTemplate({ hide, dev }: { hide: () => void; dev: boolean }): MenuItemConstructorOptions[] {
   return [
@@ -16,6 +17,42 @@ export function appMenuTemplate({ hide, dev }: { hide: () => void; dev: boolean 
   ];
 }
 
+export interface TrayGrant {
+  id: number;
+  agent: string;
+  label: string;
+  expiresAt: number | null;
+  session: boolean;
+}
+
+export interface TrayStatus {
+  grants: TrayGrant[];
+  /** The latest secret or startup-file touch, if any. */
+  alert: { agent: string; path: string; verb: string; ts: number } | null;
+  today: { prompts: number; auto: number; blocked: number };
+}
+
+const tilde = (path: string) => path.replace(/^\/(Users|home)\/[^/]+/, "~");
+
+function ago(ts: number, now: number): string {
+  const minutes = Math.round((now - ts) / 60_000);
+  if (minutes < 1) return "just now";
+  if (minutes < 60) return `${minutes} min ago`;
+  return `${Math.round(minutes / 60)} h ago`;
+}
+
+function left(grant: TrayGrant, now: number): string {
+  if (grant.expiresAt === null) return "always";
+  const minutes = Math.max(1, Math.round((grant.expiresAt - now) / 60_000));
+  const time = minutes >= 60 ? `${Math.floor(minutes / 60)} h ${minutes % 60} min` : `${minutes} min`;
+  return grant.session ? `this session, ${time} until idle` : `${time} left`;
+}
+
+/** Text beside the menu-bar icon: lockdown, a recent secret touch, and how many requests wait. */
+export function trayTitle({ lockdown, pending, alert }: { lockdown: boolean; pending: number; alert: boolean }): string {
+  return [lockdown ? "🔒" : "", alert ? "⚠" : "", pending ? String(pending) : ""].filter(Boolean).join(" ");
+}
+
 export function trayMenuTemplate({
   open,
   quit,
@@ -24,6 +61,11 @@ export function trayMenuTemplate({
   review,
   lockdown = false,
   unlock,
+  status,
+  now = Date.now(),
+  endGrant,
+  endTemporary,
+  openRoute,
 }: {
   open: () => void;
   quit: () => void;
@@ -32,12 +74,48 @@ export function trayMenuTemplate({
   review: () => void;
   lockdown?: boolean;
   unlock?: () => void;
+  status?: TrayStatus;
+  now?: number;
+  endGrant?: (id: number) => void;
+  /** Ends timed and session grants, for one agent or all. Always and Always in repo stay. */
+  endTemporary?: (agent?: string) => void;
+  openRoute?: (route: string) => void;
 }): MenuItemConstructorOptions[] {
+  const agents = [...new Set(status?.grants.map((grant) => grant.agent) ?? [])];
+  const temporary = status?.grants.filter((grant) => grant.expiresAt !== null).length ?? 0;
+  const grantItems: MenuItemConstructorOptions[] = agents.map((agent) => {
+    const grants = status!.grants.filter((grant) => grant.agent === agent);
+    const timed = grants.filter((grant) => grant.expiresAt !== null).length;
+    return {
+      id: `agent-${agent}`,
+      label: `${agentLabel(agent)} · ${grants.length} active ${grants.length === 1 ? "grant" : "grants"}`,
+      submenu: [
+        ...grants.map((grant): MenuItemConstructorOptions => ({ id: `grant-${grant.id}`, label: `End ${tilde(grant.label)} (${left(grant, now)})`, click: () => endGrant?.(grant.id) })),
+        { type: "separator" },
+        { id: `end-agent-${agent}`, label: `End temporary access for ${agentLabel(agent)}`, enabled: timed > 0, click: () => endTemporary?.(agent) },
+      ],
+    };
+  });
+  const alert = status?.alert;
+  const today = status?.today;
   return [
     ...(lockdown ? [{ id: "lockdown", label: "Lockdown is on", enabled: false }, { id: "end-lockdown", label: "End lockdown", click: unlock }, { type: "separator" } as const] : []),
+    { id: "pending", label: pending ? `${pending} ${pending === 1 ? "request" : "requests"} waiting` : "No requests waiting", enabled: pending > 0, click: review },
+    ...(status
+      ? [
+          { type: "separator" } as const,
+          ...(grantItems.length ? grantItems : [{ id: "no-grants", label: "No active grants", enabled: false }]),
+          { type: "separator" } as const,
+          ...(alert ? [{ id: "alert", label: `⚠ ${agentLabel(alert.agent)} ${alert.verb} ${tilde(alert.path)} · ${ago(alert.ts, now)}`, click: () => openRoute?.("/history") }] : []),
+          ...(today ? [{ id: "today", label: `Today: ${today.prompts} prompts · ${today.auto} allowed · ${today.blocked} blocked`, enabled: false }] : []),
+          { type: "separator" } as const,
+          { id: "end-temporary", label: "End all temporary access", toolTip: "Keeps Always and Always in repo", enabled: temporary > 0, click: () => endTemporary?.() },
+        ]
+      : []),
+    { id: "revoke-all", label: "Lockdown (revoke everything)", click: revokeAll },
+    { type: "separator" },
+    ...(openRoute ? [{ id: "insights", label: "Open Insights…", click: () => openRoute("/insights") }] : []),
     { id: "open", label: "Open Agentic Leash", click: open },
-    { id: "pending", label: pending ? `Pending requests (${pending})` : "Pending requests", enabled: pending > 0, click: review },
-    { id: "revoke-all", label: "Revoke all", click: revokeAll },
     { type: "separator" },
     { id: "quit", label: "Quit Agentic Leash", click: quit },
   ];
