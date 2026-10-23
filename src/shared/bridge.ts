@@ -2,6 +2,7 @@ import type { ApprovalStyle } from "./approvalStyle";
 import type { AutoAllow } from "./autoAllow";
 import type { IgnoredRow } from "./ignored";
 import type { SetupStatus } from "./setup";
+import type { CleanupMode, HistoryStats, StorageWarning } from "./storage";
 import type { Access, AgentId, AppInfo, AgentSnapshot, AllowRule, DecisionRow, Diagnostics, Grant, HistoryRow, HistorySummary, PendingRequest, RuleSuggestion, ScheduledRevoke, ThemeSource } from "./types";
 
 export interface OpenAtLoginState {
@@ -9,16 +10,17 @@ export interface OpenAtLoginState {
   available: boolean;
 }
 
-export interface HistoryOptimizationInfo {
-  available: boolean;
-  sizeBytes: number;
-  requiredBytes: number;
+export interface HistoryStorageInfo {
+  stats: HistoryStats | null;
+  files: { label: string; path: string; bytes: number }[];
   freeBytes: number;
+  requiredBytes: number;
 }
 
-export interface HistoryOptimizationResult {
+export interface HistoryCleanupResult {
   beforeBytes: number;
   afterBytes: number;
+  deleted: number | null;
 }
 
 export interface LeashBridge {
@@ -52,8 +54,12 @@ export interface LeashBridge {
   queryHistory(filter: { from: number | null; to: number | null; agents: string[]; path: string; kind: string; sensitive: boolean; includeNoise?: boolean; offset: number; limit: number }): Promise<{ rows: HistoryRow[]; total: number }>;
   historyRetention(): Promise<{ main: number; noise: number }>;
   setHistoryRetention(which: "main" | "noise", days: number): Promise<{ main: number; noise: number }>;
-  historyOptimizationInfo(): Promise<HistoryOptimizationInfo>;
-  optimizeHistory(): Promise<HistoryOptimizationResult>;
+  historyCap(): Promise<{ gb: number }>;
+  setHistoryCap(gb: number): Promise<{ gb: number }>;
+  historyStorage(): Promise<HistoryStorageInfo>;
+  purgeHistory(mode: CleanupMode, days?: number): Promise<HistoryCleanupResult>;
+  storageWarning(): Promise<{ warning: StorageWarning | null; capBytes: number }>;
+  dismissStorageWarning(step: number): Promise<void>;
   listIgnored(): Promise<IgnoredRow[]>;
   setIgnored(id: number, enabled: boolean): Promise<IgnoredRow[]>;
   addIgnored(prefix: string): Promise<{ rows: IgnoredRow[]; added: boolean }>;
@@ -77,6 +83,7 @@ export interface LeashBridge {
   onHistory(listener: (rows: HistoryRow[]) => void): () => void;
   onPending(listener: (pending: PendingRequest[]) => void): () => void;
   onAgents(listener: () => void): () => void;
+  onStorage(listener: () => void): () => void;
   onGrantStatus(listener: (status: { count: number; lockdown: boolean }) => void): () => void;
   resetTcc(service: string, bundleId: string): Promise<void>;
   removeMcp(agent: AgentId, name: string): Promise<void>;

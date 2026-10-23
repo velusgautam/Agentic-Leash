@@ -1,9 +1,11 @@
 import { execFileSync } from "node:child_process";
 import { readFileSync, realpathSync, statSync } from "node:fs";
 import { dirname, relative } from "node:path";
+import { isNoise } from "../shared/noise";
 import type { HistoryEvent } from "../shared/types";
 
 const MAX_BYTES = 1_000_000;
+const MAX_PATHS = 2_000;
 
 export function readText(file: string): string | null {
   try {
@@ -34,15 +36,22 @@ export class ContentCache {
 
   constructor(private readonly io: { readText: (file: string) => string | null; gitShow: (file: string) => string | null; granted: (file: string) => boolean }) {}
 
+  private remember(path: string, text: string): void {
+    this.cached.delete(path);
+    this.cached.set(path, text);
+    if (this.cached.size > MAX_PATHS) this.cached.delete(this.cached.keys().next().value!);
+  }
+
   observe(event: HistoryEvent): HistoryEvent {
+    if (isNoise(event.path)) return event;
     if (event.kind === "read" && this.io.granted(event.path) && !this.cached.has(event.path)) {
       const text = this.io.readText(event.path);
-      if (text != null) this.cached.set(event.path, text);
+      if (text != null) this.remember(event.path, text);
     }
     if (event.kind !== "write") return event;
     const before = this.cached.get(event.path) ?? this.io.gitShow(event.path) ?? undefined;
     const after = this.io.readText(event.path) ?? undefined;
-    if (after != null) this.cached.set(event.path, after);
+    if (after != null) this.remember(event.path, after);
     return { ...event, beforeBlob: before, afterBlob: after };
   }
 }

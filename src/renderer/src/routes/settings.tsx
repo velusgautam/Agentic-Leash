@@ -1,9 +1,9 @@
-import { useEffect, useState, type CSSProperties } from "react";
-import { useParams } from "@tanstack/react-router";
-import { Monitor, Moon, Sun } from "lucide-react";
+import { Fragment, useEffect, useState, type CSSProperties } from "react";
+import { useLocation, useParams } from "@tanstack/react-router";
+import { Database, Monitor, Moon, Sun } from "lucide-react";
 import licenses from "../../../../THIRD_PARTY_LICENSES.md?raw";
 import type { IgnoredRow } from "../../../shared/ignored";
-import type { HistoryOptimizationInfo, HistoryOptimizationResult, OpenAtLoginState } from "../../../shared/bridge";
+import type { HistoryCleanupResult, HistoryStorageInfo, OpenAtLoginState } from "../../../shared/bridge";
 import type { ApprovalStyle } from "../../../shared/approvalStyle";
 import type { AgentId, Diagnostics, ThemeSource } from "../../../shared/types";
 import { ConfirmAction } from "~/components/ConfirmAction";
@@ -21,6 +21,7 @@ import { aboutText, BUILD_LABELS, runtimeLine } from "../../../shared/appInfo";
 import { cn } from "~/lib/utils";
 import { SETTINGS_SECTIONS } from "~/nav";
 import { parseRetentionDays } from "../../../shared/retention";
+import { CLEANUP_MODES, formatBytes, formatCap, parseCapGb, type CleanupMode, type HistoryStats } from "../../../shared/storage";
 import { DEFAULT_APPEARANCE, readAppearance, saveAppearance, type AppearancePrefs } from "../appearance";
 
 function General() {
@@ -101,9 +102,10 @@ function General() {
 
 const UNINSTALL_EFFECTS = [
   "Removes this app's hooks from Claude, Cursor, Codex, Gemini, and Hermes.",
+  "Deletes the backup (.bak) files next to those agent configs.",
   "Removes the login item and the sweep agent.",
-  "In the installed app, removes the history helper. macOS asks for your password.",
-  "Deletes grants and settings for this app.",
+  "In the installed app, removes the history helper with its history database and log. macOS asks for your password.",
+  "Deletes grants, settings, caches, logs, and preferences for this app.",
   "In the installed app, moves Agentic Leash to the Trash and quits.",
 ];
 
@@ -170,11 +172,11 @@ function Agents() {
   );
 }
 
-function DayField({ label, value, onCommit }: { label: string; value: number; onCommit: (days: number) => void }) {
+function DayField({ label, value, onCommit, parse = parseRetentionDays }: { label: string; value: number; onCommit: (days: number) => void; parse?: (text: string) => number | null }) {
   const [text, setText] = useState(String(value));
   useEffect(() => setText(String(value)), [value]);
   const commit = () => {
-    const days = parseRetentionDays(text.trim());
+    const days = parse(text.trim());
     if (days === null) {
       setText(String(value));
       return;
@@ -257,62 +259,202 @@ function IgnoredNoises() {
 
 function Monitoring() {
   const [days, setDays] = useState<{ main: number; noise: number } | null>(null);
-  const [optimization, setOptimization] = useState<HistoryOptimizationInfo | null>(null);
-  const [optimized, setOptimized] = useState<HistoryOptimizationResult | null>(null);
-  const [optimizationError, setOptimizationError] = useState<string | null>(null);
-  const [optimizing, setOptimizing] = useState(false);
   useEffect(() => {
     void window.leash.historyRetention().then(setDays);
-    void window.leash.historyOptimizationInfo().then(setOptimization);
   }, []);
   const save = (which: "main" | "noise", value: number) => {
     void window.leash.setHistoryRetention(which, value).then(setDays);
   };
-  const optimize = () => {
-    setOptimizing(true);
-    setOptimized(null);
-    setOptimizationError(null);
-    void window.leash.optimizeHistory().then((result) => {
-      setOptimized(result);
-      return window.leash.historyOptimizationInfo();
-    }).then(setOptimization).catch((caught: unknown) => {
-      setOptimizationError(caught instanceof Error ? caught.message : "History optimization stopped.");
-    }).finally(() => setOptimizing(false));
-  };
-  const formatBytes = (bytes: number) => {
-    if (bytes < 1024) return `${bytes} B`;
-    const units = ["KB", "MB", "GB", "TB"];
-    const unit = Math.min(Math.floor(Math.log(bytes) / Math.log(1024)) - 1, units.length - 1);
-    return `${(bytes / 1024 ** (unit + 1)).toFixed(unit > 0 ? 1 : 0)} ${units[unit]}`;
-  };
-  const optimizationDescription = optimizationError
-    ?? (optimized ? `Reduced history from ${formatBytes(optimized.beforeBytes)} to ${formatBytes(optimized.afterBytes)}.`
-      : optimization?.available ? `History database is ${formatBytes(optimization.sizeBytes)}. Optimization needs up to ${formatBytes(optimization.requiredBytes)} free; ${formatBytes(optimization.freeBytes)} is available.`
-        : "No history database yet.");
   const { status } = useSetup();
   const skipped = status?.helper === "skipped";
   return (
-    <SettingsSection title="Helper">
+    <>
+      <SettingsSection title="Helper">
+        <SettingsRow
+          title="File history helper"
+          description={skipped ? "Available in the installed app." : "Installs a root LaunchDaemon that runs eslogger. macOS will ask for an administrator password."}
+          control={skipped ? <Button size="sm" disabled>Available in the installed app</Button> : <SetupButton kind="helper" actionKey="helper" done={status?.helper === "running"} onClick={() => window.leash.installHelper()} />}
+        />
+        <SettingsRow title="Full Disk Access" description="If Agentic Leash is missing from the list, click + and add Agentic Leash.app." control={<FullDiskControl />} />
+        <SettingsRow title="Main history" description="Days to keep project files, network, and sensitive paths. From 5 to 365." control={days ? <DayField label="Main history days" value={days.main} onCommit={(value) => save("main", value)} /> : null} />
+        <SettingsRow title="Noise history" description="Days to keep scratch-path writes and temporary reads. From 5 to 365." control={days ? <DayField label="Noise history days" value={days.noise} onCommit={(value) => save("noise", value)} /> : null} />
+      </SettingsSection>
+      <Storage />
+    </>
+  );
+}
+
+const GB = 1024 ** 3;
+
+const BREAKDOWN: [string, (row: HistoryStats["counts"][number]) => boolean][] = [
+  ["Scratch reads", (row) => !row.sensitive && row.table === "noise" && row.kind === "read"],
+  ["Project reads", (row) => !row.sensitive && row.table === "events" && row.kind === "read"],
+  ["Sensitive", (row) => row.sensitive],
+  ["Writes and other changes", (row) => !row.sensitive && !["read", "net", "exec"].includes(row.kind)],
+  ["Network", (row) => !row.sensitive && row.kind === "net"],
+  ["Exec", (row) => !row.sensitive && row.kind === "exec"],
+];
+
+const CLEANUP: Record<CleanupMode, { label: string; effects: (days: number) => string[] }> = {
+  compact: { label: "Compact history", effects: () => ["Removes existing process execution rows.", "Removes duplicate snapshot storage.", "Keeps file changes, network activity, and tool decisions."] },
+  reads: { label: "Remove reads", effects: () => ["Deletes every read except reads of sensitive files.", "Keeps file changes, network activity, and tool decisions.", "Rebuilds the history file to free the space."] },
+  noise: { label: "Remove noise and exec", effects: () => ["Deletes everything recorded under scratch paths such as /tmp, logs, and caches.", "Deletes every process execution row.", "Rebuilds the history file to free the space."] },
+  older: { label: "Remove older than…", effects: (days) => [`Deletes everything older than ${days} days, including sensitive files.`, "Rebuilds the history file to free the space."] },
+  all: { label: "Delete all history", effects: () => ["Deletes the history database and starts an empty one.", "Removes every file change, read, network event, and sensitive path record.", "This can't be undone."] },
+};
+
+const totalClass = "font-medium text-foreground";
+
+function SizeList({ title, rows }: { title: string; rows: { label: string; value: string; hint?: string; total?: boolean }[] }) {
+  return (
+    <div className="px-3 py-3 sm:px-4">
+      <h3 className="mb-2 text-sm font-medium text-foreground">{title}</h3>
+      <dl className="grid grid-cols-[minmax(0,1fr)_auto] gap-x-6 gap-y-1 text-xs text-muted-foreground/80">
+        {rows.map((row) => (
+          <Fragment key={row.label}>
+            {row.total ? <div className="col-span-2 mt-1 border-t border-border/50" /> : null}
+            <dt className={cn("truncate", row.total && totalClass)} title={row.hint}>{row.label}</dt>
+            <dd className={cn("text-right font-mono tabular-nums", row.total && totalClass)}>{row.value}</dd>
+          </Fragment>
+        ))}
+      </dl>
+    </div>
+  );
+}
+
+function Storage() {
+  const [info, setInfo] = useState<HistoryStorageInfo | null>(null);
+  const [cap, setCap] = useState<number | null>(null);
+  const [pendingCap, setPendingCap] = useState<number | null>(null);
+  const [capField, setCapField] = useState(0);
+  const [mode, setMode] = useState<CleanupMode>("compact");
+  const [olderDays, setOlderDays] = useState(30);
+  const [result, setResult] = useState<HistoryCleanupResult | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [running, setRunning] = useState(false);
+  const { hash, key } = useLocation({ select: (location) => ({ hash: location.hash, key: location.state.__TSR_key }) });
+  const ready = info !== null && cap !== null;
+  useEffect(() => {
+    if (ready && hash === "storage") document.getElementById("storage")?.scrollIntoView({ block: "start" });
+  }, [ready, hash, key]);
+  useEffect(() => {
+    let live = true;
+    let latest = 0;
+    const load = () => {
+      const request = ++latest;
+      void Promise.all([window.leash.historyStorage(), window.leash.historyCap()]).then(([next, value]) => {
+        if (!live || request !== latest) return;
+        setInfo(next);
+        setCap(value.gb);
+      }).catch(() => {});
+    };
+    load();
+    const off = window.leash.onStorage(load);
+    return () => {
+      live = false;
+      off();
+    };
+  }, []);
+  const stats = info?.stats ?? null;
+  const used = stats?.usedBytes ?? 0;
+  const saveCap = (gb: number) => void window.leash.setHistoryCap(gb).then((value) => setCap(value.gb));
+  const commitCap = (gb: number) => {
+    if (gb * GB < used * 2) setPendingCap(gb);
+    else saveCap(gb);
+  };
+  const run = () => {
+    setRunning(true);
+    setResult(null);
+    setError(null);
+    void window.leash.purgeHistory(mode, mode === "older" ? olderDays : undefined).then((value) => {
+      setResult(value);
+      return window.leash.historyStorage();
+    }).then(setInfo).catch((caught: unknown) => {
+      setError(caught instanceof Error ? caught.message : "History cleanup stopped.");
+    }).finally(() => setRunning(false));
+  };
+  const historyBytes = info?.files[0]?.bytes ?? 0;
+  const capB = (cap ?? 0) * GB || stats?.capBytes || 0;
+  const percent = capB ? Math.floor((used * 100) / capB) : 0;
+  const capText = formatCap(capB);
+  const usage = !stats
+    ? "No usage recorded yet. The history helper records it every minute."
+    : stats.hardCap
+      ? `${formatBytes(used)} used of ${capText}. At the limit: the oldest history, including sensitive files, is being deleted.`
+      : `${formatBytes(used)} used of ${capText}`;
+  const cleanupDescription = error
+    ?? (result ? `Reduced history from ${formatBytes(result.beforeBytes)} to ${formatBytes(result.afterBytes)}.${result.deleted === null ? "" : ` Removed ${result.deleted.toLocaleString()} ${result.deleted === 1 ? "row" : "rows"}.`}`
+      : historyBytes ? `History database is ${formatBytes(historyBytes)}. Cleanup needs up to ${formatBytes(info!.requiredBytes)} free; ${formatBytes(info!.freeBytes)} is available.`
+        : "No history database yet.");
+  const lowSpace = mode !== "all" && (info?.freeBytes ?? 0) < (info?.requiredBytes ?? 0);
+  return (
+    <SettingsSection title="Storage" id="storage">
       <SettingsRow
-        title="File history helper"
-        description={skipped ? "Available in the installed app." : "Installs a root LaunchDaemon that runs eslogger. macOS will ask for an administrator password."}
-        control={skipped ? <Button size="sm" disabled>Available in the installed app</Button> : <SetupButton kind="helper" actionKey="helper" done={status?.helper === "running"} onClick={() => window.leash.installHelper()} />}
-      />
-      <SettingsRow title="Full Disk Access" description="If Agentic Leash is missing from the list, click + and add Agentic Leash.app." control={<FullDiskControl />} />
-      <SettingsRow title="Main history" description="Days to keep project files, network, and sensitive paths. From 5 to 365." control={days ? <DayField label="Main history days" value={days.main} onCommit={(value) => save("main", value)} /> : null} />
-      <SettingsRow title="Noise history" description="Days to keep scratch-path writes and temporary reads. From 5 to 365." control={days ? <DayField label="Noise history days" value={days.noise} onCommit={(value) => save("noise", value)} /> : null} />
-      <SettingsRow
-        title="Optimize history"
-        description={<span aria-live="polite">{optimizationDescription}</span>}
+        title="History size limit"
+        description="Automatic cleanup starts at half this size. Default 10 GB."
         control={
-          <ConfirmAction
-            trigger={<Button size="sm" variant="outline" disabled={optimizing || !optimization?.available || optimization.freeBytes < optimization.requiredBytes}>{optimizing ? "Optimizing…" : "Optimize history"}</Button>}
-            title="Optimize history?"
-            description="Agent monitoring pauses while History is rebuilt."
-            effects={["Removes existing process execution rows.", "Removes duplicate snapshot storage.", "Keeps file changes, network activity, and tool decisions."]}
-            confirmLabel="Optimize"
-            onConfirm={optimize}
-          />
+          cap ? (
+            <>
+              <DayField key={capField} label="History size limit in GB" value={cap} parse={parseCapGb} onCommit={commitCap} />
+              <span className="text-sm text-muted-foreground">GB</span>
+              <ConfirmAction
+                open={pendingCap !== null}
+                onOpenChange={(open) => {
+                  if (open) return;
+                  setPendingCap(null);
+                  setCapField((key) => key + 1);
+                }}
+                title={`Lower the limit to ${pendingCap ?? 0} GB?`}
+                description={`History already uses ${formatBytes(used)}, more than half of the new limit.`}
+                effects={["Automatic cleanup starts within a minute.", "Scratch reads older than 1 day go first, then project reads older than 7 days, including sensitive ones.", "If that isn't enough, scratch file changes go next, then project file changes and network activity, oldest first.", "If history reaches the limit, the oldest history is deleted, including sensitive files."]}
+                icon={Database}
+                confirmLabel="Lower limit"
+                onConfirm={() => {
+                  if (pendingCap !== null) saveCap(pendingCap);
+                }}
+              />
+            </>
+          ) : null
+        }
+      />
+      <SettingsRow
+        title="History usage"
+        description={usage}
+        control={
+          stats ? (
+            <div role="meter" aria-label="History usage" aria-valuenow={Math.min(percent, 100)} aria-valuemin={0} aria-valuemax={100} className="relative h-1.5 w-40 overflow-hidden rounded-full bg-foreground/10">
+              <div className={cn("h-full rounded-full", percent >= 100 || stats.hardCap ? "bg-destructive" : percent >= 50 ? "bg-amber-500" : "bg-primary")} style={{ width: `${Math.min(percent, 100)}%` }} />
+              <div className="absolute inset-y-0 left-1/2 w-px bg-foreground/50" />
+            </div>
+          ) : null
+        }
+      />
+      {stats ? <SizeList title="Breakdown" rows={BREAKDOWN.map(([label, match]) => ({ label, value: `${stats.counts.filter(match).reduce((total, row) => total + row.rows, 0).toLocaleString()} rows` }))} /> : null}
+      {info ? <SizeList title="Files on disk" rows={[...info.files.map((file) => ({ label: file.label, value: formatBytes(file.bytes), hint: file.path })), { label: "Total", value: formatBytes(info.files.reduce((total, file) => total + file.bytes, 0)), total: true }]} /> : null}
+      <SettingsRow
+        title="Last automatic cleanup"
+        description={stats?.prunedAt ? `${new Date(stats.prunedAt).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" })} · ${stats.prunedRows.toLocaleString()} rows removed` : "None yet."}
+      />
+      <SettingsRow
+        title="Clean up"
+        description={<span aria-live="polite">{cleanupDescription}</span>}
+        control={
+          <>
+            <select aria-label="Cleanup" className="h-8 rounded-lg border border-border bg-background px-2 text-sm text-foreground" value={mode} onChange={(event) => setMode(event.target.value as CleanupMode)}>
+              {CLEANUP_MODES.map((value) => <option key={value} value={value}>{CLEANUP[value].label}</option>)}
+            </select>
+            {mode === "older" ? <DayField label="Remove older than days" value={olderDays} onCommit={setOlderDays} /> : null}
+            {mode === "older" ? <span className="text-sm text-muted-foreground">days</span> : null}
+            <ConfirmAction
+              trigger={<Button size="sm" variant={mode === "all" ? "destructive" : "outline"} disabled={running || !historyBytes || lowSpace}>{running ? "Cleaning up…" : mode === "all" ? "Delete all…" : "Clean up"}</Button>}
+              title={mode === "older" ? `Remove history older than ${olderDays} days?` : mode === "all" ? "Delete all history?" : `${CLEANUP[mode].label}?`}
+              icon={Database}
+              description="Agent monitoring pauses while History is cleaned up. In the installed app, macOS asks for your password."
+              effects={CLEANUP[mode].effects(olderDays)}
+              confirmLabel={mode === "all" ? "Delete all" : "Clean up"}
+              onConfirm={run}
+            />
+          </>
         }
       />
     </SettingsSection>

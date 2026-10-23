@@ -33,8 +33,12 @@ const leash: LeashBridge = {
   queryHistory: (filter) => ipcRenderer.invoke("history:query", filter),
   historyRetention: () => ipcRenderer.invoke("history:retention:get"),
   setHistoryRetention: (which, days) => ipcRenderer.invoke("history:retention:set", which, days),
-  historyOptimizationInfo: () => ipcRenderer.invoke("history:optimize:info"),
-  optimizeHistory: () => ipcRenderer.invoke("history:optimize:run"),
+  historyCap: () => ipcRenderer.invoke("history:cap:get"),
+  setHistoryCap: (gb) => ipcRenderer.invoke("history:cap:set", gb),
+  historyStorage: () => ipcRenderer.invoke("history:storage:info"),
+  purgeHistory: (mode, days) => ipcRenderer.invoke("history:purge:run", mode, days),
+  storageWarning: () => ipcRenderer.invoke("history:warning:get"),
+  dismissStorageWarning: (step) => ipcRenderer.invoke("history:warning:dismiss", step),
   listIgnored: () => ipcRenderer.invoke("ignored:list"),
   setIgnored: (id, enabled) => ipcRenderer.invoke("ignored:set", id, enabled),
   addIgnored: (prefix) => ipcRenderer.invoke("ignored:add", prefix),
@@ -73,6 +77,11 @@ const leash: LeashBridge = {
     const wrapped = () => listener();
     ipcRenderer.on("agents:changed", wrapped);
     return () => ipcRenderer.removeListener("agents:changed", wrapped);
+  },
+  onStorage: (listener) => {
+    const wrapped = () => listener();
+    ipcRenderer.on("storage:changed", wrapped);
+    return () => ipcRenderer.removeListener("storage:changed", wrapped);
   },
   onGrantStatus: (listener) => {
     const wrapped = (_event: unknown, status: { count: number; lockdown: boolean }) => listener(status);

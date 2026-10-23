@@ -5,9 +5,9 @@ export function PageContainer({ className, ...props }: ComponentProps<"div">) {
   return <div {...props} className={cn("mx-auto flex min-h-0 w-full max-w-4xl flex-1 flex-col gap-6 overflow-auto px-5 pt-6 pb-12 sm:px-6", className)} />;
 }
 
-export function SettingsSection({ title, children }: { title: string; children: ReactNode }) {
+export function SettingsSection({ title, id, children }: { title: string; id?: string; children: ReactNode }) {
   return (
-    <section className="space-y-2.5">
+    <section id={id} className="scroll-mt-4 space-y-2.5">
       <h2 className="flex min-h-7 items-center px-3 text-sm font-normal text-foreground/70 sm:px-4">{title}</h2>
       <div className="relative overflow-visible rounded-xl border border-border/60 bg-card/40 text-foreground shadow-xs/5 [&>*+*]:border-t [&>*+*]:border-border/50">
         {children}

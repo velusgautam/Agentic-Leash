@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { Link, Outlet, useLocation, useNavigate } from "@tanstack/react-router";
-import { ArrowLeft, Lock, RotateCw, Settings, ShieldOff, X } from "lucide-react";
+import { ArrowLeft, Database, Lock, RotateCw, Settings, ShieldOff, X } from "lucide-react";
 import { ConfirmAction, REVOKE_ALL_EFFECTS } from "~/components/ConfirmAction";
 import { AgentIcon, LeashMark } from "~/components/Icons";
 import { Button } from "~/components/ui/button";
@@ -21,6 +21,8 @@ import {
 } from "~/components/ui/sidebar";
 import { needsAgentBanner, visibleAgent } from "../../../shared/setup";
 import { WelcomeDialog } from "~/components/WelcomeDialog";
+import { formatCap, type StorageWarning } from "../../../shared/storage";
+import { useLeashData } from "~/hooks/useLeash";
 import { SetupScreen } from "~/components/SetupScreen";
 import { useGrantStatus } from "~/components/useGrantStatus";
 import { SetupProvider, useSetup } from "~/components/useSetup";
@@ -50,6 +52,38 @@ function LockdownBanner() {
       <Lock className="size-4 shrink-0 text-destructive" aria-hidden />
       <span className="min-w-0 flex-1">Lockdown is on. Every agent tool call is blocked.</span>
       <Button size="sm" variant="outline" onClick={() => void window.leash.unlock()}>End lockdown</Button>
+    </div>
+  );
+}
+
+type StorageState = { warning: StorageWarning | null; capBytes: number } | null;
+const loadWarning = () => window.leash.storageWarning();
+const subscribeStorage = (refresh: () => void) => window.leash.onStorage(refresh);
+
+function StorageBanner() {
+  const navigate = useNavigate();
+  const state: StorageState = useLeashData<StorageState>(loadWarning, subscribeStorage, null, 30_000);
+  const warning = state?.warning;
+  if (!state || !warning) return null;
+  const cap = formatCap(state.capBytes);
+  const manage = <Button size="sm" variant="outline" onClick={() => void navigate({ to: "/settings/$section", params: { section: "monitoring" }, hash: "storage" })}>Manage storage</Button>;
+  if (!warning.closable) {
+    return (
+      <div role="status" className="mx-5 mb-2 flex items-center gap-3 rounded-lg border border-destructive/30 bg-destructive/10 py-1.5 pr-1.5 pl-3 text-sm">
+        <Database className="size-4 shrink-0 text-destructive" aria-hidden />
+        <span className="min-w-0 flex-1">History is at its {cap} limit. The oldest history, including sensitive files, is being deleted. Raise the limit or clean up to stop this.</span>
+        {manage}
+      </div>
+    );
+  }
+  return (
+    <div role="status" className="mx-5 mb-2 flex items-center gap-3 rounded-lg border border-amber-500/30 bg-amber-500/10 py-1.5 pr-1.5 pl-3 text-sm">
+      <Database className="size-4 shrink-0 text-amber-500" aria-hidden />
+      <span className="min-w-0 flex-1">History is using {warning.percent}% of its {cap} limit. Automatic cleanup is removing old reads first, then file changes and network activity if needed.</span>
+      {manage}
+      <Button size="icon-sm" variant="ghost" aria-label="Dismiss" onClick={() => void window.leash.dismissStorageWarning(warning.step)}>
+        <X />
+      </Button>
     </div>
   );
 }
@@ -231,6 +265,7 @@ function AppShell() {
             </Button>
           </div>
         ) : null}
+        <StorageBanner />
         <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
           <Outlet />
         </div>
