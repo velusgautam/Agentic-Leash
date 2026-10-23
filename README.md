@@ -1,12 +1,52 @@
-![Agentic Leash. Your AI agents. On a leash.](docs/media/banner.png)
+<p align="center">
+  <img src="docs/media/banner.png" alt="Agentic Leash. Your AI agents. On a leash." />
+</p>
 
-# Agentic Leash
+<h1 align="center">Agentic Leash</h1>
 
-See and control what AI coding agents can touch on your Mac.
+<p align="center">See and control what AI coding agents can touch on your Mac.</p>
 
-[Download Agentic Leash 0.1.2 for Apple Silicon](https://github.com/velusgautam/Agentic-Leash/releases/download/v0.1.2/Agentic.Leash-0.1.2-arm64.dmg)
+<p align="center">
+  <a href="https://github.com/velusgautam/Agentic-Leash/releases/latest"><img src="https://img.shields.io/github/v/release/velusgautam/Agentic-Leash?label=release" alt="Latest release" /></a>
+  <a href="https://github.com/velusgautam/Agentic-Leash/releases"><img src="https://img.shields.io/github/downloads/velusgautam/Agentic-Leash/total" alt="Downloads" /></a>
+  <a href="https://github.com/velusgautam/Agentic-Leash/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/velusgautam/Agentic-Leash/ci.yml?label=ci" alt="CI" /></a>
+  <img src="https://img.shields.io/badge/platform-macOS%20(Apple%20Silicon)-black" alt="Platform: macOS on Apple Silicon" />
+  <a href="LICENSE"><img src="https://img.shields.io/github/license/velusgautam/Agentic-Leash" alt="MIT License" /></a>
+</p>
+
+<p align="center">
+  <a href="#download">Download</a> ·
+  <a href="#features">Features</a> ·
+  <a href="#how-it-hooks-in">How it works</a> ·
+  <a href="#build-from-source">Build from source</a> ·
+  <a href="https://github.com/velusgautam/Agentic-Leash/releases">Changelog</a>
+</p>
 
 Claude, Cursor, Codex, Gemini CLI and Hermes keep working. Agentic Leash watches the files they read and write, asks before they reach a folder you have not allowed, and flags sensitive paths like `~/.ssh` the moment they are touched.
+
+## Download
+
+Get the installer for your platform from the [latest release](https://github.com/velusgautam/Agentic-Leash/releases/latest).
+
+| Platform | Installer | Status |
+| --- | --- | --- |
+| macOS, Apple Silicon | `.dmg`, signed and notarized | Supported |
+| Windows x64 | `.exe` | Preview |
+| Linux x64 | `.AppImage` | Preview |
+
+On Windows and Linux, approvals and grants work, but the file-activity history does not. It relies on macOS `eslogger`.
+
+Release notes for every version are on the [releases page](https://github.com/velusgautam/Agentic-Leash/releases).
+
+## Supported agents
+
+| Agent | Hook events |
+| --- | --- |
+| Claude (desktop app and `claude` CLI) | `PreToolUse` |
+| Codex | `PreToolUse` |
+| Cursor | `preToolUse`, `beforeReadFile`, `beforeShellExecution`, `beforeMCPExecution` |
+| Gemini CLI | `BeforeTool` |
+| Hermes | `pre_tool_call` |
 
 ## Features
 
@@ -14,7 +54,7 @@ Claude, Cursor, Codex, Gemini CLI and Hermes keep working. Agentic Leash watches
 
 ![Grants filtered and sorted by expiry](docs/media/grants.png)
 
-A grant can last 15 minutes, a couple of hours, or forever. Filter the list by agent and sort it by when it was approved or when it expires.
+A grant can last one call, a session, a day, or forever. The Access page lists every live grant with its time left. Filter the list by agent and sort it by when it was approved or when it expires.
 
 ### Revoke, then lock down
 
@@ -38,7 +78,7 @@ Reads of `~/.ssh`, `~/.aws` and other secret paths are marked in red on Live and
 
 ![Approval popup for a Cursor write to a new folder](docs/media/approval.png)
 
-A tool call outside an existing grant opens this popup. Allow it for 15 minutes, 1 hour, 8 hours or always, or deny it. The same choices are on the Grants page while a request is waiting.
+A tool call outside an existing grant opens this popup. Allow it once, for this session or for today, widen it to the whole folder, or deny it. Never blocks it for good. The same choices are on the Access page while a request is waiting.
 
 ### Appearance
 
@@ -111,17 +151,38 @@ Setup installs the hook into each agent that is turned on. The hook asks the bro
 
 Separately, a root helper tails `eslogger` and writes file activity into `history.db`, including the before and after of writes and a sensitive flag. Live and History read that database. The grant shown beside a write is the one whose folder covers the path.
 
-## Run it
+## First run
 
-macOS on Apple Silicon, Node 24 and pnpm 12.
+The first open stays on setup until the history helper is running and Full Disk Access is granted. The helper is a root LaunchDaemon, so macOS asks for an administrator password once. Turning an agent off in Settings hides it and removes its hooks.
+
+## Build from source
+
+Needs macOS on Apple Silicon, Node 24 and pnpm 12.
 
 ```bash
 pnpm install
 pnpm dev
 ```
 
-`pnpm test` runs the unit tests. `pnpm test:e2e` launches the window. `pnpm dist` builds `dist/Agentic Leash-0.1.2-arm64.dmg`.
+| Command | What it does |
+| --- | --- |
+| `pnpm test` | Runs the unit tests |
+| `pnpm test:e2e` | Builds the app and runs the Playwright tests against the window |
+| `pnpm dist` | Builds the signed macOS installer into `dist/` |
+| `pnpm dist:win`, `pnpm dist:linux` | Build the Windows and Linux installers |
 
-The first open stays on setup until the history helper is running and Full Disk Access is granted. In a dev build the helper step reads "Available in the installed app". Claude covers both the desktop app and the `claude` CLI. Turning an agent off in Settings hides it and removes its hooks. The helper is a root LaunchDaemon, so macOS asks for an administrator password once.
+In a dev build the helper step in setup reads "Available in the installed app".
 
-`SCREENSHOTS=1 pnpm exec playwright test tests/e2e/marketing.e2e.ts -g walkthrough` captures the app frames. `node docs/media/launch/record-stills.mjs` turns them into the banner and feature images.
+### Screenshots
+
+```bash
+pnpm build
+SCREENSHOTS=1 pnpm exec playwright test tests/e2e/marketing.e2e.ts -g walkthrough
+pnpm exec node docs/media/launch/record-stills.mjs
+```
+
+The first command builds the app. The second captures the app frames into `docs/media/walkthrough`. The third turns those frames into the banner and the feature images.
+
+## License
+
+[MIT](LICENSE). Code copied from other projects keeps its own license, listed in [THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md).

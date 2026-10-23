@@ -21,7 +21,7 @@ const appearance = union(rect("appearanceTheme", 8), rect("appearanceInterface",
 const shots = {
   "grants.png": { plate: "07-grants-sorted.png", focus: union(rect("grantControls", 6), rect("grantList", 8)) },
   "revoke.png": { plate: "10-revoke.png", focus: rect("revokeDialog", 8) },
-  "history-diff.png": { plate: "08-history.png", focus: { x: detail.x + 4, y: detail.y + 4, w: detail.w - 10, h: 360 } },
+  "history-diff.png": { plate: "08-history.png", focus: { x: detail.x + 4, y: detail.y + 4, w: detail.w - 10, h: 412 } },
   "live-sensitive.png": { plate: "09-sensitive.png", focus: union(rect("sensitiveRow", 6), rect("sensitiveToggle", 6)) },
   "approval.png": { plate: "03-live-b.png", popup: "05-approval-scope.png", focus: { x: 444, y: 229, w: 552, h: 442 } },
   "appearance.png": { plate: "12-appearance.png", focus: { ...appearance, y: appearance.y - 56, h: appearance.h + 56 } },
