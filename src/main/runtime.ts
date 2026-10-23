@@ -469,11 +469,11 @@ export function startRuntime(options: { userData: string; openApproval: () => vo
       } else {
         result = mode === "compact" ? { ...optimizeHistory(historyPath), deleted: null } : purgeCommand(mode, historyPath, keepDays === null ? undefined : String(keepDays));
       }
-      pollHistory();
       return result;
     } finally {
       historyPaused = false;
       optimizingHistory = false;
+      pollHistory();
       broadcast("storage:changed");
     }
   });

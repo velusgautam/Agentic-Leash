@@ -267,10 +267,6 @@ function Monitoring() {
   };
   const { status } = useSetup();
   const skipped = status?.helper === "skipped";
-  const { hash, key } = useLocation({ select: (location) => ({ hash: location.hash, key: location.state.__TSR_key }) });
-  useEffect(() => {
-    if (hash === "storage") document.getElementById("storage")?.scrollIntoView({ block: "start" });
-  }, [hash, key]);
   return (
     <>
       <SettingsSection title="Helper">
@@ -300,14 +296,14 @@ const BREAKDOWN: [string, (row: HistoryStats["counts"][number]) => boolean][] = 
 ];
 
 const CLEANUP: Record<CleanupMode, { label: string; effects: (days: number) => string[] }> = {
-  compact: { label: "Compact only", effects: () => ["Removes existing process execution rows.", "Removes duplicate snapshot storage.", "Keeps file changes, network activity, and tool decisions."] },
+  compact: { label: "Compact history", effects: () => ["Removes existing process execution rows.", "Removes duplicate snapshot storage.", "Keeps file changes, network activity, and tool decisions."] },
   reads: { label: "Remove reads", effects: () => ["Deletes every read except reads of sensitive files.", "Keeps file changes, network activity, and tool decisions.", "Rebuilds the history file to free the space."] },
   noise: { label: "Remove noise and exec", effects: () => ["Deletes everything recorded under scratch paths such as /tmp, logs, and caches.", "Deletes every process execution row.", "Rebuilds the history file to free the space."] },
-  older: { label: "Remove older than N days", effects: (days) => [`Deletes everything older than ${days} days, including sensitive files.`, "Rebuilds the history file to free the space."] },
+  older: { label: "Remove older than…", effects: (days) => [`Deletes everything older than ${days} days, including sensitive files.`, "Rebuilds the history file to free the space."] },
   all: { label: "Delete all history", effects: () => ["Deletes the history database and starts an empty one.", "Removes every file change, read, network event, and sensitive path record.", "This can't be undone."] },
 };
 
-const totalClass = "border-t border-border/50 pt-1 font-medium text-foreground";
+const totalClass = "font-medium text-foreground";
 
 function SizeList({ title, rows }: { title: string; rows: { label: string; value: string; hint?: string; total?: boolean }[] }) {
   return (
@@ -316,6 +312,7 @@ function SizeList({ title, rows }: { title: string; rows: { label: string; value
       <dl className="grid grid-cols-[minmax(0,1fr)_auto] gap-x-6 gap-y-1 text-xs text-muted-foreground/80">
         {rows.map((row) => (
           <Fragment key={row.label}>
+            {row.total ? <div className="col-span-2 mt-1 border-t border-border/50" /> : null}
             <dt className={cn("truncate", row.total && totalClass)} title={row.hint}>{row.label}</dt>
             <dd className={cn("text-right font-mono tabular-nums", row.total && totalClass)}>{row.value}</dd>
           </Fragment>
@@ -335,13 +332,28 @@ function Storage() {
   const [result, setResult] = useState<HistoryCleanupResult | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [running, setRunning] = useState(false);
+  const { hash, key } = useLocation({ select: (location) => ({ hash: location.hash, key: location.state.__TSR_key }) });
+  const ready = info !== null && cap !== null;
   useEffect(() => {
+    if (ready && hash === "storage") document.getElementById("storage")?.scrollIntoView({ block: "start" });
+  }, [ready, hash, key]);
+  useEffect(() => {
+    let live = true;
+    let latest = 0;
     const load = () => {
-      void window.leash.historyStorage().then(setInfo);
-      void window.leash.historyCap().then((value) => setCap(value.gb));
+      const request = ++latest;
+      void Promise.all([window.leash.historyStorage(), window.leash.historyCap()]).then(([next, value]) => {
+        if (!live || request !== latest) return;
+        setInfo(next);
+        setCap(value.gb);
+      }).catch(() => {});
     };
     load();
-    return window.leash.onStorage(load);
+    const off = window.leash.onStorage(load);
+    return () => {
+      live = false;
+      off();
+    };
   }, []);
   const stats = info?.stats ?? null;
   const used = stats?.usedBytes ?? 0;
@@ -362,7 +374,7 @@ function Storage() {
     }).finally(() => setRunning(false));
   };
   const historyBytes = info?.files[0]?.bytes ?? 0;
-  const capB = stats?.capBytes || (cap ?? 0) * GB;
+  const capB = (cap ?? 0) * GB || stats?.capBytes || 0;
   const percent = capB ? Math.floor((used * 100) / capB) : 0;
   const capText = formatCap(capB);
   const usage = !stats

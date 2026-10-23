@@ -1,7 +1,7 @@
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { expect, test } from "@playwright/test";
+import { expect, test, type Page } from "@playwright/test";
 import { insertEvents, openHistoryDb, writeHistoryStats } from "../../src/helper/historyDb";
 import { launch } from "./launch";
 
@@ -57,7 +57,7 @@ test("Monitoring compacts history after confirmation", async () => {
   await expect(win.getByText(/History database is/)).toBeVisible();
   await win.getByRole("button", { name: "Clean up", exact: true }).click();
   const dialog = win.getByRole("alertdialog");
-  await expect(dialog.getByRole("heading", { name: "Compact only?" })).toBeVisible();
+  await expect(dialog.getByRole("heading", { name: "Compact history?" })).toBeVisible();
   await dialog.getByRole("button", { name: "Clean up", exact: true }).click();
   await expect(win.getByText(/Reduced history from/)).toBeVisible();
   await app.close();
@@ -90,6 +90,14 @@ test("Monitoring keeps a valid history size limit", async () => {
   await app.close();
 });
 
+const storageOffset = (win: Page) =>
+  win.evaluate(() => {
+    const heading = [...document.querySelectorAll("h2")].find((el) => el.textContent === "Storage");
+    let box = heading?.parentElement?.parentElement ?? null;
+    while (box && !(box.scrollHeight > box.clientHeight + 10 && getComputedStyle(box).overflowY === "auto")) box = box.parentElement;
+    return heading && box ? Math.round(heading.getBoundingClientRect().top - box.getBoundingClientRect().top) : 999;
+  });
+
 function seedStats(percent: number, hardCap = false): string {
   const historyDir = mkdtempSync(join(tmpdir(), "al-history-stats-"));
   const history = openHistoryDb(join(historyDir, "history.db"));
@@ -106,7 +114,8 @@ test("Storage warning can be dismissed and stays dismissed", async () => {
   await expect(banner).toBeVisible();
   await banner.getByRole("button", { name: "Manage storage" }).click();
   await expect(win.getByRole("heading", { name: "Monitoring" })).toBeVisible();
-  await expect(win.getByRole("heading", { name: "Storage" })).toBeInViewport();
+  await expect.poll(() => storageOffset(win)).toBeGreaterThanOrEqual(0);
+  await expect.poll(() => storageOffset(win)).toBeLessThan(60);
   await banner.getByRole("button", { name: "Dismiss" }).click();
   await expect(banner).toHaveCount(0);
   await win.reload();
@@ -114,6 +123,18 @@ test("Storage warning can be dismissed and stays dismissed", async () => {
   await expect(win.getByText(/History is using/)).toHaveCount(0);
   await app.close();
 });
+
+for (const [width, height] of [[1100, 720], [840, 620]] as const) {
+  test(`Manage storage lands on Storage at ${width}x${height}`, async () => {
+    const app = await launch([], { AGENTIC_LEASH_HISTORY_DIR: seedStats(55) });
+    const win = await app.firstWindow();
+    await app.evaluate(({ BrowserWindow }, [w, h]) => BrowserWindow.getAllWindows()[0]!.setSize(w!, h!), [width, height]);
+    await win.getByRole("status").getByRole("button", { name: "Manage storage" }).click();
+    await expect.poll(() => storageOffset(win)).toBeGreaterThanOrEqual(0);
+    await expect.poll(() => storageOffset(win)).toBeLessThan(60);
+    await app.close();
+  });
+}
 
 test("Storage warning shows the 60% step", async () => {
   const app = await launch([], { AGENTIC_LEASH_HISTORY_DIR: seedStats(65) });
