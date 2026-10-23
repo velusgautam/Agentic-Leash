@@ -102,10 +102,11 @@ function seedStats(percent: number, hardCap = false): string {
 test("Storage warning can be dismissed and stays dismissed", async () => {
   const app = await launch([], { AGENTIC_LEASH_HISTORY_DIR: seedStats(55) });
   const win = await app.firstWindow();
-  const banner = win.getByRole("status").filter({ hasText: "History is using 55% of its 1.0 GB limit. Old reads go first, then file changes and network activity if that isn't enough." });
+  const banner = win.getByRole("status").filter({ hasText: "History is using 55% of its 1 GB limit. Automatic cleanup is removing old reads first, then file changes and network activity if needed." });
   await expect(banner).toBeVisible();
   await banner.getByRole("button", { name: "Manage storage" }).click();
   await expect(win.getByRole("heading", { name: "Monitoring" })).toBeVisible();
+  await expect(win.getByRole("heading", { name: "Storage" })).toBeInViewport();
   await banner.getByRole("button", { name: "Dismiss" }).click();
   await expect(banner).toHaveCount(0);
   await win.reload();
@@ -117,7 +118,7 @@ test("Storage warning can be dismissed and stays dismissed", async () => {
 test("Storage warning shows the 60% step", async () => {
   const app = await launch([], { AGENTIC_LEASH_HISTORY_DIR: seedStats(65) });
   const win = await app.firstWindow();
-  const banner = win.getByRole("status").filter({ hasText: "History is using 65% of its 1.0 GB limit." });
+  const banner = win.getByRole("status").filter({ hasText: "History is using 65% of its 1 GB limit." });
   await expect(banner).toBeVisible();
   await expect(banner.getByRole("button", { name: "Dismiss" })).toBeVisible();
   await app.close();
@@ -126,7 +127,7 @@ test("Storage warning shows the 60% step", async () => {
 test("Storage warning at the hard cap cannot be dismissed", async () => {
   const app = await launch([], { AGENTIC_LEASH_HISTORY_DIR: seedStats(85, true) });
   const win = await app.firstWindow();
-  const banner = win.getByRole("status").filter({ hasText: "History has reached its 1.0 GB limit. The oldest history, including sensitive files, is being deleted to make room. Raise the limit or clean up history to stop this." });
+  const banner = win.getByRole("status").filter({ hasText: "History is at its 1 GB limit. The oldest history, including sensitive files, is being deleted. Raise the limit or clean up to stop this." });
   await expect(banner).toBeVisible();
   await expect(banner.getByRole("button", { name: "Manage storage" })).toBeVisible();
   await expect(banner.getByRole("button", { name: "Dismiss" })).toHaveCount(0);

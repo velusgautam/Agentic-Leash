@@ -78,6 +78,11 @@ const leash: LeashBridge = {
     ipcRenderer.on("agents:changed", wrapped);
     return () => ipcRenderer.removeListener("agents:changed", wrapped);
   },
+  onStorage: (listener) => {
+    const wrapped = () => listener();
+    ipcRenderer.on("storage:changed", wrapped);
+    return () => ipcRenderer.removeListener("storage:changed", wrapped);
+  },
   onGrantStatus: (listener) => {
     const wrapped = (_event: unknown, status: { count: number; lockdown: boolean }) => listener(status);
     ipcRenderer.on("grants:status-changed", wrapped);

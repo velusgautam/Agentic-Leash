@@ -1,6 +1,6 @@
 import { Fragment, useEffect, useState, type CSSProperties } from "react";
-import { useParams } from "@tanstack/react-router";
-import { Monitor, Moon, Sun } from "lucide-react";
+import { useLocation, useParams } from "@tanstack/react-router";
+import { Database, Monitor, Moon, Sun } from "lucide-react";
 import licenses from "../../../../THIRD_PARTY_LICENSES.md?raw";
 import type { IgnoredRow } from "../../../shared/ignored";
 import type { HistoryCleanupResult, HistoryStorageInfo, OpenAtLoginState } from "../../../shared/bridge";
@@ -21,7 +21,7 @@ import { aboutText, BUILD_LABELS, runtimeLine } from "../../../shared/appInfo";
 import { cn } from "~/lib/utils";
 import { SETTINGS_SECTIONS } from "~/nav";
 import { parseRetentionDays } from "../../../shared/retention";
-import { CLEANUP_MODES, formatBytes, parseCapGb, type CleanupMode, type HistoryStats } from "../../../shared/storage";
+import { CLEANUP_MODES, formatBytes, formatCap, parseCapGb, type CleanupMode, type HistoryStats } from "../../../shared/storage";
 import { DEFAULT_APPEARANCE, readAppearance, saveAppearance, type AppearancePrefs } from "../appearance";
 
 function General() {
@@ -267,6 +267,10 @@ function Monitoring() {
   };
   const { status } = useSetup();
   const skipped = status?.helper === "skipped";
+  const { hash, key } = useLocation({ select: (location) => ({ hash: location.hash, key: location.state.__TSR_key }) });
+  useEffect(() => {
+    if (hash === "storage") document.getElementById("storage")?.scrollIntoView({ block: "start" });
+  }, [hash, key]);
   return (
     <>
       <SettingsSection title="Helper">
@@ -303,15 +307,17 @@ const CLEANUP: Record<CleanupMode, { label: string; effects: (days: number) => s
   all: { label: "Delete all history", effects: () => ["Deletes the history database and starts an empty one.", "Removes every file change, read, network event, and sensitive path record.", "This can't be undone."] },
 };
 
-function SizeList({ title, rows }: { title: string; rows: { label: string; value: string; hint?: string }[] }) {
+const totalClass = "border-t border-border/50 pt-1 font-medium text-foreground";
+
+function SizeList({ title, rows }: { title: string; rows: { label: string; value: string; hint?: string; total?: boolean }[] }) {
   return (
     <div className="px-3 py-3 sm:px-4">
       <h3 className="mb-2 text-sm font-medium text-foreground">{title}</h3>
-      <dl className="grid max-w-xl grid-cols-[minmax(0,1fr)_auto] gap-x-6 gap-y-1 text-xs text-muted-foreground/80">
+      <dl className="grid grid-cols-[minmax(0,1fr)_auto] gap-x-6 gap-y-1 text-xs text-muted-foreground/80">
         {rows.map((row) => (
           <Fragment key={row.label}>
-            <dt className="truncate" title={row.hint}>{row.label}</dt>
-            <dd className="text-right font-mono tabular-nums">{row.value}</dd>
+            <dt className={cn("truncate", row.total && totalClass)} title={row.hint}>{row.label}</dt>
+            <dd className={cn("text-right font-mono tabular-nums", row.total && totalClass)}>{row.value}</dd>
           </Fragment>
         ))}
       </dl>
@@ -330,8 +336,12 @@ function Storage() {
   const [error, setError] = useState<string | null>(null);
   const [running, setRunning] = useState(false);
   useEffect(() => {
-    void window.leash.historyStorage().then(setInfo);
-    void window.leash.historyCap().then((value) => setCap(value.gb));
+    const load = () => {
+      void window.leash.historyStorage().then(setInfo);
+      void window.leash.historyCap().then((value) => setCap(value.gb));
+    };
+    load();
+    return window.leash.onStorage(load);
   }, []);
   const stats = info?.stats ?? null;
   const used = stats?.usedBytes ?? 0;
@@ -352,20 +362,21 @@ function Storage() {
     }).finally(() => setRunning(false));
   };
   const historyBytes = info?.files[0]?.bytes ?? 0;
-  const percent = cap ? Math.floor((used * 100) / (cap * GB)) : 0;
-  const capText = formatBytes(stats?.capBytes ?? (cap ?? 0) * GB);
+  const capB = stats?.capBytes || (cap ?? 0) * GB;
+  const percent = capB ? Math.floor((used * 100) / capB) : 0;
+  const capText = formatCap(capB);
   const usage = !stats
     ? "No usage recorded yet. The history helper records it every minute."
     : stats.hardCap
-      ? `History has reached its ${capText} limit. The oldest history, including sensitive files, is being deleted to make room. Raise the limit or clean up history to stop this.`
-      : `${formatBytes(used)} used of ${formatBytes((cap ?? 0) * GB)}`;
+      ? `${formatBytes(used)} used of ${capText}. At the limit: the oldest history, including sensitive files, is being deleted.`
+      : `${formatBytes(used)} used of ${capText}`;
   const cleanupDescription = error
     ?? (result ? `Reduced history from ${formatBytes(result.beforeBytes)} to ${formatBytes(result.afterBytes)}.${result.deleted === null ? "" : ` Removed ${result.deleted.toLocaleString()} ${result.deleted === 1 ? "row" : "rows"}.`}`
       : historyBytes ? `History database is ${formatBytes(historyBytes)}. Cleanup needs up to ${formatBytes(info!.requiredBytes)} free; ${formatBytes(info!.freeBytes)} is available.`
         : "No history database yet.");
   const lowSpace = mode !== "all" && (info?.freeBytes ?? 0) < (info?.requiredBytes ?? 0);
   return (
-    <SettingsSection title="Storage">
+    <SettingsSection title="Storage" id="storage">
       <SettingsRow
         title="History size limit"
         description="Automatic cleanup starts at half this size. Default 10 GB."
@@ -384,7 +395,8 @@ function Storage() {
                 title={`Lower the limit to ${pendingCap ?? 0} GB?`}
                 description={`History already uses ${formatBytes(used)}, more than half of the new limit.`}
                 effects={["Automatic cleanup starts within a minute.", "Scratch reads older than 1 day go first, then project reads older than 7 days, including sensitive ones.", "If that isn't enough, scratch file changes go next, then project file changes and network activity, oldest first.", "If history reaches the limit, the oldest history is deleted, including sensitive files."]}
-                confirmLabel="Set limit"
+                icon={Database}
+                confirmLabel="Lower limit"
                 onConfirm={() => {
                   if (pendingCap !== null) saveCap(pendingCap);
                 }}
@@ -398,7 +410,7 @@ function Storage() {
         description={usage}
         control={
           stats ? (
-            <div role="meter" aria-label="History usage" aria-valuenow={Math.min(percent, 100)} aria-valuemin={0} aria-valuemax={100} className="relative h-1.5 w-40 overflow-hidden rounded-full bg-muted">
+            <div role="meter" aria-label="History usage" aria-valuenow={Math.min(percent, 100)} aria-valuemin={0} aria-valuemax={100} className="relative h-1.5 w-40 overflow-hidden rounded-full bg-foreground/10">
               <div className={cn("h-full rounded-full", percent >= 100 || stats.hardCap ? "bg-destructive" : percent >= 50 ? "bg-amber-500" : "bg-primary")} style={{ width: `${Math.min(percent, 100)}%` }} />
               <div className="absolute inset-y-0 left-1/2 w-px bg-foreground/50" />
             </div>
@@ -406,7 +418,7 @@ function Storage() {
         }
       />
       {stats ? <SizeList title="Breakdown" rows={BREAKDOWN.map(([label, match]) => ({ label, value: `${stats.counts.filter(match).reduce((total, row) => total + row.rows, 0).toLocaleString()} rows` }))} /> : null}
-      {info ? <SizeList title="Files on disk" rows={[...info.files.map((file) => ({ label: file.label, value: formatBytes(file.bytes), hint: file.path })), { label: "Total", value: formatBytes(info.files.reduce((total, file) => total + file.bytes, 0)) }]} /> : null}
+      {info ? <SizeList title="Files on disk" rows={[...info.files.map((file) => ({ label: file.label, value: formatBytes(file.bytes), hint: file.path })), { label: "Total", value: formatBytes(info.files.reduce((total, file) => total + file.bytes, 0)), total: true }]} /> : null}
       <SettingsRow
         title="Last automatic cleanup"
         description={stats?.prunedAt ? `${new Date(stats.prunedAt).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" })} · ${stats.prunedRows.toLocaleString()} rows removed` : "None yet."}
@@ -420,9 +432,11 @@ function Storage() {
               {CLEANUP_MODES.map((value) => <option key={value} value={value}>{CLEANUP[value].label}</option>)}
             </select>
             {mode === "older" ? <DayField label="Remove older than days" value={olderDays} onCommit={setOlderDays} /> : null}
+            {mode === "older" ? <span className="text-sm text-muted-foreground">days</span> : null}
             <ConfirmAction
-              trigger={<Button size="sm" variant={mode === "all" ? "destructive" : "outline"} disabled={running || !historyBytes || lowSpace}>{running ? "Cleaning up…" : "Clean up"}</Button>}
-              title={mode === "all" ? "Delete all history?" : `${CLEANUP[mode].label}?`}
+              trigger={<Button size="sm" variant={mode === "all" ? "destructive" : "outline"} disabled={running || !historyBytes || lowSpace}>{running ? "Cleaning up…" : mode === "all" ? "Delete all…" : "Clean up"}</Button>}
+              title={mode === "older" ? `Remove history older than ${olderDays} days?` : mode === "all" ? "Delete all history?" : `${CLEANUP[mode].label}?`}
+              icon={Database}
               description="Agent monitoring pauses while History is cleaned up. In the installed app, macOS asks for your password."
               effects={CLEANUP[mode].effects(olderDays)}
               confirmLabel={mode === "all" ? "Delete all" : "Clean up"}

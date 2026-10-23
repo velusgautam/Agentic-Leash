@@ -83,6 +83,7 @@ export interface LeashBridge {
   onHistory(listener: (rows: HistoryRow[]) => void): () => void;
   onPending(listener: (pending: PendingRequest[]) => void): () => void;
   onAgents(listener: () => void): () => void;
+  onStorage(listener: () => void): () => void;
   onGrantStatus(listener: (status: { count: number; lockdown: boolean }) => void): () => void;
   resetTcc(service: string, bundleId: string): Promise<void>;
   removeMcp(agent: AgentId, name: string): Promise<void>;

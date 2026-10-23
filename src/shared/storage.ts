@@ -1,3 +1,4 @@
+const GB = 1024 ** 3;
 export const CAP_MIN_GB = 1;
 export const CAP_MAX_GB = 1024;
 export const CAP_DEFAULT_GB = 10;
@@ -18,7 +19,7 @@ export function parseCapGb(value: string): number | null {
 }
 
 export function capBytes(value: string): number {
-  return (parseCapGb(value) ?? CAP_DEFAULT_GB) * 1024 ** 3;
+  return (parseCapGb(value) ?? CAP_DEFAULT_GB) * GB;
 }
 
 export interface HistoryStats {
@@ -51,6 +52,10 @@ export function storageWarning(stats: HistoryStats | null, dismissed: number): S
 
 export function rearmDismissed(stats: HistoryStats | null, dismissed: number): number {
   return stats ? Math.min(dismissed, Math.floor((usagePercent(stats) + 10) / 10) * 10) : dismissed;
+}
+
+export function formatCap(bytes: number): string {
+  return `${Math.round(bytes / GB)} GB`;
 }
 
 export function formatBytes(bytes: number): string {

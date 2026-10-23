@@ -198,15 +198,22 @@ export function startRuntime(options: { userData: string; openApproval: () => vo
     if (applyDueClaudeTrust(db, claudeJson(), Date.now()).length) rescan();
   }, 30_000);
 
+  let lastStatsSig = "";
   const pollHistory = () => {
     if (uninstalling || historyPaused) return;
     try {
       const historyDb = openHistoryDb(historyPath, true);
       const rows = listHistory(historyDb, 0, 300);
+      const stats = readHistoryStats(historyDb);
       historyDb.close();
       const changed = historySig(rows) !== historySig(history);
       history = rows;
       if (changed) broadcast("history:changed", rows);
+      const statsSig = stats ? JSON.stringify([stats.usedBytes, stats.capBytes, stats.hardCap, stats.prunedAt, stats.prunedRows]) : "";
+      if (statsSig !== lastStatsSig) {
+        lastStatsSig = statsSig;
+        broadcast("storage:changed");
+      }
       for (const row of rows) {
         if (row.sensitive && row.id > historySeen) options.notify("Sensitive path", `${row.agent} touched ${row.path}`);
       }
@@ -389,6 +396,7 @@ export function startRuntime(options: { userData: string; openApproval: () => vo
   ipcMain.handle("history:cap:set", (_event, gb: number) => {
     const parsed = parseCapGb(String(gb));
     if (parsed !== null) setSetting(db, "history_cap_gb", String(parsed));
+    broadcast("storage:changed");
     return { gb: capGb() };
   });
   const historyStats = () => withHistory((historyDb) => readHistoryStats(historyDb));
@@ -432,6 +440,7 @@ export function startRuntime(options: { userData: string; openApproval: () => vo
     if (!Number.isInteger(step) || step >= 100) return;
     const state = readUiState(options.userData);
     writeUiState(options.userData, { ...state, storageWarningDismissed: Math.max(state.storageWarningDismissed ?? 0, step) });
+    broadcast("storage:changed");
   });
   let optimizingHistory = false;
   ipcMain.handle("history:purge:run", async (_event, mode: CleanupMode, days?: number) => {
@@ -465,6 +474,7 @@ export function startRuntime(options: { userData: string; openApproval: () => vo
     } finally {
       historyPaused = false;
       optimizingHistory = false;
+      broadcast("storage:changed");
     }
   });
   ipcMain.handle("ignored:list", () => listIgnored(db));
