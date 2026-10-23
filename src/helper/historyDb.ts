@@ -364,7 +364,7 @@ export function splitHistory(db: DatabaseSync): void {
 const IGNORED_CHUNK = 32;
 
 export function ignoredKey(prefixes: readonly string[]): string {
-  return prefixes.join("\0");
+  return JSON.stringify(prefixes);
 }
 
 export function appliedIgnoredKey(db: DatabaseSync): string {

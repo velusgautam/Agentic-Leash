@@ -146,4 +146,11 @@ describe("dropIgnored", () => {
     expect(appliedIgnoredKey(reopened)).toBe(ignoredKey(["/.cursor/chats", "/tmp/payload"]));
     reopened.close();
   });
+
+  it("records an empty ignore list without touching rows", () => {
+    const history = openHistoryDb(join(mkdtempSync(join(tmpdir(), "al-ignored-hist-")), "history.db"));
+    dropIgnored(history, []);
+    expect(appliedIgnoredKey(history)).toBe(ignoredKey([]));
+    history.close();
+  });
 });
