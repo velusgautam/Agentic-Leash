@@ -1,6 +1,6 @@
 import { isEgressCommand, isReadOnlyCommand } from "./commands";
 import { parentFolders } from "./parents";
-import { normalise } from "./paths";
+import { hasUnresolved, normalise } from "./paths";
 import { personalKind, secretKind, startupKind } from "./sensitive";
 import { PRESET_ORDER } from "./presets";
 import type { Access, HookRequest, PresetId, RequestPolicy } from "./types";
@@ -58,6 +58,11 @@ export function requestPolicy(req: HookRequest, home: string, repoRoot: (path: s
   if (startup) {
     reasons.unshift(`Changes a ${startup.toLowerCase()} file that runs code later`);
     return { ...base, kind: "startup", label: startup, presets: ["once"], preset: "once", exact: true, risk: "high", reasons };
+  }
+
+  if (hasUnresolved(req.paths)) {
+    reasons.unshift("Uses a variable the folder can't be worked out from");
+    return { ...base, kind: "other", label: null, presets: ["once"], preset: "once", exact: true, risk: destructive ? "high" : "medium", reasons };
   }
 
   const roots = req.paths.map(repoRoot);

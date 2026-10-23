@@ -70,7 +70,8 @@ export function normaliseHook(raw: unknown, entry: "claude" | "cursor" | "codex"
     const command = str(payload.command);
     return request({ agent, event, tool: "Shell", access: shellAccess(command), paths: extractShellPaths(command, cwd, home), cwd, command, sessionId });
   }
-  if (entry === "cursor" && event === "preToolUse" && str(payload.tool_name) === "Shell") return { kind: "ignore" };
+  // Shell, Read and MCP calls are gated by their own before* events.
+  if (entry === "cursor" && event === "preToolUse" && /^(shell|read|mcp.*)$/i.test(str(payload.tool_name))) return { kind: "ignore" };
   if (entry === "cursor" && event === "beforeMCPExecution") {
     return request({ agent, event, tool: str(payload.tool_name) || "MCP", access: "read", paths: [], cwd, sessionId });
   }

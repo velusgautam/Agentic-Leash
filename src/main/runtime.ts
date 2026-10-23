@@ -45,7 +45,7 @@ import { FULL_DISK_URL, hasFullDiskAccess } from "./fullDisk";
 import { macAppPresent, rememberOnboarding, setupReady, type HelperState, type SetupAgent, type SetupStatus } from "../shared/setup";
 import { readTcc } from "./tcc";
 import { historySig } from "../shared/historySig";
-import { isUnder, secretLabel } from "../shared/paths";
+import { hasUnresolved, isUnder, secretLabel } from "../shared/paths";
 import { personalKind, startupKind } from "../shared/sensitive";
 
 const exec = promisify(execFile);
@@ -170,6 +170,11 @@ export function startRuntime(options: { userData: string; openApproval: () => vo
       else options.closeApproval();
     }
     else if (pending.some((item) => !quietly(item))) options.openApproval();
+    for (const [id, timer] of timeouts) {
+      if (pending.some((item) => item.id === id)) continue;
+      clearTimeout(timer);
+      timeouts.delete(id);
+    }
     for (const item of pending) {
       if (timeouts.has(item.id)) continue;
       timeouts.set(item.id, setTimeout(() => broker.decide(item.id, { decision: "timeout" }), POPUP_TIMEOUT_S * 1000));
@@ -288,7 +293,7 @@ export function startRuntime(options: { userData: string; openApproval: () => vo
   const allow = (paths: string[], agent: AgentId | "*", access: Access, ttlSeconds: number | null, exact = false, session?: { sessionId: string | null }) => {
     const expiresAt = ttlSeconds === null ? null : Date.now() + ttlSeconds * 1000;
     const roots: string[] = [];
-    for (const path of paths) {
+    for (const path of paths.filter((item) => !hasUnresolved([item]))) {
       const root = grantRoot(path, exact, (item) => statSync(item, { throwIfNoEntry: false })?.isDirectory() ?? false);
       if (root) {
         upsertGrant(db, { agent, path: root, access, source: "leash", createdAt: Date.now(), expiresAt, sessionId: session?.sessionId ?? null, idleSeconds: session ? ttlSeconds : null });
@@ -650,7 +655,7 @@ export function startRuntime(options: { userData: string; openApproval: () => vo
     const now = Date.now();
     const ttl = preset.id === "today" ? Math.round((todayExpiry(now, endOfDayHour()) - now) / 1000) : preset.id === "repo" ? null : preset.seconds;
     // "Once" lets this call through and writes nothing.
-    if (pending && preset.id !== "once") {
+    if (pending && preset.id !== "once" && !hasUnresolved(pending.request.paths)) {
       const { agent, access } = pending.request;
       const policy = pending.policy;
       const exact = policy?.exact ?? false;
@@ -672,7 +677,7 @@ export function startRuntime(options: { userData: string; openApproval: () => vo
         }
       }
     }
-    broker.decide(id, { decision: "allow", ttlSeconds: ttl ?? undefined });
+    broker.decide(id, { decision: "allow", ttlSeconds: ttl ?? undefined, ...(preset.id === "once" ? { once: true as const } : {}) });
     releaseCovered();
     publishStatus();
   };

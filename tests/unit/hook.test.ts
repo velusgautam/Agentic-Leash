@@ -16,7 +16,10 @@ describe("normalise", () => {
     expect(edit.kind === "request" && edit.request.access).toBe("write");
     const bash = normaliseHook(fixture("claude-preToolUse-bash.json"), "claude");
     expect(bash.kind === "request" && bash.request.paths.some((path) => path.endsWith("/Users/velu.gautam"))).toBe(true);
-    const read = normaliseHook(fixture("cursor-preToolUse-read.json"), "cursor");
+    expect(normaliseHook(fixture("cursor-preToolUse-read.json"), "cursor")).toEqual({ kind: "ignore" });
+    expect(normaliseHook({ hook_event_name: "preToolUse", tool_name: "MCP:foo", tool_input: {} }, "cursor")).toEqual({ kind: "ignore" });
+    expect(normaliseHook(fixture("cursor-preToolUse-write.json"), "cursor").kind).toBe("request");
+    const read = normaliseHook(fixture("cursor-beforeReadFile.json"), "cursor");
     expect(read.kind === "request" && read.request.paths[0]).toContain("spike-results.md");
     expect(normaliseHook(fixture("cursor-ide-via-claude-settings-preToolUse-read.json"), "claude")).toEqual({ kind: "ignore" });
     const shell = normaliseHook(fixture("cursor-beforeShellExecution.json"), "cursor");
@@ -107,7 +110,7 @@ describe("handlePayload", () => {
     let asked = false;
     const result = await handlePayload({
       entry: "cursor",
-      raw: fixture("cursor-preToolUse-read.json"),
+      raw: fixture("cursor-beforeReadFile.json"),
       db,
       now: Date.now(),
       home: "/tmp",

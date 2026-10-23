@@ -1,5 +1,5 @@
 import { autoAllowCovers } from "../shared/autoAllow";
-import { isUnder } from "../shared/paths";
+import { hasUnresolved, isUnder } from "../shared/paths";
 import { guardedKind, isEgressRequest } from "../shared/policy";
 import type { DecideOptions, Grant, HookRequest, PendingRequest, Verdict } from "../shared/types";
 
@@ -26,6 +26,8 @@ export function decide(req: HookRequest, grants: Grant[], opts: DecideOptions): 
     if (rules.some((rule) => rule.kind === "command" && sameAgent(rule.agent) && rule.value.trim() === command)) return { kind: "pass" };
   }
   if (req.paths.length === 0) return { kind: "pass" };
+  // A literal `$d` grant must never stand in for whatever `$d` expands to.
+  if (hasUnresolved(req.paths)) return { kind: "prompt" };
   const used = new Set<number>();
   const covered = req.paths.every((path) => {
     // Secrets and startup files need a grant on themselves or a secret folder, not on a parent.

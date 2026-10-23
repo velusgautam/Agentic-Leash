@@ -4,7 +4,7 @@ import { decisionTarget } from "../../../shared/decisionView";
 import { viewGrants, type GrantSortKey, type SortDir } from "../../../shared/grantView";
 import { isHomeFolder } from "../../../shared/parents";
 import { denyCountdown, pendingSecondsLeft, POPUP_TIMEOUT_S } from "../../../shared/pending";
-import type { DecisionRow, Grant, PendingRequest, PresetId, RuleSuggestion } from "../../../shared/types";
+import type { AllowRule, DecisionRow, Grant, PendingRequest, PresetId, RuleSuggestion } from "../../../shared/types";
 import { AllowButtons, ApprovalChoices, allowLabel } from "~/components/ApprovalChoices";
 import { ConfirmAction, grantEffects, REVOKE_ALL_EFFECTS } from "~/components/ConfirmAction";
 import { AGENT_LABELS, AgentIcon } from "~/components/Icons";
@@ -101,6 +101,19 @@ function SuggestionRow({ item }: { item: RuleSuggestion }) {
   );
 }
 
+const RULE_AGENTS = new Set(["*", "claude-code", "cursor", "codex", "gemini", "hermes"]);
+
+function makeAlways(grant: Grant) {
+  const rule = { kind: grant.command == null ? "folder" : "command", agent: grant.agent, value: grant.command ?? grant.path } as AllowRule;
+  void window.leash.createRule(rule).then((result) => {
+    if (result.error) {
+      toast({ title: "Could not always allow", description: result.error, tone: "destructive" });
+      return;
+    }
+    return window.leash.revokeGrant(grant.id).then(() => { toast({ title: "Always allowed", description: rule.value }); });
+  }, (error: unknown) => { toast({ title: "Could not always allow", description: error instanceof Error ? error.message : String(error), tone: "destructive" }); });
+}
+
 function GrantRow({ grant, mono, Icon, onRevoke }: { grant: Grant; mono: string; Icon: typeof FolderLock; onRevoke: (grant: Grant) => void }) {
   return (
     <div className="flex items-center gap-3 px-4 py-3 text-sm">
@@ -118,6 +131,17 @@ function GrantRow({ grant, mono, Icon, onRevoke }: { grant: Grant; mono: string;
       </div>
       {grant.expiresAt !== null && grant.source === "leash" && !grant.idleSeconds ? (
         <Button size="sm" variant="ghost" aria-label="Extend by 1 hour" onClick={() => void window.leash.extendGrant(grant.id, 3600).then(({ expiresAt }) => { if (expiresAt === null) toast({ title: "Could not extend", description: "This grant can't be extended.", tone: "destructive" }); else toast({ title: "Extended by 1 hour" }); }, (error: unknown) => { toast({ title: "Could not extend", description: error instanceof Error ? error.message : String(error), tone: "destructive" }); })}>+1 h</Button>
+      ) : null}
+      {grant.expiresAt !== null && grant.source === "leash" && RULE_AGENTS.has(grant.agent) ? (
+        <ConfirmAction
+          trigger={<Button size="sm" variant="outline">Always allow</Button>}
+          title="Always allow this?"
+          description={grant.command == null ? `${agentName(grant.agent)} can read and write in ${grant.path} from now on, without asking. Secret files still ask.` : `${agentName(grant.agent)} can run this exact command from now on, without asking.`}
+          effects={["The grant is replaced by a rule under Always.", "Remove the rule there to ask again."]}
+          confirmLabel="Always allow"
+          icon={Check}
+          onConfirm={() => makeAlways(grant)}
+        />
       ) : null}
       <ConfirmAction
         trigger={<Button size="sm" variant="destructive-outline">Revoke</Button>}
